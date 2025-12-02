@@ -6,7 +6,7 @@ CREATE OR REPLACE TABLE `nyc-taxi-ehc.curated.taxi_zone_dim`
     ),
     borough STRING NOT NULL
     OPTIONS (
-        description = "NYC borough name (e.g., 'Manhattan', 'Queens') as provided by the TLC lookup."
+        description = "NYC borough name (e.g., 'Manhattan', 'Queens') as provided by the NYC TLC lookup."
     ),
     zone_name STRING NOT NULL
     OPTIONS (
@@ -28,5 +28,5 @@ CREATE OR REPLACE TABLE `nyc-taxi-ehc.curated.taxi_zone_dim`
 )
 CLUSTER BY borough, service_zone
 OPTIONS (
-    description = "Taxi zone dimension table derived from the NYC TLC zone lookup file, with taxi zone centroid coordinates."
+    description = "Taxi zone dimension table derived from the NYC Taxi and Limousine Commission (TLC) zone lookup file, with taxi zone centroid coordinates."
 );

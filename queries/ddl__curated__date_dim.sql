@@ -1,4 +1,4 @@
-CREATE OR REPLACE TABLE `nyc-taxi-ehc.curated.dim_date`
+CREATE OR REPLACE TABLE `nyc-taxi-ehc.curated.date_dim`
 (
     calendar_date DATE NOT NULL
     OPTIONS (
@@ -45,13 +45,13 @@ CREATE OR REPLACE TABLE `nyc-taxi-ehc.curated.dim_date`
         description = "Country/region code used in the holidays package (e.g., 'US'). May be NULL if not applicable."
     ),
     is_daylight_savings BOOL 
-    OPTION (
-        description = "TRUE if the date is a day correponding to daylight savings; otherwise NULL"
+    OPTIONS (
+        description = "TRUE if the date is a day correponding to daylight savings; otherwise FALSE"
     ),
-    PRIMARY KEY (date) NOT ENFORCED
+    PRIMARY KEY (calendar_date) NOT ENFORCED
 )
-PARTITION BY date
-CLUSTER BY year, month
+PARTITION BY calendar_date
+CLUSTER BY calendar_year, calendar_month
 OPTIONS (
     description = "Date dimension table with calendar attributes and with holiday flags derived from the Python 'holidays' package."
 );
