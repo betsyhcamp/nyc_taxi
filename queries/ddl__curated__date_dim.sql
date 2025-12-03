@@ -42,16 +42,24 @@ CREATE OR REPLACE TABLE `nyc-taxi-ehc.curated.date_dim`
     ),
     holiday_country_code STRING
     OPTIONS (
-        description = "Country/region code used in the holidays package (e.g., 'US'). May be NULL if not applicable."
+        description = "Country code for the holiday (e.g., 'US'). May be NULL if not applicable."
     ),
     is_daylight_savings BOOL 
     OPTIONS (
-        description = "TRUE if the date is a day correponding to daylight savings; otherwise FALSE"
+        description = "TRUE if the date is a day for daylight savings; otherwise FALSE. In local New York/Eastern Time timezon."
+    ),
+    holiday_calendar_version STRING 
+    OPTIONS (
+        description = "Rule set used to generate holidays as country-subdivision-holiday_type-version."
+    ),
+    created_timestamp_utc TIMESTAMP 
+    OPTIONS (
+        description = "Timestamp in UTC when row was created."
     ),
     PRIMARY KEY (calendar_date) NOT ENFORCED
 )
 PARTITION BY calendar_date
 CLUSTER BY calendar_year, calendar_month
 OPTIONS (
-    description = "Date dimension table with calendar attributes and with holiday flags derived from the Python 'holidays' package."
+    description = "Date dimension table with calendar attributes, with holiday and daylight savings flags."
 );
