@@ -76,6 +76,10 @@ CREATE OR REPLACE TABLE `nyc-taxi-ehc.raw.taxi_yellow_tripdata_fact`
     OPTIONS (
         description = "Airport access fee in USD, typically for pickups at eligible airports."
     ),
+    load_timestamp_utc TIMESTAMP 
+    OPTIONS (
+        description = "Timestamp in UTC when row was loaded."
+    ),
     sourcefile_name STRING NOT NULL
     OPTIONS (
         description = "Original source file name (e.g., 'yellow_tripdata_2018-01.parquet' or similar) for traceability."

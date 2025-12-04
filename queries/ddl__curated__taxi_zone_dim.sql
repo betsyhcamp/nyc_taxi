@@ -24,6 +24,10 @@ CREATE OR REPLACE TABLE `nyc-taxi-ehc.curated.taxi_zone_dim`
     OPTIONS (
         description = "Approximate longitude of the zone centroid. Nullable; computed from NYC TLC shapefile (GIS)."
     ),
+    load_timestamp_utc TIMESTAMP 
+    OPTIONS (
+        description = "Timestamp in UTC when row was loaded."
+    ),
     PRIMARY KEY (taxi_zone_id) NOT ENFORCED
 )
 CLUSTER BY borough, service_zone

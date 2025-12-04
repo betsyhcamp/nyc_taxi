@@ -52,9 +52,9 @@ CREATE OR REPLACE TABLE `nyc-taxi-ehc.curated.date_dim`
     OPTIONS (
         description = "Rule set used to generate holidays as country-subdivision-holiday_type-version."
     ),
-    created_timestamp_utc TIMESTAMP 
+    load_timestamp_utc TIMESTAMP 
     OPTIONS (
-        description = "Timestamp in UTC when row was created."
+        description = "Timestamp in UTC when row was loaded."
     ),
     PRIMARY KEY (calendar_date) NOT ENFORCED
 )
