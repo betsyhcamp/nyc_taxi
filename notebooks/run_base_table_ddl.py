@@ -7,9 +7,9 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.17.2
 #   kernelspec:
-#     display_name: venv-m5 (Local)
+#     display_name: Python (.venv) (Local)
 #     language: python
-#     name: .venv
+#     name: venv
 # ---
 
 # %%
@@ -21,7 +21,9 @@ DDL_FILENAMES = [
     "ddl__curated__date_dim.sql",
     "ddl__curated__datetime_hour_dim.sql",
     "ddl__curated__taxi_yellow_tripdata_fact.sql",
+    "ddl__curated__taxi_zone_dim.sql",
     "ddl__raw__taxi_yellow_tripdata_fact.sql",
+    "ddl__raw__taxi_zone_dim.sql",
     "ddl__raw__weather_daily_fact.sql",
     "ddl__raw__weather_hourly_fact.sql",
 ]
@@ -32,6 +34,8 @@ for file in DDL_FILENAMES:
     print(filepath)
     with open(filepath, "r") as file_object:
         sql_script = file_object.read()
-        print(sql_script)
+        print("****************\n",sql_script)
         client = bigquery.Client()
         client.query(sql_script).result()
+
+# %%
