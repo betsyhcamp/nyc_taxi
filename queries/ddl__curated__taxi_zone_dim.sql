@@ -4,11 +4,11 @@ CREATE OR REPLACE TABLE `nyc-taxi-ehc.curated.taxi_zone_dim`
     OPTIONS (
         description = "Primary key for the taxi zone. Matches LocationID from NYC TLC lookup."
     ),
-    borough STRING NOT NULL
+    borough STRING
     OPTIONS (
         description = "NYC borough name (e.g., 'Manhattan', 'Queens') as provided by the NYC TLC lookup."
     ),
-    zone_name STRING NOT NULL
+    zone_name STRING
     OPTIONS (
         description = "Human-readable zone name (e.g., 'Midtown Center')."
     ),

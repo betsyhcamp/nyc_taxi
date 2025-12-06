@@ -82,7 +82,10 @@ CREATE OR REPLACE TABLE `nyc-taxi-ehc.curated.taxi_yellow_tripdata_fact`
     OPTIONS (
         description = "Airport access fee in USD, if applicable."
     ),
-
+    cbd_congestion_fee NUMERIC
+    OPTIONS (
+        description = "Per-trip charge for MTA's Congestion Relief Zone (starting Jan. 5, 2025)."
+    ),
     -- Enriched temporal fields
     pickup_date DATE NOT NULL
     OPTIONS (
@@ -106,9 +109,9 @@ CREATE OR REPLACE TABLE `nyc-taxi-ehc.curated.taxi_yellow_tripdata_fact`
     OPTIONS (
         description = "Original source file name used to load this trip from the raw layer for lineage and debugging."
     ),
-    load_timestamp_utc TIMESTAMP NOT NULL
+    refresh_timestamp_utc TIMESTAMP NOT NULL
     OPTIONS (
-        description = "UTC timestamp when this curated record was loaded or last refreshed in BigQuery."
+        description = "UTC timestamp when this curated record was last refreshed in BigQuery."
     ),
 
     PRIMARY KEY (trip_id) NOT ENFORCED

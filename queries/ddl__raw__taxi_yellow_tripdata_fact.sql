@@ -76,14 +76,18 @@ CREATE OR REPLACE TABLE `nyc-taxi-ehc.raw.taxi_yellow_tripdata_fact`
     OPTIONS (
         description = "Airport access fee in USD, typically for pickups at eligible airports."
     ),
-    load_timestamp_utc TIMESTAMP 
+    cbd_congestion_fee NUMERIC
     OPTIONS (
-        description = "Timestamp in UTC when row was loaded."
+        description = "Per-trip charge for MTA's Congestion Relief Zone (starting Jan. 5, 2025)."
     ),
     sourcefile_name STRING NOT NULL
     OPTIONS (
         description = "Original source file name (e.g., 'yellow_tripdata_2018-01.parquet' or similar) for traceability."
     )
+    load_timestamp_utc TIMESTAMP 
+    OPTIONS (
+        description = "Timestamp in UTC when row was loaded."
+    ),
 )
 PARTITION BY DATE(tpep_pickup_datetime)
 CLUSTER BY PULocationID, DOLocationID, tpep_pickup_datetime
