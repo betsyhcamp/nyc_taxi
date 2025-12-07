@@ -1,36 +1,14 @@
-CREATE OR REPLACE TABLE `nyc-taxi-ehc.curated.taxi_zone_dim`
-(
-    taxi_zone_id INT64 NOT NULL
-    OPTIONS (
-        description = "Primary key for the taxi zone. Matches LocationID from NYC TLC lookup."
-    ),
-    borough STRING
-    OPTIONS (
-        description = "NYC borough name (e.g., 'Manhattan', 'Queens') as provided by the NYC TLC lookup."
-    ),
-    zone_name STRING
-    OPTIONS (
-        description = "Human-readable zone name (e.g., 'Midtown Center')."
-    ),
-    service_zone STRING
-    OPTIONS (
-        description = "Service zone category from NYC TLC (e.g., 'yellow', 'green', 'Boro Zone'). May be NULL."
-    ),
-    centroid_latitude FLOAT64
-    OPTIONS (
-        description = "Approximate latitude of the zone centroid. Nullable; computed from NYC TLC shapefile (GIS)."
-    ),
-    centroid_longitude FLOAT64
-    OPTIONS (
-        description = "Approximate longitude of the zone centroid. Nullable; computed from NYC TLC shapefile (GIS)."
-    ),
-    load_timestamp_utc TIMESTAMP 
-    OPTIONS (
-        description = "Timestamp in UTC when row was loaded."
-    ),
-    PRIMARY KEY (taxi_zone_id) NOT ENFORCED
-)
-CLUSTER BY borough, service_zone
+CREATE OR REPLACE VIEW `nyc-taxi-ehc.curated.taxi_zone_dim` 
 OPTIONS (
-    description = "Taxi zone dimension table derived from the NYC Taxi and Limousine Commission (TLC) zone lookup file, with taxi zone centroid coordinates."
-);
+  description = "Curated taxi zone dimension including borough, zone name, service zone, and centroid coordinates joined from staging.taxi_zone_centroids_dim."
+) AS
+  SELECT
+        z.LocationID AS taxi_zone_id,
+        z.Borough AS borough,
+        z.Zone AS zone_name,
+        z.service_zone,
+        c.centroid_latitude,
+        c.centroid_longitude
+    FROM `nyc-taxi-ehc.raw.taxi_zone_dim` AS z
+    LEFT JOIN `nyc-taxi-ehc.staging.taxi_zone_centroids_dim` AS c
+        ON z.LocationID = c.taxi_zone_id
