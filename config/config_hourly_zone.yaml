@@ -1,6 +1,6 @@
 # GCP settings
 project_settings:
-  project_id: "m5forecaste2e"
+  project_id: "nyc-taxi-ehc"
   location: "us-central1"
   env: "dev" # Only allowed: "dev", "test", "prod"
 
