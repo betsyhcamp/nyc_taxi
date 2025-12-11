@@ -1,0 +1,4 @@
+# SQL fragment queries not to linted alone
+queries/debug_allowlist_daily_total_manhattan.sql
+queries/debug_allowlist_daily_zone.sql
+queries/debug_allowlist_hourly_zone.sql
