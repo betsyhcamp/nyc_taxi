@@ -44,15 +44,15 @@ CREATE OR REPLACE TABLE `nyc-taxi-ehc.curated.date_dim`
     OPTIONS (
         description = "Country code for the holiday (e.g., 'US'). May be NULL if not applicable."
     ),
-    is_daylight_savings BOOL 
+    is_daylight_savings BOOL
     OPTIONS (
         description = "TRUE if the date is a day for daylight savings; otherwise FALSE. In local New York/Eastern Time timezon."
     ),
-    holiday_calendar_version STRING 
+    holiday_calendar_version STRING
     OPTIONS (
         description = "Rule set used to generate holidays as country-subdivision-holiday_type-version."
     ),
-    load_timestamp_utc TIMESTAMP 
+    load_timestamp_utc TIMESTAMP
     OPTIONS (
         description = "Timestamp in UTC when row was loaded."
     ),

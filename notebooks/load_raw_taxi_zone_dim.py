@@ -19,7 +19,9 @@ from datetime import datetime, timezone
 import pandas as pd
 
 # %%
-gcs_path_file = "gs://nyc-taxi-ehc--data-ingest/raw/nyc_tlc_taxi/taxi_metadata/taxi_zone_lookup.csv"
+gcs_path_file = (
+    "gs://nyc-taxi-ehc--data-ingest/raw/nyc_tlc_taxi/taxi_metadata/taxi_zone_lookup.csv"
+)
 
 taxi_zone_df = pd.read_csv(gcs_path_file)
 
@@ -31,7 +33,7 @@ taxi_zone_df.info()
 taxi_zone_df
 
 # %%
-taxi_zone_df['load_timestamp_utc'] = datetime.now(timezone.utc)
+taxi_zone_df["load_timestamp_utc"] = datetime.now(timezone.utc)
 
 # %%
 table_id = "nyc-taxi-ehc.raw.taxi_zone_dim"

@@ -36,7 +36,7 @@ CREATE OR REPLACE TABLE `nyc-taxi-ehc.raw.weather_hourly_fact`
     OPTIONS (
         description = "Maximum wind gust speed in kilometers per hour during the hour."
     ),
-    load_timestamp_utc TIMESTAMP 
+    load_timestamp_utc TIMESTAMP
     OPTIONS (
         description = "Timestamp in UTC when row was loaded."
     ),

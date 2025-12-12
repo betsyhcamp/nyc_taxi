@@ -3,6 +3,13 @@
 *.parquet
 
 *.ipynb
+.DS_Store
+**/*.ipynb_checkpoints/
 
-.ipynb_checkpoints/
-*/.ipynb_checkpoints/
+# Python bytecode caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ignore local settings (in .vscode directory)
+.vscode/

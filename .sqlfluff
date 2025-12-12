@@ -1,0 +1,57 @@
+[sqlfluff]
+dialect = bigquery
+templater = jinja
+exclude_rules = L009
+max_line_length = 224
+ignore_non_existent_files = True
+
+# See .sqlfluffignore for SQL query fragment files for SQLFluff to ignore
+
+[sqlfluff:indentation]
+tab_space_size = 4
+indent_unit = space
+
+[sqlfluff:rules]
+# Temporarily disable "References" rules causing RF01, RF02, RF04 errors
+RF01 = ignore
+RF02 = ignore
+RF04 = ignore
+
+# Temporarily disable ambiguous column count warnings (AM04)
+AM04 = ignore
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = upper
+
+[sqlfluff:rules:capitalisation.functions]
+capitalisation_policy = upper
+
+[sqlfluff:rules:capitalisation.literals]
+capitalisation_policy = upper
+
+[sqlfluff:rules:capitalisation.identifiers]
+extended_capitalisation_policy = consistent
+
+[sqlfluff:rules:capitalisation.types]
+capitalisation_policy = upper
+
+[sqlfluff:rules:layout.select_targets]
+capitalisation_policy = upper
+
+[sqlfluff:rules:layout.commas]
+comma_style = trailing
+
+[sqlfluff:rules:layout.long_lines]
+max_line_length = 145
+
+[sqlfluff:rules:layout.spacing]
+force_enable = true
+
+[sqlfluff:rules:aliasing.column]
+require_as = always
+
+[sqlfluff:rules:aliasing.table]
+require_as = always
+
+[sqlfluff:rules:structure.column_order]
+force_enable = true

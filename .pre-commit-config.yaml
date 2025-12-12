@@ -1,0 +1,47 @@
+minimum_pre_commit_version: "3.5.0"
+
+repos:
+  # Basic hygiene checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+
+  # Ruff: formatting only
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.2
+    hooks:
+      - id: ruff-format
+
+  # SQLFluff: Automatic formatting fixes only (no linting) to use rules in .sqlfluff config file
+  - repo: https://github.com/sqlfluff/sqlfluff
+    rev: 3.4.2
+    hooks:
+      - id: sqlfluff-fix
+        args: [--ignore=templating]
+        exclude: ^queries/debug_allowlist_.*\.sql$
+
+  # Prevent committing debug_enabled:True so that debug mode isn't accidently run in prod
+  - repo: local
+    hooks:
+      - id: forbid-debug-allowlist-enabled-regex
+        name: Forbid debug_allowlist.debug_enabled:true in YAML (regex)
+        entry: |
+          bash -lc '
+            pat="^[[:space:]-]*debug_enabled[[:space:]]*:[[:space:]]*true([[:space:]]|#|$)"
+            out=$(grep -nEHi "$pat" "$@" | \
+              grep -Ev "^[^:]+:[0-9]+:[[:space:]]*#")
+            if [ -n "$out" ]; then
+              echo "$out"
+              echo "debug_enabled:true found. Turn it off before committing."
+              exit 1
+            fi
+          '
+        language: system
+        pass_filenames: true
+        files: ^(config\.ya?ml|config/.*\.(yml|yaml))$

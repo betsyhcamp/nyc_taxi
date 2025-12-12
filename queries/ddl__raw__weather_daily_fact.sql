@@ -36,7 +36,7 @@ CREATE OR REPLACE TABLE `nyc-taxi-ehc.raw.weather_daily_fact`
     OPTIONS (
         description = "Maximum wind gust in kilometers per hour observed during the day, if available."
     ),
-    load_timestamp_utc TIMESTAMP 
+    load_timestamp_utc TIMESTAMP
     OPTIONS (
         description = "Timestamp in UTC when row was loaded."
     ),
@@ -45,6 +45,6 @@ CREATE OR REPLACE TABLE `nyc-taxi-ehc.raw.weather_daily_fact`
 PARTITION BY calendar_date
 CLUSTER BY weather_station_id
 OPTIONS (
-    description = "Daily weather fact table keyed by station and date, providing aggregated temperature, precipitation, snowfall, humidity, and wind metrics for modeling lower-frequency effects."
+    description
+    = "Daily weather fact table keyed by station and date, providing aggregated temperature, precipitation, snowfall, humidity, and wind metrics for modeling lower-frequency effects."
 );
-

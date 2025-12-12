@@ -5,8 +5,8 @@
 
 Taxi demand needs to be forecasted to optimize resource allocation, improve operational efficiency, and to enhance customer experience (e.g., reduced rider wait times).
 
-* `TODO`: Need to do exploratory data analysis and 
-* `TODO`: define forecasting problem along typical axes: quantity to forecast, granularity in time of forecast (hourly, daily, weekly), forecast horizon (how many hours, days, weeks ahead need to be forecasted), geographic granularity (e.g. taxi zone, boro of NYC)  
+* `TODO`: Need to do exploratory data analysis and
+* `TODO`: define forecasting problem along typical axes: quantity to forecast, granularity in time of forecast (hourly, daily, weekly), forecast horizon (how many hours, days, weeks ahead need to be forecasted), geographic granularity (e.g. taxi zone, boro of NYC)
 
 ## Data
 

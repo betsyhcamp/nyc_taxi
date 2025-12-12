@@ -5,15 +5,22 @@ description = "NYC Yellow taxi demand modeling"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "cloudpickle>=3.1.1",
     "fsspec>=2025.12.0",
     "gcsfs>=2025.12.0",
+    "google-cloud-aiplatform>=1.130.0",
     "google-cloud-bigquery[bqstorage,pandas]>=3.38.0",
     "google-cloud-storage>=3.6.0",
     "holidays>=0.86",
+    "jinja2>=3.1.6",
+    "mlforecast>=1.0.2",
     "pandas>=2.3.0",
     "pandas-gbq>=0.31.0",
+    "pandera>=0.27.0",
+    "pathlib>=1.0.1",
+    "pydantic>=2.12.5",
     "statsforecast>=2.0.1",
-    "statsmodels>=0.14.4",
+    "utilsforecast>=0.2.12",
 ]
 
 [dependency-groups]
@@ -24,11 +31,17 @@ dev = [
     "matplotlib>=3.10.3",
     "plotly>=6.1.2",
     "seaborn>=0.13.2",
+    "statsmodels>=0.14.4",
+    "pre-commit>=4.5.0",
+    "pre-commit-uv>=4.2.0",
+    "sqlfluff>=3.5.0",
+    "pytest>=9.0.2",
+    "streamlit>=1.52.1",
 ]
 
 
 [tool.ruff]
-extend-include = ["*.ipynb"]
+extend-include = ["build", "dist", ".venv", "notebooks/**"]
 
 # Exclude a variety of commonly ignored directories.
 exclude = [
