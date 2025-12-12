@@ -34,7 +34,7 @@ for file in DDL_FILENAMES:
     print(filepath)
     with open(filepath, "r") as file_object:
         sql_script = file_object.read()
-        print("****************\n",sql_script)
+        print("****************\n", sql_script)
         client = bigquery.Client()
         client.query(sql_script).result()
 

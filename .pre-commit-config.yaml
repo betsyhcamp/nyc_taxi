@@ -24,6 +24,10 @@ repos:
     hooks:
       - id: sqlfluff-fix
         args: [--ignore=templating]
+        exclude: |
+          ^queries/debug_allowlist_daily_total_manhattan\.sql$|
+          ^queries/debug_allowlist_daily_zone\.sql$|
+          ^queries/debug_allowlist_hourly_zone\.sql$
 
   # Prevent committing debug_enabled:True so that debug mode isn't accidently run in prod
   - repo: local

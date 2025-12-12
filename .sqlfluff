@@ -2,7 +2,7 @@
 dialect = bigquery
 templater = jinja
 exclude_rules = L009
-max_line_length = 145
+max_line_length = 224
 
 # See .sqlfluffignore for SQL query fragment files for SQLFluff to ignore
 
