@@ -18,7 +18,9 @@ def read_sql(sql_path: Path) -> str:
         str: Contents of the .sql file at sql_path as a string
     """
     try:
-        with open(sql_path, "r", encoding="utf-8", errors="strict", newline=None) as file_handle:
+        with open(
+            sql_path, "r", encoding="utf-8", errors="strict", newline=None
+        ) as file_handle:
             return file_handle.read()
     except FileNotFoundError:
         raise FileNotFoundError(f"SQL file not found: {sql_path}")
@@ -51,7 +53,9 @@ def replace_params_sql(sql_text: str, replace_dict: dict[str, str]) -> str:
 
         # Check if there are no instances of placeholder_name & raise error if no instances
         if not pattern.search(sql_text):
-            raise KeyError(f"Placeholder '<<{placeholder_name}>>' not found in SQL query")
+            raise KeyError(
+                f"Placeholder '<<{placeholder_name}>>' not found in SQL query"
+            )
 
         # for a given pattern, substitute
         sql_text = pattern.sub(lambda _: replace_placeholder_with_text, sql_text)
@@ -180,8 +184,12 @@ def _check_storage_uri_str(storage_uri_str: str, uri_prefix: str = "gs://") -> N
       ValueError: If given URI is not a string or does not contain the URI prefix
 
     """
-    if not isinstance(storage_uri_str, str) or not storage_uri_str.startswith(uri_prefix):
-        raise ValueError(f"storage_uri must be a {uri_prefix}... string, got {storage_uri_str!r}.")
+    if not isinstance(storage_uri_str, str) or not storage_uri_str.startswith(
+        uri_prefix
+    ):
+        raise ValueError(
+            f"storage_uri must be a {uri_prefix}... string, got {storage_uri_str!r}."
+        )
 
 
 def _check_gcs_file_stats(
@@ -273,7 +281,9 @@ def write_df_to_gcs_parquet(
             import pyarrow
             import gcsfs
         except ImportError as e:
-            raise RuntimeError("pandas write .parquet to GCS requires 'pyarrow' and 'gcsfs'") from e
+            raise RuntimeError(
+                "pandas write .parquet to GCS requires 'pyarrow' and 'gcsfs'"
+            ) from e
 
         df.to_parquet(
             gs_uri,
@@ -288,13 +298,17 @@ def write_df_to_gcs_parquet(
             import fsspec
             import gcsfs
         except ImportError as e:
-            raise RuntimeError("polars write .parquet to GCS requires 'fsspec' and 'gcsfs'") from e
+            raise RuntimeError(
+                "polars write .parquet to GCS requires 'fsspec' and 'gcsfs'"
+            ) from e
 
         with fsspec.open(gs_uri, "wb", **storage_options) as f:
             df.write_parquet(f, compression=compression, **kwargs)
 
     else:
-        raise TypeError(f"Unsupported df type: {type(df).__name__} (expect pandas or polars)")
+        raise TypeError(
+            f"Unsupported df type: {type(df).__name__} (expect pandas or polars)"
+        )
 
     if confirm == "none":
         return {"uri": gs_uri}

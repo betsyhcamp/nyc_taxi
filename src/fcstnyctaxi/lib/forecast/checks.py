@@ -49,7 +49,9 @@ def missing_required_columns(df, required: Iterable[str] = _REQUIRED) -> None:
     if _is_pandas_df(df) or _is_polars_df(df):
         columns = list(df.columns)
     else:
-        raise TypeError("Expects pandas or polars dataframe, got ", f"{type(df).__name__}")
+        raise TypeError(
+            "Expects pandas or polars dataframe, got ", f"{type(df).__name__}"
+        )
 
     missing = set(required) - set(columns)
     if missing:

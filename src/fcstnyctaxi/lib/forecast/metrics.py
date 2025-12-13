@@ -155,7 +155,9 @@ def rmsse(
         scale, is_bad_scale = difference_scale(y_train, m)
     else:
         if fallback_scale is None:
-            raise ValueError("Invalid arguments: either provide `y_train` or set `fallback_scale`.")
+            raise ValueError(
+                "Invalid arguments: either provide `y_train` or set `fallback_scale`."
+            )
         scale = float(fallback_scale)
         is_bad_scale = _scale_is_invalid(scale)
 
@@ -243,14 +245,20 @@ def difference_scaled_bias(
         scale_val, is_bad_scale = difference_scale(y_train, m, scale_stat)
     else:
         if fallback_scale is None:
-            raise ValueError("Invalid arguments: either provide `y_train` or set `fallback_scale`.")
+            raise ValueError(
+                "Invalid arguments: either provide `y_train` or set `fallback_scale`."
+            )
         scale_val = float(fallback_scale)
         is_bad_scale = _scale_is_invalid(scale_val)
 
     if is_bad_scale:
-        return (np.nan, mean_error, np.nan, True) if return_components else (np.nan, True)
+        return (
+            (np.nan, mean_error, np.nan, True) if return_components else (np.nan, True)
+        )
 
     with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
         value = _sanitize_value(mean_error / scale_val)
 
-    return (value, mean_error, scale_val, False) if return_components else (value, False)
+    return (
+        (value, mean_error, scale_val, False) if return_components else (value, False)
+    )

@@ -23,12 +23,16 @@ def find_root_project_dir(
         Path: Path of project root directory.
     """
     ROOT_MARKERS_LIST = ["pyproject.toml", "uv.lock", ".project-root"]
-    root_markers_list = ROOT_MARKERS_LIST if markers_list is None else list(markers_list)
+    root_markers_list = (
+        ROOT_MARKERS_LIST if markers_list is None else list(markers_list)
+    )
 
     path_start = Path(start_path or globals().get("__file__", Path.cwd())).resolve()
 
     for path_candidate in [path_start, *path_start.parents]:
-        check = [(path_candidate / root_marker).exists() for root_marker in root_markers_list]
+        check = [
+            (path_candidate / root_marker).exists() for root_marker in root_markers_list
+        ]
         if any(check) and path_candidate.is_dir():
             return path_candidate
     raise RuntimeError(
