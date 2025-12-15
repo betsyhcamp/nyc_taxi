@@ -23,7 +23,10 @@ repos:
     rev: 3.4.2
     hooks:
       - id: sqlfluff-fix
-        args: [--ignore=templating]
+        args:
+          - --config
+          - .sqlfluff
+          - --ignore=templating
         exclude: ^queries/debug_allowlist_.*\.sql$
 
   # Prevent committing debug_enabled:True so that debug mode isn't accidently run in prod

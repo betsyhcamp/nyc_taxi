@@ -3,6 +3,11 @@ project_settings:
   project_id: "nyc-taxi-ehc"
   location: "us-central1"
   env: "dev" # Only allowed: "dev", "test", "prod"
+  gcs_bucket_name: "nyc-taxi-ehc--modeling"
 
 debug_allowlist:
   debug_enabled: False # Only allowed: True, False
+
+extract_db_to_bucket:
+  query_filename: "initial_daily_taxi_rides.sql"
+  gcs_prefix: "initial_datapull"
