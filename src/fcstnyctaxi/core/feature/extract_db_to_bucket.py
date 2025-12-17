@@ -17,10 +17,7 @@ def extract_db_to_bucket(
     prefix: str,
     sql_query_str: str,
 ) -> str:
-    # put in pipeline file
-    # project_root_path = get_project_root_dir()
-    # put in pipeline file
-    # sql = read_sql(project_root_path / "queries" / query_filename)
+    # put defining root project path & loading SQL to a str in pipeline definition
 
     # run BQ
     bq_client = bigquery.Client(project=project_id, location=db_location)
@@ -34,7 +31,7 @@ def extract_db_to_bucket(
     # write to local .parquet file w/ string in the filename: UUID_utctimenow
     dataset_id = uuid.uuid4().hex[:8]
     timestamp = datetime.now(timezone.utc).strftime("UTC%Y%m%d_%H%M%S")
-    filename = f"manhattan_daily_zone_pickups_{dataset_id}_UTC{timestamp}.parquet"
+    filename = f"manhattan_daily_zone_pickups_{dataset_id}_{timestamp}.parquet"
     tmp_dir = Path("/tmp/data")
     tmp_dir.mkdir(parents=False, exist_ok=True)
     local_path = tmp_dir / filename
@@ -56,6 +53,7 @@ def extract_db_to_bucket(
 # %%
 if __name__ == "__main__":
     # local smoke test
+    from pathlib import Path
     from fcstnyctaxi.lib.utils import get_project_root_dir, load_config_file
 
     # load configs
@@ -68,17 +66,15 @@ if __name__ == "__main__":
     gcs_prefix = configs["extract_db_to_bucket"].get("gcs_prefix")
     gcs_prefix = env + "/" + gcs_prefix
 
-    query_filename = (configs["extract_db_to_bucket"].get("query_filename"),)
+    # load SQL query to a string
+    query_filename = configs["extract_db_to_bucket"].get("query_filename")
     sql_query_str = read_sql(project_root_path / "queries" / query_filename)
-    # put in pipeline file
-    # project_root_path = get_project_root_dir()
-    # put in pipeline file
-    # sql = read_sql(project_root_path / "queries" / query_filename)
 
-    extract_db_to_bucket(
+    gcs_uri = extract_db_to_bucket(
         project_id=configs["project_settings"].get("project_id"),
         db_location=configs["project_settings"].get("location"),
         bucket_name=configs["project_settings"].get("gcs_bucket_name"),
         prefix=gcs_prefix,
         sql_query_str=sql_query_str,
     )
+    print(gcs_uri)
