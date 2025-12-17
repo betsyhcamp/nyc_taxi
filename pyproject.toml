@@ -23,6 +23,7 @@ dependencies = [
     "scipy<1.16.0",
     "utilsforecast>=0.2.12",
     "coreforecast>=0.0.16",
+    "kfp>=2.15.2",
 ]
 
 [dependency-groups]
