@@ -1,7 +1,11 @@
+from dataclasses import dataclass
+import time
 from pathlib import Path
 import re
-from typing import Mapping, Set, Any, Literal, Dict
+from typing import Mapping, Set, Any, Literal, Dict, Optional, Tuple
 from jinja2 import Environment, BaseLoader, StrictUndefined, meta
+import pandas as pd
+from google.cloud import bigquery
 from .forecast.checks import _is_pandas_df, _is_polars_df
 
 
@@ -168,6 +172,40 @@ def render_sql_template(sql_text: str, params: Mapping[str, object]) -> str:
     )
     template = render_env.from_string(sql_text)
     return template.render(**params)
+
+
+@dataclass(frozen=True)
+class BiqQueryQueryStats:
+    job_id: str
+    total_rows: Optional[int]
+    total_bytes_processed: Optional[int]
+    total_bytes_billed: Optional[int]
+    cache_hit: Optional[bool]
+    elapsed_seconds: float
+
+
+def query_to_dataframe(
+    sql: str,
+    *,
+    client: bigquery.Client,
+    job_config: bigquery.QueryJobConfig,
+    dataframe_type: Literal["pandas", "polars"] = "pandas",
+    use_bqstorage: bool = True,
+) -> Tuple[object, BiqQueryQueryStats]:
+    start = time.perf_counter()
+
+    job = client.query(sql, job_config=job_config)
+    result = job.result()
+
+    elapsed = time.perf_counter() - start
+
+    if dataframe_type == "pandas":
+        import pandas as pd
+
+        df = result.to_dataframe(create_bqstorage_client=use_bqstorage)
+
+    elif dataframe_type == "polars":
+        pass
 
 
 def _check_storage_uri_str(storage_uri_str: str, uri_prefix: str = "gs://") -> None:
