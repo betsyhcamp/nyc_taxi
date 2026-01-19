@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from google.api_core.exceptions import GoogleAPIError
 import time
 from pathlib import Path
 import re
@@ -175,29 +176,36 @@ def render_sql_template(sql_text: str, params: Mapping[str, object]) -> str:
 
 
 @dataclass(frozen=True)
-class BiqQueryQueryStats:
+class BigQueryQueryStats:
     job_id: str
     total_rows: Optional[int]
     total_bytes_processed: Optional[int]
     total_bytes_billed: Optional[int]
     cache_hit: Optional[bool]
     elapsed_seconds: float
+    conversion_seconds: float
 
 
 def query_to_dataframe(
     sql: str,
     *,
     client: bigquery.Client,
-    job_config: bigquery.QueryJobConfig,
+    job_config: bigquery.QueryJobConfig | None = None,
     dataframe_type: Literal["pandas", "polars"] = "pandas",
     use_bqstorage: bool = True,
-) -> Tuple[object, BiqQueryQueryStats]:
-    start = time.perf_counter()
+    timeout: float = 300.0,
+) -> Tuple[pd.DataFrame | pl.DataFrame, BigQueryQueryStats]:
+    if job_config is None:
+        job_config = bigquery.QueryJobConfig()
+
+    query_start = time.perf_counter()
 
     job = client.query(sql, job_config=job_config)
-    result = job.result()
+    result = job.result(timeout=timeout)
 
-    elapsed = time.perf_counter() - start
+    query_elapsed = time.perf_counter() - query_start
+
+    conversion_start = time.perf_counter()
 
     if dataframe_type == "pandas":
         import pandas as pd
@@ -205,7 +213,25 @@ def query_to_dataframe(
         df = result.to_dataframe(create_bqstorage_client=use_bqstorage)
 
     elif dataframe_type == "polars":
-        pass
+        import polars as pl
+
+        arrow_table = result.to_arrow(create_bqstorage_client=use_bqstorage)
+        df = pl.from_arrow(arrow_table)
+    else:
+        raise ValueError(f"Unsupported dataframe_type={dataframe_type}")
+    conversion_elapsed = time.perf_counter() - conversion_start
+
+    stats = BigQueryQueryStats(
+        job_id=job.job_id,
+        total_rows=result.total_rows,
+        total_bytes_processed=job.total_bytes_processed,
+        total_bytes_billed=job.total_bytes_billed,
+        cache_hit=job.cache_hit,
+        elapsed_seconds=query_elapsed,
+        conversion_seconds=conversion_elapsed,
+    )
+
+    return df, stats
 
 
 def _check_storage_uri_str(storage_uri_str: str, uri_prefix: str = "gs://") -> None:
