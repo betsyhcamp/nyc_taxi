@@ -1,13 +1,17 @@
-from dataclasses import dataclass
-from google.api_core.exceptions import GoogleAPIError
+from __future__ import annotations
+
+from dataclasses import dataclass, asdict
 import time
 from pathlib import Path
 import re
-from typing import Mapping, Set, Any, Literal, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Mapping, Set, Any, Literal, Optional
 from jinja2 import Environment, BaseLoader, StrictUndefined, meta
-import pandas as pd
 from google.cloud import bigquery
 from .forecast.checks import _is_pandas_df, _is_polars_df
+
+if TYPE_CHECKING:
+    import pandas as pd
+    import polars as pl
 
 
 def read_sql(sql_path: Path) -> str:
@@ -175,8 +179,10 @@ def render_sql_template(sql_text: str, params: Mapping[str, object]) -> str:
     return template.render(**params)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BigQueryQueryStats:
+    """Statistics from a BigQuery query execution."""
+
     job_id: str
     total_rows: Optional[int]
     total_bytes_processed: Optional[int]
@@ -184,6 +190,13 @@ class BigQueryQueryStats:
     cache_hit: Optional[bool]
     elapsed_seconds: float
     conversion_seconds: float
+
+    def to_dict(self, exclude_none: bool = True) -> dict[str, Any]:
+        """Convert to dictionary for structured logging"""
+        d = asdict(self)
+        if exclude_none:
+            return {key: value for key, value in d.items() if value is not None}
+        return d
 
 
 def query_to_dataframe(
@@ -194,7 +207,24 @@ def query_to_dataframe(
     dataframe_type: Literal["pandas", "polars"] = "pandas",
     use_bqstorage: bool = True,
     timeout: float = 300.0,
-) -> Tuple[pd.DataFrame | pl.DataFrame, BigQueryQueryStats]:
+) -> tuple[pd.DataFrame | pl.DataFrame, BigQueryQueryStats]:
+    """
+    Execute a BigQuery SQL query and return results as a DataFrame.
+
+    Args:
+        sql: The SQL query string to execute.
+        client: An authenticated BigQuery client.
+        job_config: Optional query job configuration.
+        dataframe_type: Return type either "pandas" or "polars".
+        use_bqstorage: Use BigQuery Storage API for faster reads.
+        timeout: Query timeout in seconds.
+
+    Returns:
+        Tuple of (DataFrame, BigQueryQueryStats).
+
+    Raises:
+        ValueError: If dataframe_type is invalid.
+    """
     if job_config is None:
         job_config = bigquery.QueryJobConfig()
 
@@ -219,6 +249,7 @@ def query_to_dataframe(
         df = pl.from_arrow(arrow_table)
     else:
         raise ValueError(f"Unsupported dataframe_type={dataframe_type}")
+
     conversion_elapsed = time.perf_counter() - conversion_start
 
     stats = BigQueryQueryStats(
