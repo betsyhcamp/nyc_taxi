@@ -1,0 +1,9 @@
+duckdb_location: "./data/lakehouse.duckdb"
+
+# all 
+data_dir: "./data"
+
+# one subfolder per line, "yellow", "green", "fhv"
+# will contain *.parquet where the stem is the year and month
+# in the format YYYY-MM
+taxi_data_subdir: "taxi"
