@@ -117,12 +117,6 @@ def render_sql_template(sql_text: str, params: Mapping[str, object]) -> str:
       1) Every placeholder used in the SQL must be present in `params`.
       2) Every key in `params` must be used in the SQL.
 
-    Notes:
-      - This check is independent of any `| default(...)` filters in the SQL:
-        even if a variable has a Jinja default, we still require it in `params`.
-      - With StrictUndefined, nested/attribute lookups like {{ obj.attr }}
-        still raise if structure doesn't match what the template expects.
-
     Args:
       sql_text (str): Raw SQL text containing Jinja placeholders and/or control
         blocks (e.g., ``{{ var }}``, ``{% if ... %}``).
@@ -131,6 +125,12 @@ def render_sql_template(sql_text: str, params: Mapping[str, object]) -> str:
 
     Returns:
       The fully rendered SQL string.
+
+    Notes:
+      - This check is independent of any `| default(...)` filters in the SQL:
+        even if a variable has a Jinja default, we still require it in `params`.
+      - With StrictUndefined, nested/attribute lookups like {{ obj.attr }}
+        still raise if structure doesn't match what the template expects.
 
     Raises:
       ValueError: If there is a parameter mismatch:
@@ -346,10 +346,6 @@ def write_df_to_gcs_parquet(
     """
     Write a pandas or polars DataFrame directly to GCS as a single Parquet object.
 
-    Requirements:
-      - pandas path: `pyarrow` + `gcsfs` must be installed.
-      - polars path: `fsspec` + `gcsfs` must be installed.
-
     Args:
       df: pandas.DataFrame or polars.DataFrame
       gs_uri: Destination like "gs://bucket/path/to/file.parquet"
@@ -361,6 +357,10 @@ def write_df_to_gcs_parquet(
     Returns:
       Mapping with at least {"uri": gs_uri}. If `confirm="stat"`, also includes
             {"size", "generation", "crc32c", "etag", "updated"} when available.
+
+    Notes:
+      - pandas path: `pyarrow` + `gcsfs` must be installed.
+      - polars path: `fsspec` + `gcsfs` must be installed.
 
     Raises:
       RuntimeError: If required packages are missing.
@@ -413,6 +413,93 @@ def write_df_to_gcs_parquet(
         raise IOError(f"GCS object exists but has size=0: {gs_uri}")
 
     # Normalize return payload to a simple dict
+    result = {
+        "uri": gs_uri,
+        "size": int(info.get("size")) if "size" in info else None,
+        "generation": info.get("generation"),
+        "crc32c": info.get("crc32c"),
+        "etag": info.get("etag"),
+        "updated": info.get("updated"),
+    }
+
+    return result
+
+
+def write_df_to_gcs_csv(
+    df,
+    gs_uri: str,
+    *,
+    index: bool = False,
+    storage_options: Mapping[str, Any] | None = None,
+    confirm: Literal["none", "stat"] = "stat",
+    **kwargs: Any,
+) -> Mapping[str, Any]:
+    """
+    Write a pandas or polars DataFrame directly to GCS as a CSV file.
+
+    CSV is lossy (no schema, no types). Intended for debugging or interchange,
+    not production forecasting artifacts. For production, use `write_df_to_gcs_parquet()`.
+
+    Args:
+      df: pandas.DataFrame or polars.DataFrame
+      gs_uri: Destination like "gs://bucket/path/to/file.csv"
+      index: Whether to write the DataFrame index (pandas only, default False).
+      storage_options: Passed to fsspec/gcsfs (e.g., {"token": "cloud"})
+      confirm: "none" to skip post-write stat, "stat" to validate and return metadata.
+      **kwargs: Forwarded to the writer (e.g., sep, date_format, quoting).
+
+    Returns:
+      Mapping with at least {"uri": gs_uri}. If `confirm="stat"`, also includes
+      {"size", "generation", "crc32c", "etag", "updated"} when available.
+
+    Notes:
+      - pandas path: `gcsfs` must be installed.
+      - polars path: `fsspec` + `gcsfs` must be installed.
+
+    Raises:
+      RuntimeError: If required packages are missing.
+      TypeError: If `df` isn't a pandas or polars DataFrame.
+      IOError: If confirmation indicates size=0 after write.
+    """
+    # TO DO: complete docstring
+
+    _check_storage_uri_str(gs_uri, uri_prefix="gs://")
+
+    storage_options = dict(storage_options or {})
+
+    if _is_pandas_df(df):
+        try:
+            import gcsfs
+        except ImportError as e:
+            raise RuntimeError("Pandas write .csv to GCS requires 'gcsfs'") from e
+        df.to_csv(
+            gs_uri,
+            index=index,
+            storage_options=storage_options,
+            **kwargs,
+        )
+    elif _is_polars_df(df):
+        try:
+            import fsspec
+            import gcsfs
+        except ImportError as e:
+            raise RuntimeError(
+                "polars write .csv to GCS requires 'fsspec' and 'gcsfs'"
+            ) from e
+        with fsspec.open(gs_uri, "wb", **storage_options) as f:
+            df.write_csv(f, **kwargs)
+
+    else:
+        raise TypeError(
+            f"Unsupported df type: {type(df).__name__} (expect pandas or polars)"
+        )
+
+    if confirm == "none":
+        return {"uri": gs_uri}
+    info = _check_gcs_file_stats(gs_uri, storage_options=storage_options)
+    if int(info.get("size", 0)) <= 0:
+        raise IOError(f"GCS object exists but has size=0: {gs_uri}")
+
     result = {
         "uri": gs_uri,
         "size": int(info.get("size")) if "size" in info else None,
