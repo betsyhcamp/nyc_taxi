@@ -1,0 +1,14 @@
+set positional-arguments
+
+run-ddl-queries *args:
+    uv run python scripts/00_run_ddl_queries.py {{args}}
+
+download-taxi-data *args:
+    uv run python scripts/01_download_taxi_rides_yyyy_mm.py {{args}}
+
+merge-taxi-data *args:
+    uv run python scripts/02_merge_taxi_ride_yyyy_mm_into_duckdb.py {{args}}
+
+duckdb-ui:
+    DB_PATH=$(uv run python -c "from pathlib import Path; from local import load_local_config; print(load_local_config(path=Path('config.yaml')).duckdb_location)") && uvx duckdb --ui "$DB_PATH"
+

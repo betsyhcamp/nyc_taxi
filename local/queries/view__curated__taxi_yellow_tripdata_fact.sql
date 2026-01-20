@@ -1,0 +1,30 @@
+CREATE OR REPLACE VIEW curated.taxi_yellow_tripdata_fact AS
+SELECT
+    vendorid AS vendor_id,
+    tpep_pickup_datetime,
+    tpep_dropoff_datetime,
+    passenger_count,
+    trip_distance,
+    ratecodeid AS ratecode_id,
+    store_and_fwd_flag,
+    pulocationid AS pickup_taxi_zone_id,
+    dolocationid AS dropoff_taxi_zone_id,
+    payment_type,
+    fare_amount,
+    extra,
+    mta_tax,
+    tip_amount,
+    tolls_amount,
+    improvement_surcharge,
+    total_amount,
+    congestion_surcharge,
+    airport_fee,
+    cbd_congestion_fee,
+    sourcefile_name,
+    trip_id,
+    CAST(tpep_pickup_datetime AS DATE) AS pickup_date,
+    date_trunc('hour', tpep_pickup_datetime) AS pickup_datetime_hour,
+    CAST(tpep_dropoff_datetime AS DATE) AS dropoff_date,
+    date_trunc('hour', tpep_dropoff_datetime) AS dropoff_datetime_hour
+FROM staging.taxi_yellow_tripdata_fact_silver;
+

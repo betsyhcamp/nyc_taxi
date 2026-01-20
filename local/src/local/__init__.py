@@ -1,2 +1,3 @@
-def hello() -> str:
-    return "Hello from local!"
+from local.config import LocalConfig, load_local_config
+
+__all__ = ["LocalConfig", "load_local_config"]
