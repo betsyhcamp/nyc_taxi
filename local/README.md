@@ -8,39 +8,6 @@ Running everything locally, and without an orchestrating framework like Airflow,
 
 ## Overview
 
-## Local Folder Structure
-
-```
-local/
-  scripts/
-    00_run_ddl_queries.py - run all ddl__*.sql files
-    10_download_taxi_rides_yyyy_mm.py - download monthly yellow taxi parquet files
-    11_merge_taxi_rides_into_duckdb.py - merge taxi ride parquet files into raw table
-    20_download_taxi_zone_lookup.py - download TLC taxi zone lookup CSV
-    21_download_taxi_zone_shapes.py - download TLC taxi zone shapefile ZIP
-    22_extract_taxi_zone_centroids_csv.py - extract centroids CSV from shapefile ZIP
-    23_merge_taxi_zone_lookup_into_duckdb.py - merge taxi zone lookup CSV into raw table
-    24_merge_taxi_zone_centroids_into_duckdb.py - merge centroid rows into staging table
-    30_merge_curated_date_dim.py - merge curated.date_dim for a date range
-    31_build_taxi_curated_layer.py - build staged and curated taxi tables
-  queries/
-    ddl__raw__taxi_yellow_tripdata_fact.sql - raw yellow taxi trips table DDL
-    merge__raw__taxi_yellow_tripdata_fact.sql - merge raw taxi rides from parquet files
-    view__staging__taxi_yellow_tripdata_fact.sql - staging table built from raw rides
-    view__curated__taxi_yellow_tripdata_fact.sql - curated taxi rides table
-    ddl__raw__taxi_zone_dim.sql - raw taxi zone dimension DDL
-    merge__raw__taxi_zone_dim.sql - merge taxi zone lookup CSV into raw dim
-    ddl__staging_taxi_zone_centroids.sql - staging centroids dimension DDL
-    merge__raw__taxi_zone_centroids_dim.sql - merge computed centroids into staging
-    view__curated__taxi_zone_dim.sql - curated taxi zone dimension table
-    ddl__curated__date_dim.sql - curated date dimension DDL
-    merge__curated__date_dim.sql - merge date dimension for a date range
-    ddl__curated__datetime_hour_dim.sql - curated hour dimension DDL
-    ddl__raw__weather_daily_fact.sql - raw daily weather fact DDL
-    ddl__raw__weather_hourly_fact.sql - raw hourly weather fact DDL
-    initial_daily_taxi_rides.sql - daily pickup series per zone for modeling
-```
-
 1. Download taxi ride + zone data idempotently
 
     ```bash
@@ -190,4 +157,37 @@ flowchart TD
     ddl_date_dim --> merge_date_dim_file --> initial_daily_file
     view_curated_fact --> initial_daily_file
     view_curated_zone --> initial_daily_file
+```
+
+## Local Folder Structure
+
+```
+local/
+  scripts/
+    00_run_ddl_queries.py - run all ddl__*.sql files
+    10_download_taxi_rides_yyyy_mm.py - download monthly yellow taxi parquet files
+    11_merge_taxi_rides_into_duckdb.py - merge taxi ride parquet files into raw table
+    20_download_taxi_zone_lookup.py - download TLC taxi zone lookup CSV
+    21_download_taxi_zone_shapes.py - download TLC taxi zone shapefile ZIP
+    22_extract_taxi_zone_centroids_csv.py - extract centroids CSV from shapefile ZIP
+    23_merge_taxi_zone_lookup_into_duckdb.py - merge taxi zone lookup CSV into raw table
+    24_merge_taxi_zone_centroids_into_duckdb.py - merge centroid rows into staging table
+    30_merge_curated_date_dim.py - merge curated.date_dim for a date range
+    31_build_taxi_curated_layer.py - build staged and curated taxi tables
+  queries/
+    ddl__raw__taxi_yellow_tripdata_fact.sql - raw yellow taxi trips table DDL
+    merge__raw__taxi_yellow_tripdata_fact.sql - merge raw taxi rides from parquet files
+    view__staging__taxi_yellow_tripdata_fact.sql - staging table built from raw rides
+    view__curated__taxi_yellow_tripdata_fact.sql - curated taxi rides table
+    ddl__raw__taxi_zone_dim.sql - raw taxi zone dimension DDL
+    merge__raw__taxi_zone_dim.sql - merge taxi zone lookup CSV into raw dim
+    ddl__staging_taxi_zone_centroids.sql - staging centroids dimension DDL
+    merge__raw__taxi_zone_centroids_dim.sql - merge computed centroids into staging
+    view__curated__taxi_zone_dim.sql - curated taxi zone dimension table
+    ddl__curated__date_dim.sql - curated date dimension DDL
+    merge__curated__date_dim.sql - merge date dimension for a date range
+    ddl__curated__datetime_hour_dim.sql - curated hour dimension DDL
+    ddl__raw__weather_daily_fact.sql - raw daily weather fact DDL
+    ddl__raw__weather_hourly_fact.sql - raw hourly weather fact DDL
+    initial_daily_taxi_rides.sql - daily pickup series per zone for modeling
 ```
