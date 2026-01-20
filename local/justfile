@@ -4,10 +4,25 @@ run-ddl-queries *args:
     uv run python scripts/00_run_ddl_queries.py {{args}}
 
 download-taxi-data *args:
-    uv run python scripts/01_download_taxi_rides_yyyy_mm.py {{args}}
+    uv run python scripts/10_download_taxi_rides_yyyy_mm.py {{args}}
 
 merge-taxi-data *args:
-    uv run python scripts/02_merge_taxi_ride_yyyy_mm_into_duckdb.py {{args}}
+    uv run python scripts/11_merge_taxi_rides_into_duckdb.py {{args}}
+
+merge-curated-date-dim *args:
+    uv run python scripts/30_merge_curated_date_dim.py {{args}}
+
+build-taxi-curated-layer *args:
+    uv run python scripts/31_build_taxi_curated_layer.py {{args}}
+
+download-taxi-zone-dimension *args:
+    uv run python scripts/20_download_taxi_zone_lookup.py {{args}}
+    uv run python scripts/21_download_taxi_zone_shapes.py {{args}}
+    uv run python scripts/22_extract_taxi_zone_centroids_csv.py {{args}}
+
+merge-taxi-zone-dimension *args:
+    uv run python scripts/23_merge_taxi_zone_lookup_into_duckdb.py {{args}}
+    uv run python scripts/24_merge_taxi_zone_centroids_into_duckdb.py {{args}}
 
 duckdb-ui:
     DB_PATH=$(uv run python -c "from pathlib import Path; from local import load_local_config; print(load_local_config(path=Path('config.yaml')).duckdb_location)") && uvx duckdb --ui "$DB_PATH"

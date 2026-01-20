@@ -1,4 +1,4 @@
-CREATE OR REPLACE VIEW staging.taxi_yellow_tripdata_fact_silver AS
+CREATE OR REPLACE TABLE staging.taxi_yellow_tripdata_fact_silver AS
 WITH threshold_cte AS (
     SELECT
         sourcefile_name,

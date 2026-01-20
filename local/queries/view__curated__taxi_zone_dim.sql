@@ -1,4 +1,4 @@
-CREATE OR REPLACE VIEW curated.taxi_zone_dim AS
+CREATE OR REPLACE TABLE curated.taxi_zone_dim AS
 SELECT
     z.locationid AS taxi_zone_id,
     z.borough,

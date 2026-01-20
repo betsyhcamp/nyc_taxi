@@ -24,4 +24,5 @@ dev = [
     "ipykernel>=7.1.0",
     "jupyterlab>=4.5.2",
     "magic-duckdb>=0.2.4",
+    "marimo[recommended]>=0.19.4",
 ]

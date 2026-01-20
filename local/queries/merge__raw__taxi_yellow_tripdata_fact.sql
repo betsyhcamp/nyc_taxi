@@ -1,17 +1,23 @@
+SET VARIABLE parquet_files = {{parquet_files}};
+SET VARIABLE year_month_start = {{year_month_start}};
+SET VARIABLE year_month_end_inclusive = {{year_month_end_inclusive}};
+
 -- STAGING VIEW
 CREATE OR REPLACE TEMP VIEW staging_yellow AS
 SELECT
     *,
     regexp_extract(filename, '.*/([^/]+)$', 1) AS sourcefile_name
-FROM read_parquet({{parquet_files}}, filename=true)
+FROM read_parquet(getvariable('parquet_files'), filename=true)
 WHERE
     (
-        {{year_month_start}} IS NULL
-        OR regexp_extract(filename, '([0-9]{4}-[0-9]{2})', 1) >= {{year_month_start}}
+        getvariable('year_month_start') IS NULL
+        OR regexp_extract(filename, '([0-9]{4}-[0-9]{2})', 1)
+            >= getvariable('year_month_start')
     )
     AND (
-        {{year_month_end_inclusive}} IS NULL
-        OR regexp_extract(filename, '([0-9]{4}-[0-9]{2})', 1) <= {{year_month_end_inclusive}}
+        getvariable('year_month_end_inclusive') IS NULL
+        OR regexp_extract(filename, '([0-9]{4}-[0-9]{2})', 1)
+            <= getvariable('year_month_end_inclusive')
     );
 
 -- MERGE STATEMENT

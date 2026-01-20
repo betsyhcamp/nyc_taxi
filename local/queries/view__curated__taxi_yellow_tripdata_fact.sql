@@ -1,4 +1,4 @@
-CREATE OR REPLACE VIEW curated.taxi_yellow_tripdata_fact AS
+CREATE OR REPLACE TABLE curated.taxi_yellow_tripdata_fact AS
 SELECT
     vendorid AS vendor_id,
     tpep_pickup_datetime,
