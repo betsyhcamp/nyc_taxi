@@ -510,3 +510,41 @@ def write_df_to_gcs_csv(
     }
 
     return result
+
+
+def write_df_to_gcs(
+    df,
+    gs_uri: str,
+    *,
+    file_format: Literal["parquet", "csv"] = "parquet",
+    storage_options: Mapping[str, Any] | None = None,
+    confirm: Literal["none", "stat"] = "stat",
+    **kwargs: Any,
+) -> Mapping[str, Any]:
+    # TO DO: Add docstring
+
+    if file_format == "parquet":
+        if not gs_uri.endswith(".parquet"):
+            raise ValueError(f"Parquet output requires '.parquet' extension: {gs_uri}")
+        return write_df_to_gcs_parquet(
+            df,
+            gs_uri,
+            storage_options=storage_options,
+            confirm=confirm,
+            **kwargs,
+        )
+
+    if file_format == "csv":
+        if not gs_uri.endswith(".csv"):
+            raise ValueError(f"CSV output requires '.csv' extension: {gs_uri}")
+        return write_df_to_gcs_csv(
+            df,
+            gs_uri,
+            storage_options=storage_options,
+            confirm=confirm,
+            **kwargs,
+        )
+
+    raise ValueError(
+        f"Unsupported file_format={file_format!r}. Expected 'parquet' or 'csv'."
+    )
