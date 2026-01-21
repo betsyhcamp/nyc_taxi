@@ -6,6 +6,10 @@ I (Eric) found myself confounded by two simultaneous learning curves: sagemaker 
 
 Running everything locally, and without an orchestrating framework like Airflow, Metaflow, SageMaker, etc. will make the infra part much more straightforward.
 
+Note: 
+- an ML system has a rigidly defined output. No matter what experimental approaches you take, they are only valid if the output is in the correct format. E.g. a series of predictions on the grain `pu_location`-`date`.
+- but an experiment can infinitely vary the inputs.
+
 ## Overview
 
 1. Download taxi ride + zone data idempotently
@@ -49,6 +53,13 @@ Running everything locally, and without an orchestrating framework like Airflow,
 
     - runs SQL queries parameterized by date against data in these files, uses merge into for idempotency
     - defaults to most recent 3 months, currently in the lakehouse.duckdb
+
+    Consideration:
+    1. Weather forecast data is not the same as realized weather data.
+      - when you are at a date D and you get a weather forecast, for D + 1, D + 2, etc., there is uncertainty about how accurate that forecast will actually be. In other words, a forecasted temperature or humidity or wind speed or Air Quality Index reading will have some amount of error (residuals) compared to what it actually ends up being.
+    2. Realized historical weather data, is just correct. It was what it was (except for measurement error in instruments). So, when training a model, there is a difference between using realized weather data and forecasted weather data.
+
+    How should we handle this? If nothing else, communicate that using "historical weather data" is cheating, becuase it is essentially being able to see the future. In other words, it is "future data leakage". Maybe we just accept this and say that in a real world scenario, it is ideal to have a backfilled historical dataset of what the weather FORECAST was on a date, not what the ACTUAL weather would be.
 
 3. Train model
 
