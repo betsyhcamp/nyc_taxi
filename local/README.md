@@ -426,6 +426,150 @@ flowchart TD
     style script_44 fill:#6b7280,stroke:#374151,color:#fff
 ```
 
+### Complete Data Lineage
+
+```mermaid
+flowchart TD
+    classDef sql fill:#e0f2fe,stroke:#0284c7,color:#000
+    classDef file fill:#fef9c3,stroke:#ca8a04,color:#000
+    classDef table fill:#dcfce7,stroke:#16a34a,color:#000
+
+    %% External APIs
+    subgraph apis [External Data Sources]
+        direction LR
+        tlc_api[NYC TLC CloudFront]:::file
+        meteostat_api[Meteostat API]:::file
+    end
+
+    %% 1* Taxi Rides Flow
+    subgraph script_10 [10_download_taxi_rides_yyyy_mm.py]
+        download_10[download parquet files]
+    end
+    taxi_parquet[data/taxi/yellow/YYYY-MM.parquet]:::file
+    subgraph script_11 [11_merge_taxi_rides_into_duckdb.py]
+        merge_11[merge__raw__taxi_yellow_tripdata_fact.sql]:::sql
+    end
+    raw_taxi[raw.taxi_yellow_tripdata_fact]:::table
+
+    %% 2* Taxi Zone Flow - Lookup
+    subgraph script_20 [20_download_taxi_zone_lookup.py]
+        download_20[download lookup CSV]
+    end
+    lookup_csv[data/taxi/zones/taxi_zone_lookup.csv]:::file
+    subgraph script_23 [23_merge_taxi_zone_lookup_into_duckdb.py]
+        merge_23[merge__raw__taxi_zone_dim.sql]:::sql
+    end
+    raw_zone[raw.taxi_zone_dim]:::table
+
+    %% 2* Taxi Zone Flow - Shapes/Centroids
+    subgraph script_21 [21_download_taxi_zone_shapes.py]
+        download_21[download shapefile ZIP]
+    end
+    shapes_zip[data/taxi/zones/taxi_zones.zip]:::file
+    subgraph script_22 [22_extract_taxi_zone_centroids_csv.py]
+        extract_22[extract centroids from shapefile]
+    end
+    centroids_csv[data/taxi/zones/taxi_zone_centroids.csv]:::file
+    subgraph script_24 [24_merge_taxi_zone_centroids_into_duckdb.py]
+        merge_24[merge__raw__taxi_zone_centroids_dim.sql]:::sql
+    end
+    stg_centroid[staging.taxi_zone_centroids_dim]:::table
+
+    %% 3* Date Dimension Flow
+    subgraph script_30 [30_merge_curated_date_dim.py]
+        merge_date[merge__curated__date_dim.sql]:::sql
+        merge_datetime[merge__curated__datetime_hour_dim.sql]:::sql
+    end
+    cur_date[curated.date_dim]:::table
+    cur_datetime[curated.datetime_hour_dim]:::table
+
+    %% 3* Taxi Curated Layer
+    subgraph script_31 [31_build_taxi_curated_layer.py]
+        view_stg[view__staging__taxi_yellow_tripdata_fact.sql]:::sql
+        view_zone[view__curated__taxi_zone_dim.sql]:::sql
+        view_fact[view__curated__taxi_yellow_tripdata_fact.sql]:::sql
+    end
+    stg_taxi[staging.taxi_yellow_tripdata_fact]:::table
+    cur_zone[curated.taxi_zone_dim]:::table
+    cur_fact[curated.taxi_yellow_tripdata_fact]:::table
+
+    %% 4* Weather Station Flow
+    subgraph script_40 [40_download_weather_station_dim.py]
+        download_40[fetch station metadata]
+    end
+    station_csv[data/weather/station_dim/weather_stations.csv]:::file
+    subgraph script_41 [41_merge_weather_station_dim.py]
+        merge_41[merge__raw__weather_station_dim.sql]:::sql
+    end
+    raw_station[raw.weather_station_dim]:::table
+
+    %% 4* Weather Data Flow
+    subgraph script_42 [42_download_weather_data.py]
+        download_42_hourly[fetch hourly data]
+        download_42_daily[fetch daily data]
+    end
+    hourly_pq[data/weather/hourly/*.parquet]:::file
+    daily_pq[data/weather/daily/*.parquet]:::file
+    subgraph script_43 [43_merge_weather_into_duckdb.py]
+        merge_43_hourly[merge__raw__weather_hourly_fact.sql]:::sql
+        merge_43_daily[merge__raw__weather_daily_fact.sql]:::sql
+    end
+    raw_hourly[raw.weather_hourly_fact]:::table
+    raw_daily[raw.weather_daily_fact]:::table
+
+    %% 4* Weather Curated Layer
+    subgraph script_44 [44_build_weather_curated_layer.py]
+        view_hourly[view__curated__weather_hourly_fact.sql]:::sql
+        view_daily[view__curated__weather_daily_fact.sql]:::sql
+    end
+    cur_hourly[curated.weather_hourly_fact]:::table
+    cur_daily[curated.weather_daily_fact]:::table
+
+    %% Connections - 1* Taxi Rides
+    tlc_api --> script_10 --> taxi_parquet --> script_11 --> raw_taxi
+
+    %% Connections - 2* Taxi Zones
+    tlc_api --> script_20 --> lookup_csv --> script_23 --> raw_zone
+    tlc_api --> script_21 --> shapes_zip --> script_22 --> centroids_csv --> script_24 --> stg_centroid
+
+    %% Connections - 3* Date Dimensions
+    merge_date --> cur_date
+    merge_datetime --> cur_datetime
+
+    %% Connections - 3* Taxi Curated
+    raw_taxi --> view_stg --> stg_taxi
+    raw_zone --> view_zone
+    stg_centroid --> view_zone
+    view_zone --> cur_zone
+    stg_taxi --> view_fact
+    cur_date --> view_fact
+    view_fact --> cur_fact
+
+    %% Connections - 4* Weather
+    meteostat_api --> script_40 --> station_csv --> script_41 --> raw_station
+    meteostat_api --> script_42
+    download_42_hourly --> hourly_pq
+    download_42_daily --> daily_pq
+    hourly_pq --> merge_43_hourly --> raw_hourly --> view_hourly --> cur_hourly
+    daily_pq --> merge_43_daily --> raw_daily --> view_daily --> cur_daily
+
+    %% Style all script subgraphs
+    style script_10 fill:#6b7280,stroke:#374151,color:#fff
+    style script_11 fill:#6b7280,stroke:#374151,color:#fff
+    style script_20 fill:#6b7280,stroke:#374151,color:#fff
+    style script_21 fill:#6b7280,stroke:#374151,color:#fff
+    style script_22 fill:#6b7280,stroke:#374151,color:#fff
+    style script_23 fill:#6b7280,stroke:#374151,color:#fff
+    style script_24 fill:#6b7280,stroke:#374151,color:#fff
+    style script_30 fill:#6b7280,stroke:#374151,color:#fff
+    style script_31 fill:#6b7280,stroke:#374151,color:#fff
+    style script_40 fill:#6b7280,stroke:#374151,color:#fff
+    style script_41 fill:#6b7280,stroke:#374151,color:#fff
+    style script_42 fill:#6b7280,stroke:#374151,color:#fff
+    style script_43 fill:#6b7280,stroke:#374151,color:#fff
+    style script_44 fill:#6b7280,stroke:#374151,color:#fff
+```
+
 ## Local Folder Structure
 
 ```
