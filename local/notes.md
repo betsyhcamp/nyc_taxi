@@ -27,3 +27,36 @@ Insights from Betsy:
 4. Cross validation and evaluations (at least for `mlforecast`) are COUPLED to the library. Or at least: they have have their own eval and cv functions. And example from Eric: XGboost has a feature importance function--not every framework or model family can easily give you that. Takeaway: it is difficult to create a model agnostic:
   - cross validation framework
   - evaluation framework
+
+5. Evaluating is harder when you have LOTS of time series, e.g. 10,000's of products. You can plot a sample, but you cannot look at all of them. When you only have a few time series, you can look at all of them.
+
+## Note on process for a new data science project or feature
+
+1. What will your output look like?
+  - what are your primary keys? AKA what uniquely identifies a row on which you would make an inference?
+    - example: for a time series, it might be `series-id`-`date-day` (series id and date grain), e.g. `pickup-zone-id`-`date-day`
+    - example: for fraud detection, it might be `transaction-id` (since transaction has a many to one relationship with a user). We'd be inferring whether a particular transaction is fraudulent.
+    - example: for a product recommendation system, it might be `user-id`-`product-id` (since user has a many to many relationship with product). We'd be inferring whether a particular user would like a particular product.
+    - example: for a customer churn prediction, it might be `customer-id` (since customer has a one to one relationship with a user). We'd be inferring whether a particular customer will churn.
+  - Primary keys are important because at inference time, we will need to look up the features for whichever keys we want to run inference on.
+    - used for caching and looking up pre-computed features
+    - makes it clear how to parameterize a batch inference job (a set or range of primary keys)
+    - defines the labels. Labels look like the final output. Predictions should be able to be `UNION` (sql) directly onto the labels table.
+      - Labels can be joined to features (think of them as dimensions of the label) via the primary keys.
+
+## Deployment
+
+1. You might deploy a model artifact. Package it in training, deploy to prod.
+  - But VERY often, you do not. You deploy a set of metadata:
+    - hyperparameters
+    - feature view query
+    - training code
+    Imagine committing all of these to a branch:
+     - `hyperparameters.yaml`
+     - `feature-view-query.sql` or YAML file
+     - `train.py` or a Metaflow flow, etc.
+    Models would have been trained in an ad-hoc fashion in non-prod. We throw those away (or save them purely for the sake of archiving history and debugging).
+
+    Then we retrain the model using those same data (feature view) and code (train.py) in prod.
+  - In highly regulated industries like finance--deciding who to approve a loan for--models often get saved in a registry so that they can undergo an standard, rigid audit process--the code for which is not under the control of the modeler. Even in this scenario, models from non-prod should probably not be used--instead, the model should be retrained in prod and THEN saved for audit and THEN deployed to prod.
+2. 
