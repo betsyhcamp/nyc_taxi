@@ -1,12 +1,10 @@
--- Hourly weather fact table keyed by station and hour, used to join meteorological
--- features to taxi demand facts.
+-- Curated hourly weather fact table with one row per hour, coalesced from multiple
+-- stations by priority. Used to join meteorological features to taxi demand facts.
 
-CREATE SCHEMA IF NOT EXISTS raw;
+CREATE SCHEMA IF NOT EXISTS curated;
 
-CREATE TABLE IF NOT EXISTS raw.weather_hourly_fact (
-    -- Weather station identifier such as KNYC or KLGA; primary key component.
-    weather_station_id VARCHAR NOT NULL,
-    -- Hour start timestamp in local time for which the weather observations apply.
+CREATE TABLE IF NOT EXISTS curated.weather_hourly_fact (
+    -- Hour start timestamp in local time; primary key.
     datetime_hour TIMESTAMP NOT NULL,
     -- Calendar date corresponding to datetime_hour; FK to date_dim.calendar_date.
     calendar_date DATE NOT NULL,
@@ -32,8 +30,9 @@ CREATE TABLE IF NOT EXISTS raw.weather_hourly_fact (
     cloud_cover_percent DOUBLE,
     -- Weather condition code from Meteostat.
     weather_condition_code INTEGER,
+    -- Station ID that provided this row's data (for lineage/debugging).
+    source_station_id VARCHAR NOT NULL,
     -- Timestamp in UTC when row was loaded.
     load_timestamp_utc TIMESTAMP,
-    PRIMARY KEY (weather_station_id, datetime_hour)
+    PRIMARY KEY (datetime_hour)
 );
-

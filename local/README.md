@@ -12,7 +12,7 @@ Note:
 
 ## Overview
 
-1. Download taxi ride + zone data idempotently
+1. Download taxi ride + zone + weather data idempotently
 
     ```bash
     just download-taxi-data \
@@ -20,10 +20,15 @@ Note:
         --year-month-end-inclusive=2025-12
 
     just download-taxi-zone-dimension
+
+    # Weather data from 4 Meteostat stations near Manhattan
+    just download-weather-station-dimension
+    just download-weather-data --start-date=2015-01-01 --end-date=2025-12-31
     ```
 
-    - skips already downloaded files
-    - defaults to last 3 months, acknowledging that the NYC TLC publishes data with a 2-month delay
+    - skips already downloaded files (use `--force` to overwrite)
+    - taxi data defaults to last 3 months, acknowledging that the NYC TLC publishes data with a 2-month delay
+    - weather stations: KNYC0 (Yorkville), KTEB0 (Teterboro), KJRB0 (Wall Street), 72502 (Newark). We would have taken the closest weather station to Central Park only, but 
 
 2. Load into DuckDB and build curated layer
 
@@ -43,6 +48,11 @@ Note:
     just build-taxi-curated-layer \
         --year-month-start=2025-01 \
         --year-month-end-inclusive=2025-12
+
+    # Weather: merge raw then build curated with priority-based coalescing
+    just merge-weather-station-dimension
+    just merge-weather-data --start-date=2015-01-01 --end-date=2025-12-31
+    just build-weather-curated-layer
     ```
 
     | pickup_taxi_zone_id | pickup_date | number_ride_pickups | ... |
@@ -53,13 +63,14 @@ Note:
 
     - runs SQL queries parameterized by date against data in these files, uses merge into for idempotency
     - defaults to most recent 3 months, currently in the lakehouse.duckdb
+    - curated weather tables coalesce 4 stations into one row per timestamp
 
-    Consideration:
-    1. Weather forecast data is not the same as realized weather data.
-      - when you are at a date D and you get a weather forecast, for D + 1, D + 2, etc., there is uncertainty about how accurate that forecast will actually be. In other words, a forecasted temperature or humidity or wind speed or Air Quality Index reading will have some amount of error (residuals) compared to what it actually ends up being.
-    2. Realized historical weather data, is just correct. It was what it was (except for measurement error in instruments). So, when training a model, there is a difference between using realized weather data and forecasted weather data.
+**Consideration:** Weather forecast data is not the same as realized weather data.
 
-    How should we handle this? If nothing else, communicate that using "historical weather data" is cheating, becuase it is essentially being able to see the future. In other words, it is "future data leakage". Maybe we just accept this and say that in a real world scenario, it is ideal to have a backfilled historical dataset of what the weather FORECAST was on a date, not what the ACTUAL weather would be.
+1. When you are at a date D and you get a weather forecast for D + 1, D + 2, etc., there is uncertainty about how accurate that forecast will actually be. In other words, a forecasted temperature or humidity or wind speed or Air Quality Index reading will have some amount of error (residuals) compared to what it actually ends up being.
+2. Realized historical weather data is just correct. It was what it was (except for measurement error in instruments). So, when training a model, there is a difference between using realized weather data and forecasted weather data.
+
+How should we handle this? If nothing else, communicate that using "historical weather data" is cheating, because it is essentially being able to see the future. In other words, it is "future data leakage". Maybe we just accept this and say that in a real world scenario, it is ideal to have a backfilled historical dataset of what the weather FORECAST was on a date, not what the ACTUAL weather would be.
 
 3. Train model
 
@@ -104,70 +115,252 @@ Note:
 
   One preference: never transiiton a model from "non-prod" to "prod". Always re-train the model in prod once the code is merged.
 
-## SQL Lineage
+## Data Lineage
+
+*To update or generate these diagrams, use the prompt hidden at this point as a comment in the raw README.md*
+
+<!--
+
+PROMPT FOR GENERATING DATA LINEAGE DIAGRAMS
+
+Use this prompt with an AI assistant to generate or update data lineage diagrams for this project.
+
+## Style Guide
+
+### Flowchart Direction
+
+- Use `flowchart TD` (top-down) for most diagrams
+- Use `flowchart LR` (left-right) only when showing many parallel DDL-to-table mappings
+
+### Color Scheme (classDef)
+
+Always include these three class definitions at the top of each diagram:
+
+```
+classDef script fill:#e0f2fe,stroke:#0284c7
+classDef file fill:#fef9c3,stroke:#ca8a04
+classDef table fill:#dcfce7,stroke:#16a34a
+```
+
+- **Scripts** (blue): Python scripts, SQL query files, API calls
+- **Files** (yellow): Local artifacts like .csv, .parquet, .zip files
+- **Tables** (green): Database tables (raw.*, staging.*, curated.*)
+
+### Structure
+
+1. **Data Sources**: External APIs or services (e.g., "NYC TLC CloudFront", "Meteostat API")
+2. **Script Boxes**: Group related scripts in labeled subgraphs (e.g., `subgraph download [10_download_*.py]`)
+3. **File Artifacts**: Show intermediate files with full paths (e.g., `data/taxi/yellow/YYYY-MM.parquet`)
+4. **Tables**: Show final database tables with schema prefix (e.g., `raw.taxi_zone_dim`)
+
+### Node Naming
+
+- Use descriptive IDs: `script_10`, `lookup_csv`, `raw_zone`
+- Apply class with `:::script`, `:::file`, or `:::table`
+- For scripts inside boxes, show the SQL file or action (e.g., `merge__raw__taxi_zone_dim.sql`)
+
+### Flow
+
+- Arrows show data flow: source → script → file → script → table
+- Keep flows top-to-bottom or left-to-right consistently within a diagram
+
+## Example
+
+Use arrows (double-hyphen greater-than) to connect nodes:
+
+    API[External API]:::script
+    subgraph download [download_script.py]
+        dl[download data]:::script
+    end
+    file[data/folder/file.parquet]:::file
+    table[raw.table_name]:::table
+
+    API (arrow) dl (arrow) file (arrow) table
+
+-->
+
+### 0* Scripts - DDL (Schema Creation)
+
+```mermaid
+flowchart LR
+    classDef script fill:#e0f2fe,stroke:#0284c7
+    classDef table fill:#dcfce7,stroke:#16a34a
+
+    subgraph scripts_0 [00_run_ddl_queries.py]
+        ddl1[ddl__raw__taxi_yellow_tripdata_fact.sql]:::script
+        ddl2[ddl__raw__taxi_zone_dim.sql]:::script
+        ddl3[ddl__staging_taxi_zone_centroids.sql]:::script
+        ddl4[ddl__curated__date_dim.sql]:::script
+        ddl5[ddl__curated__datetime_hour_dim.sql]:::script
+        ddl6[ddl__raw__weather_station_dim.sql]:::script
+        ddl7[ddl__raw__weather_hourly_fact.sql]:::script
+        ddl8[ddl__raw__weather_daily_fact.sql]:::script
+        ddl9[ddl__curated__weather_hourly_fact.sql]:::script
+        ddl10[ddl__curated__weather_daily_fact.sql]:::script
+    end
+
+    subgraph tables_0 [Tables Created]
+        raw_taxi[raw.taxi_yellow_tripdata_fact]:::table
+        raw_zone[raw.taxi_zone_dim]:::table
+        stg_centroid[staging.taxi_zone_centroids_dim]:::table
+        cur_date[curated.date_dim]:::table
+        cur_hour[curated.datetime_hour_dim]:::table
+        raw_station[raw.weather_station_dim]:::table
+        raw_whourly[raw.weather_hourly_fact]:::table
+        raw_wdaily[raw.weather_daily_fact]:::table
+        cur_whourly[curated.weather_hourly_fact]:::table
+        cur_wdaily[curated.weather_daily_fact]:::table
+    end
+
+    ddl1 --> raw_taxi
+    ddl2 --> raw_zone
+    ddl3 --> stg_centroid
+    ddl4 --> cur_date
+    ddl5 --> cur_hour
+    ddl6 --> raw_station
+    ddl7 --> raw_whourly
+    ddl8 --> raw_wdaily
+    ddl9 --> cur_whourly
+    ddl10 --> cur_wdaily
+```
+
+### 1* Scripts - Taxi Rides
 
 ```mermaid
 flowchart TD
-    classDef ddl fill:#f3f4f6,stroke:#9ca3af,color:#111827;
-    classDef merge fill:#dbeafe,stroke:#2563eb,color:#111827;
-    classDef view fill:#dcfce7,stroke:#16a34a,color:#111827;
-    classDef analysis fill:#f3e8ff,stroke:#7e22ce,color:#111827;
-    classDef cte fill:#ffffff,stroke:#6b7280,stroke-dasharray: 3 3,color:#111827;
+    classDef script fill:#e0f2fe,stroke:#0284c7
+    classDef file fill:#fef9c3,stroke:#ca8a04
+    classDef table fill:#dcfce7,stroke:#16a34a
 
-    ddl_raw_taxi[ddl__raw__taxi_yellow_tripdata_fact.sql]:::ddl
-    ddl_raw_zone[ddl__raw__taxi_zone_dim.sql]:::ddl
-    ddl_staging_centroids[ddl__staging_taxi_zone_centroids.sql]:::ddl
-    ddl_date_dim[ddl__curated__date_dim.sql]:::ddl
-    ddl_datetime_hour[ddl__curated__datetime_hour_dim.sql]:::ddl
-    ddl_weather_daily[ddl__raw__weather_daily_fact.sql]:::ddl
-    ddl_weather_hourly[ddl__raw__weather_hourly_fact.sql]:::ddl
-
-    subgraph merge_raw_taxi["merge__raw__taxi_yellow_tripdata_fact.sql"]
-        merge_raw_taxi_file[merge__raw__taxi_yellow_tripdata_fact.sql]:::merge
-        merge_raw_taxi_staged[CTE: staged]:::cte
-        merge_raw_taxi_deduped[CTE: deduped]:::cte
-        merge_raw_taxi_staged --> merge_raw_taxi_deduped --> merge_raw_taxi_file
+    subgraph download [10_download_taxi_rides_yyyy_mm.py]
+        script_10[NYC TLC CloudFront]:::script
     end
 
-    subgraph view_staging_taxi["view__staging__taxi_yellow_tripdata_fact.sql"]
-        view_staging_taxi_file[view__staging__taxi_yellow_tripdata_fact.sql]:::view
-        view_staging_taxi_threshold[CTE: threshold_cte]:::cte
-        view_staging_taxi_threshold --> view_staging_taxi_file
+    parquet[data/taxi/yellow/YYYY-MM.parquet]:::file
+
+    subgraph merge [11_merge_taxi_rides_into_duckdb.py]
+        script_11[merge__raw__taxi_yellow_tripdata_fact.sql]:::script
     end
 
-    view_curated_fact[view__curated__taxi_yellow_tripdata_fact.sql]:::view
+    raw_taxi[raw.taxi_yellow_tripdata_fact]:::table
 
-    subgraph merge_raw_zone["merge__raw__taxi_zone_dim.sql"]
-        merge_raw_zone_file[merge__raw__taxi_zone_dim.sql]:::merge
+    script_10 --> parquet --> script_11 --> raw_taxi
+```
+
+### 2* Scripts - Taxi Zone Dimension
+
+```mermaid
+flowchart TD
+    classDef script fill:#e0f2fe,stroke:#0284c7
+    classDef file fill:#fef9c3,stroke:#ca8a04
+    classDef table fill:#dcfce7,stroke:#16a34a
+
+    TLC[NYC TLC CloudFront]:::script
+
+    subgraph download [20, 21, 22 Download and Extract]
+        script_20[20: download taxi_zone_lookup.csv]:::script
+        script_21[21: download taxi_zones.zip]:::script
+        script_22[22: extract centroids csv]:::script
     end
 
-    subgraph merge_raw_centroids["merge__raw__taxi_zone_centroids_dim.sql"]
-        merge_raw_centroids_file[merge__raw__taxi_zone_centroids_dim.sql]:::merge
+    lookup_csv[data/taxi/zones/taxi_zone_lookup.csv]:::file
+    shapes_zip[data/taxi/zones/taxi_zones.zip]:::file
+    centroids_csv[data/taxi/zones/taxi_zone_centroids.csv]:::file
+
+    subgraph merge [23, 24 Merge Scripts]
+        script_23[23: merge__raw__taxi_zone_dim.sql]:::script
+        script_24[24: merge__raw__taxi_zone_centroids_dim.sql]:::script
     end
 
-    view_curated_zone[view__curated__taxi_zone_dim.sql]:::view
+    raw_zone[raw.taxi_zone_dim]:::table
+    stg_centroid[staging.taxi_zone_centroids_dim]:::table
 
-    subgraph merge_date_dim["merge__curated__date_dim.sql"]
-        merge_date_dim_file[merge__curated__date_dim.sql]:::merge
-        merge_date_dim_dates[CTE: dates]:::cte
-        merge_date_dim_dates --> merge_date_dim_file
+    TLC --> script_20 --> lookup_csv --> script_23 --> raw_zone
+    TLC --> script_21 --> shapes_zip --> script_22 --> centroids_csv --> script_24 --> stg_centroid
+```
+
+### 3* Scripts - Taxi Curated Layer
+
+```mermaid
+flowchart TD
+    classDef script fill:#e0f2fe,stroke:#0284c7
+    classDef table fill:#dcfce7,stroke:#16a34a
+
+    subgraph inputs [Dependencies from 1* and 2*]
+        raw_taxi[raw.taxi_yellow_tripdata_fact]:::table
+        raw_zone[raw.taxi_zone_dim]:::table
+        stg_centroid[staging.taxi_zone_centroids_dim]:::table
     end
 
-    subgraph initial_daily["initial_daily_taxi_rides.sql"]
-        initial_daily_file[initial_daily_taxi_rides.sql]:::analysis
-        initial_max_date[CTE: max_pickup_date_cte]:::cte
-        initial_daily_cte[CTE: daily_timeseries_cte]:::cte
-        initial_min_date[CTE: min_date_bound_cte]:::cte
-        initial_calendar[CTE: pickup_taxi_zone_id_cal]:::cte
-        initial_max_date --> initial_daily_cte --> initial_min_date --> initial_calendar --> initial_daily_file
+    subgraph script_30 [30_merge_curated_date_dim.py]
+        merge_date[merge__curated__date_dim.sql]:::script
+        merge_datetime[merge__curated__datetime_hour_dim.sql]:::script
+        cur_date[curated.date_dim]:::table
+        cur_datetime[curated.datetime_hour_dim]:::table
     end
 
-    ddl_raw_taxi --> merge_raw_taxi_file --> view_staging_taxi_file --> view_curated_fact
-    ddl_raw_zone --> merge_raw_zone_file --> view_curated_zone
-    ddl_staging_centroids --> merge_raw_centroids_file --> view_curated_zone
-    ddl_date_dim --> merge_date_dim_file --> initial_daily_file
-    view_curated_fact --> initial_daily_file
-    view_curated_zone --> initial_daily_file
+    subgraph script_31 [31_build_taxi_curated_layer.py]
+        view_stg[view__staging__taxi_yellow_tripdata_fact.sql]:::script
+        view_zone[view__curated__taxi_zone_dim.sql]:::script
+        view_fact[view__curated__taxi_yellow_tripdata_fact.sql]:::script
+        stg_taxi[staging.taxi_yellow_tripdata_fact]:::table
+        cur_zone[curated.taxi_zone_dim]:::table
+        cur_fact[curated.taxi_yellow_tripdata_fact]:::table
+    end
+
+    merge_date --> cur_date
+    merge_datetime --> cur_datetime
+    raw_taxi --> view_stg --> stg_taxi --> view_fact --> cur_fact
+    cur_date --> view_fact
+    raw_zone --> view_zone --> cur_zone
+    stg_centroid --> view_zone
+```
+
+### 4* Scripts - Weather Data
+
+```mermaid
+flowchart TD
+    classDef script fill:#e0f2fe,stroke:#0284c7
+    classDef file fill:#fef9c3,stroke:#ca8a04
+    classDef table fill:#dcfce7,stroke:#16a34a
+
+    subgraph download [40, 42 Download Scripts]
+        script_40[40_download_weather_station_dim.py]:::script
+        script_42a[42: Meteostat Hourly API]:::script
+        script_42b[42: Meteostat Daily API]:::script
+    end
+
+    subgraph data_folders [data/weather/]
+        station_csv[station_dim/weather_stations.csv]:::file
+        hourly_pq[hourly/*.parquet]:::file
+        daily_pq[daily/*.parquet]:::file
+    end
+
+    subgraph merge_scripts [41, 43 Merge Scripts]
+        merge_station[41: merge__raw__weather_station_dim.sql]:::script
+        merge_hourly[43: merge__raw__weather_hourly_fact.sql]:::script
+        merge_daily[43: merge__raw__weather_daily_fact.sql]:::script
+    end
+
+    subgraph raw_tables [Raw Tables]
+        raw_station[raw.weather_station_dim]:::table
+        raw_hourly[raw.weather_hourly_fact]:::table
+        raw_daily[raw.weather_daily_fact]:::table
+    end
+
+    subgraph curate_44 [44_build_weather_curated_layer.py]
+        view_hourly[view__curated__weather_hourly_fact.sql]:::script
+        view_daily[view__curated__weather_daily_fact.sql]:::script
+    end
+
+    subgraph curated_tables [Curated Tables]
+        cur_hourly[curated.weather_hourly_fact]:::table
+        cur_daily[curated.weather_daily_fact]:::table
+    end
+
+    script_40 --> station_csv --> merge_station --> raw_station
+    script_42a --> hourly_pq --> merge_hourly --> raw_hourly --> view_hourly --> cur_hourly
+    script_42b --> daily_pq --> merge_daily --> raw_daily --> view_daily --> cur_daily
 ```
 
 ## Local Folder Structure
@@ -185,6 +378,11 @@ local/
     24_merge_taxi_zone_centroids_into_duckdb.py - merge centroid rows into staging table
     30_merge_curated_date_dim.py - merge curated.date_dim for a date range
     31_build_taxi_curated_layer.py - build staged and curated taxi tables
+    40_download_weather_station_dim.py - download weather station metadata from Meteostat
+    41_merge_weather_station_dim.py - merge weather station dim into DuckDB
+    42_download_weather_data.py - download hourly + daily weather data from Meteostat
+    43_merge_weather_into_duckdb.py - merge weather parquet into raw tables
+    44_build_weather_curated_layer.py - build curated weather tables with coalesce
   queries/
     ddl__raw__taxi_yellow_tripdata_fact.sql - raw yellow taxi trips table DDL
     merge__raw__taxi_yellow_tripdata_fact.sql - merge raw taxi rides from parquet files
@@ -198,7 +396,16 @@ local/
     ddl__curated__date_dim.sql - curated date dimension DDL
     merge__curated__date_dim.sql - merge date dimension for a date range
     ddl__curated__datetime_hour_dim.sql - curated hour dimension DDL
+    merge__curated__datetime_hour_dim.sql - merge datetime hour dimension for a date range
+    ddl__raw__weather_station_dim.sql - raw weather station dimension DDL
     ddl__raw__weather_daily_fact.sql - raw daily weather fact DDL
     ddl__raw__weather_hourly_fact.sql - raw hourly weather fact DDL
+    ddl__curated__weather_daily_fact.sql - curated daily weather fact DDL
+    ddl__curated__weather_hourly_fact.sql - curated hourly weather fact DDL
+    merge__raw__weather_station_dim.sql - merge weather station CSV into raw dim
+    merge__raw__weather_daily_fact.sql - merge daily weather parquet into raw
+    merge__raw__weather_hourly_fact.sql - merge hourly weather parquet into raw
+    view__curated__weather_daily_fact.sql - curated daily weather with coalesce
+    view__curated__weather_hourly_fact.sql - curated hourly weather with coalesce
     initial_daily_taxi_rides.sql - daily pickup series per zone for modeling
 ```

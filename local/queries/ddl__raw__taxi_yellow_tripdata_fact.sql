@@ -1,6 +1,6 @@
 CREATE SCHEMA IF NOT EXISTS raw;
 
-CREATE OR REPLACE TABLE raw.taxi_yellow_tripdata_fact (
+CREATE TABLE IF NOT EXISTS raw.taxi_yellow_tripdata_fact (
     trip_id VARCHAR NOT NULL,
     vendorid BIGINT,
     tpep_pickup_datetime TIMESTAMP NOT NULL,

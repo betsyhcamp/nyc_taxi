@@ -58,7 +58,8 @@ USING (
             improvement_surcharge,
             total_amount,
             congestion_surcharge,
-            cbd_congestion_fee,
+            -- cbd_congestion_fee not present in 2024 and earlier parquet files
+            CAST(NULL AS DOUBLE) AS cbd_congestion_fee,
             airport_fee
         FROM staging_yellow
     ),

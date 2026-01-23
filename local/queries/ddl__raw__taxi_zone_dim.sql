@@ -1,6 +1,6 @@
 CREATE SCHEMA IF NOT EXISTS raw;
 
-CREATE OR REPLACE TABLE raw.taxi_zone_dim (
+CREATE TABLE IF NOT EXISTS raw.taxi_zone_dim (
     locationid BIGINT NOT NULL,
     borough VARCHAR,
     zone VARCHAR,

@@ -24,6 +24,21 @@ merge-taxi-zone-dimension *args:
     uv run python scripts/23_merge_taxi_zone_lookup_into_duckdb.py {{args}}
     uv run python scripts/24_merge_taxi_zone_centroids_into_duckdb.py {{args}}
 
+download-weather-station-dimension *args:
+    uv run python scripts/40_download_weather_station_dim.py {{args}}
+
+merge-weather-station-dimension *args:
+    uv run python scripts/41_merge_weather_station_dim.py {{args}}
+
+download-weather-data *args:
+    uv run python scripts/42_download_weather_data.py {{args}}
+
+merge-weather-data *args:
+    uv run python scripts/43_merge_weather_into_duckdb.py {{args}}
+
+build-weather-curated-layer *args:
+    uv run python scripts/44_build_weather_curated_layer.py {{args}}
+
 duckdb-ui:
     DB_PATH=$(uv run python -c "from pathlib import Path; from local import load_local_config; print(load_local_config(path=Path('config.yaml')).duckdb_location)") && uvx duckdb --ui "$DB_PATH"
 

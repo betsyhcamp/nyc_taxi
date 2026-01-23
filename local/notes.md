@@ -14,3 +14,16 @@ how does the inference endpoint get that same transform logic to run (or in othe
 
 6. Article: https://www.ibm.com/think/tutorials/sktime-multivariate-time-series-forecasting Has an excellent paragraph defining exogenous vs endogenous variables.
     - endogenous variables are a struggle for feature stores because you cannot pre-compute them. Would this be handled by sending parameters to the feature store?
+
+
+Insights from Betsy:
+
+1. at least for mlforecast, but often in timeseries, you don't save models for the purpose of using them later. You retrain the model EVERY TIME you do a batch inference.
+
+2. you should not inference using unfinished time intervals. Common mistake.
+
+3. Another rookie mistake: future data leakage.
+
+4. Cross validation and evaluations (at least for `mlforecast`) are COUPLED to the library. Or at least: they have have their own eval and cv functions. And example from Eric: XGboost has a feature importance function--not every framework or model family can easily give you that. Takeaway: it is difficult to create a model agnostic:
+  - cross validation framework
+  - evaluation framework

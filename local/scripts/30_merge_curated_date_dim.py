@@ -11,7 +11,7 @@ from local import load_local_config
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Merge curated.date_dim for a specified date range."
+        description="Merge curated.date_dim and curated.datetime_hour_dim for a specified date range."
     )
     parser.add_argument("--config-path", default="config.yaml")
     parser.add_argument("--start-date", required=True)
@@ -44,19 +44,34 @@ def main() -> None:
     config = load_local_config(path=Path(args.config_path))
 
     repo_root = Path(__file__).resolve().parents[2]
-    query_path = repo_root / "local" / "queries" / "merge__curated__date_dim.sql"
-    if not query_path.exists():
-        raise FileNotFoundError(f"Query file not found: {query_path}")
+    queries_dir = repo_root / "local" / "queries"
 
-    sql = _render_merge_sql(
-        query_path=query_path,
+    date_dim_path = queries_dir / "merge__curated__date_dim.sql"
+    datetime_hour_dim_path = queries_dir / "merge__curated__datetime_hour_dim.sql"
+
+    if not date_dim_path.exists():
+        raise FileNotFoundError(f"Query file not found: {date_dim_path}")
+    if not datetime_hour_dim_path.exists():
+        raise FileNotFoundError(f"Query file not found: {datetime_hour_dim_path}")
+
+    date_dim_sql = _render_merge_sql(
+        query_path=date_dim_path,
+        start_date=args.start_date,
+        end_date=args.end_date,
+    )
+    datetime_hour_dim_sql = _render_merge_sql(
+        query_path=datetime_hour_dim_path,
         start_date=args.start_date,
         end_date=args.end_date,
     )
 
     config.duckdb_location.parent.mkdir(parents=True, exist_ok=True)
     with duckdb.connect(database=str(config.duckdb_location)) as connection:
-        connection.execute(query=sql)
+        print("Merging curated.date_dim...")
+        connection.execute(query=date_dim_sql)
+        print("Merging curated.datetime_hour_dim...")
+        connection.execute(query=datetime_hour_dim_sql)
+    print("Done.")
 
 
 if __name__ == "__main__":

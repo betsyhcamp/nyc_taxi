@@ -36,7 +36,8 @@ USING (
     SELECT
         taxi_zone_id,
         centroid_latitude,
-        centroid_longitude
+        centroid_longitude,
+        current_timestamp AS load_timestamp_utc
     FROM deduped
     WHERE rn = 1
 ) AS source
@@ -44,16 +45,19 @@ ON target.taxi_zone_id = source.taxi_zone_id
 WHEN MATCHED THEN
     UPDATE SET
         centroid_latitude = source.centroid_latitude,
-        centroid_longitude = source.centroid_longitude
+        centroid_longitude = source.centroid_longitude,
+        load_timestamp_utc = source.load_timestamp_utc
 WHEN NOT MATCHED THEN
     INSERT (
         taxi_zone_id,
         centroid_latitude,
-        centroid_longitude
+        centroid_longitude,
+        load_timestamp_utc
     )
     VALUES (
         source.taxi_zone_id,
         source.centroid_latitude,
-        source.centroid_longitude
+        source.centroid_longitude,
+        source.load_timestamp_utc
     );
 
