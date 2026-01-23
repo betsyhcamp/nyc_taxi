@@ -28,7 +28,9 @@ Note:
 
     - skips already downloaded files (use `--force` to overwrite)
     - taxi data defaults to last 3 months, acknowledging that the NYC TLC publishes data with a 2-month delay
-    - weather stations: KNYC0 (Yorkville), KTEB0 (Teterboro), KJRB0 (Wall Street), 72502 (Newark). We would have taken the closest weather station to Central Park only, but 
+    - weather stations: KNYC0 (Yorkville), KTEB0 (Teterboro), KJRB0 (Wall Street), 72502 (Newark). We would have taken the closest weather station to Central Park only, but not all stations have data going back to 2015, so we took the 4 closest stations and coalesce them (roughly) in order of closest to furthest from central part. 
+
+    ![](./assets/coverage-by-station.png)
 
 2. Load into DuckDB and build curated layer
 
@@ -137,9 +139,9 @@ Use this prompt with an AI assistant to generate or update data lineage diagrams
 Always include these three class definitions at the top of each diagram:
 
 ```
-classDef script fill:#e0f2fe,stroke:#0284c7
-classDef file fill:#fef9c3,stroke:#ca8a04
-classDef table fill:#dcfce7,stroke:#16a34a
+classDef script fill:#e0f2fe,stroke:#0284c7,color:#000
+classDef file fill:#fef9c3,stroke:#ca8a04,color:#000
+classDef table fill:#dcfce7,stroke:#16a34a,color:#000
 ```
 
 - **Scripts** (blue): Python scripts, SQL query files, API calls
@@ -183,8 +185,8 @@ Use arrows (double-hyphen greater-than) to connect nodes:
 
 ```mermaid
 flowchart LR
-    classDef script fill:#e0f2fe,stroke:#0284c7
-    classDef table fill:#dcfce7,stroke:#16a34a
+    classDef script fill:#e0f2fe,stroke:#0284c7,color:#000
+    classDef table fill:#dcfce7,stroke:#16a34a,color:#000
 
     subgraph scripts_0 [00_run_ddl_queries.py]
         ddl1[ddl__raw__taxi_yellow_tripdata_fact.sql]:::script
@@ -228,9 +230,9 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    classDef script fill:#e0f2fe,stroke:#0284c7
-    classDef file fill:#fef9c3,stroke:#ca8a04
-    classDef table fill:#dcfce7,stroke:#16a34a
+    classDef script fill:#e0f2fe,stroke:#0284c7,color:#000
+    classDef file fill:#fef9c3,stroke:#ca8a04,color:#000
+    classDef table fill:#dcfce7,stroke:#16a34a,color:#000
 
     subgraph download [10_download_taxi_rides_yyyy_mm.py]
         script_10[NYC TLC CloudFront]:::script
@@ -251,9 +253,9 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    classDef script fill:#e0f2fe,stroke:#0284c7
-    classDef file fill:#fef9c3,stroke:#ca8a04
-    classDef table fill:#dcfce7,stroke:#16a34a
+    classDef script fill:#e0f2fe,stroke:#0284c7,color:#000
+    classDef file fill:#fef9c3,stroke:#ca8a04,color:#000
+    classDef table fill:#dcfce7,stroke:#16a34a,color:#000
 
     TLC[NYC TLC CloudFront]:::script
 
@@ -283,8 +285,8 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    classDef script fill:#e0f2fe,stroke:#0284c7
-    classDef table fill:#dcfce7,stroke:#16a34a
+    classDef script fill:#e0f2fe,stroke:#0284c7,color:#000
+    classDef table fill:#dcfce7,stroke:#16a34a,color:#000
 
     subgraph inputs [Dependencies from 1* and 2*]
         raw_taxi[raw.taxi_yellow_tripdata_fact]:::table
@@ -320,9 +322,9 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    classDef script fill:#e0f2fe,stroke:#0284c7
-    classDef file fill:#fef9c3,stroke:#ca8a04
-    classDef table fill:#dcfce7,stroke:#16a34a
+    classDef script fill:#e0f2fe,stroke:#0284c7,color:#000
+    classDef file fill:#fef9c3,stroke:#ca8a04,color:#000
+    classDef table fill:#dcfce7,stroke:#16a34a,color:#000
 
     subgraph download [40, 42 Download Scripts]
         script_40[40_download_weather_station_dim.py]:::script
