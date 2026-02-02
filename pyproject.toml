@@ -43,6 +43,7 @@ dev = [
     "polars>=1.37.1",
     "pytest-mock>=3.15.1",
     "meteostat==2.0.1",
+    "kaleido>=1.2.0",
 ]
 
 
