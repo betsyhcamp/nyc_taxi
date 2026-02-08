@@ -200,7 +200,7 @@ def _plot_matplotlib(
     ax1 = fig.add_subplot(gs[0, :])
     ax1.plot(time_vals, actual, label="Actual", color="#1f77b4", linewidth=1)
     ax1.plot(time_vals, fitted, label="Fitted", color="#ff7f0e", linewidth=1)
-    ax1.legend(loc="upper right")
+    ax1.legend(loc="upper left", bbox_to_anchor=(1.01, 1))
     ax1.set_ylabel("Value")
     ax1.grid(alpha=0.3)
 
@@ -382,8 +382,8 @@ def _plot_plotly(
         width=width,
         height=height,
         showlegend=True,
-        legend=dict(x=0.85, y=0.98),
-        margin=dict(l=60, r=40, t=40, b=60),
+        legend=dict(x=1.01, y=1, xanchor="left", yanchor="top"),
+        margin=dict(l=60, r=100, t=40, b=60),
     )
 
     # Axis labels
