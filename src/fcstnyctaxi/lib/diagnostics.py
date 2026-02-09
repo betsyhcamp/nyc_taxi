@@ -2,16 +2,106 @@
 
 from __future__ import annotations
 
-from typing import Literal, Union
+from typing import Literal, TYPE_CHECKING, TypeAlias
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from scipy.stats import gaussian_kde
-from statsmodels.tsa.stattools import acf
+
+if TYPE_CHECKING:
+    import matplotlib.figure as mpl_fig
+    import plotly.graph_objects as go
+    import polars as pl
+
+    DataFrameLike: TypeAlias = pd.DataFrame | pl.DataFrame
+    FigureLike: TypeAlias = mpl_fig.Figure | go.Figure
+else:
+    DataFrameLike = pd.DataFrame
+    FigureLike = object
+
+
+_Z_SCORE_95 = 1.96
+_COLOR_PRIMARY = "#1f77b4"
+_COLOR_SECONDARY = "#ff7f0e"
+_DPI = 100
+_LINEWIDTH_PRIMARY = 1
+
+
+@dataclass(frozen=True)
+class ResidualDiagnostics:
+    """Precomputed diagnostic data for residual analysis.
+
+    Separates data preparation for rendering, enabling:
+    - Reuse of computed statistics without replotting
+    - Simpler, more testable plotting functions
+    - clear contract between computation and visualization
+    """
+
+    timestamps: np.ndarray
+    actual: np.ndarray
+    fitted: np.ndarray
+    residuals: np.ndarray
+    acf_values: np.ndarray
+    conf_interval: float
+    kde_x: np.ndarray
+    kde_y: np.ndarray
+
+
+def _compute_diagnostics(
+    df: pd.DataFrame,
+    time_col: str,
+    actual_col: str,
+    fitted_col: str,
+    nlags: int | None,
+) -> ResidualDiagnostics:
+    """Compute all diagnostic values from input data."""
+    from scipy.stats import gaussian_kde
+    from statsmodels.tsa.stattools import acf
+
+    # Sort by time
+    df = df.sort_values(by=time_col).reset_index(drop=True)
+
+    # Extract data
+    timestamps = df[time_col].to_numpy()
+    actual = df[actual_col].to_numpy(dtype=float)
+    fitted = df[fitted_col].to_numpy(dtype=float)
+    residuals = actual - fitted
+
+    # Compute ACF
+    n = len(residuals)
+    if nlags is None:
+        nlags = max(1, min(40, n // 4))  # Guard against n<4
+    acf_result = acf(
+        residuals, nlags=nlags, fft=True
+    )  # result return type depends on args
+    acf_values: np.ndarray = (
+        acf_result[0] if isinstance(acf_result, tuple) else acf_result
+    )
+    conf_interval = _Z_SCORE_95 / np.sqrt(
+        n
+    )  # assume two sided 95%CI, normal distribution
+
+    # Compute KDE
+    if np.isclose(np.std(residuals), 0, atol=1e-10):
+        raise ValueError("Residuals have near-zero variance; KDE is undefined.")
+    kde = gaussian_kde(residuals)
+    kde_x = np.linspace(residuals.min(), residuals.max(), 200)
+    kde_y = kde(kde_x)
+
+    return ResidualDiagnostics(
+        timestamps=timestamps,
+        actual=actual,
+        fitted=fitted,
+        residuals=residuals,
+        acf_values=acf_values,
+        conf_interval=conf_interval,
+        kde_x=kde_x,
+        kde_y=kde_y,
+    )
 
 
 def plot_residual_diagnostics(
-    df: Union[pd.DataFrame, "pl.DataFrame"],
+    df: DataFrameLike,
     time_col: str,
     actual_col: str,
     fitted_col: str,
@@ -19,9 +109,9 @@ def plot_residual_diagnostics(
     width: int = 1200,
     height: int = 800,
     nlags: int | None = None,
-    hist_bins: Union[int, str] = "auto",
+    hist_bins: int | str = "auto",
     return_fig: bool = False,
-) -> Union[None, "plt.Figure", "go.Figure"]:
+) -> FigureLike | None:
     """Plot residual diagnostics for a single time series forecasting model.
 
     Generates a 4-panel diagnostic plot:
@@ -55,39 +145,12 @@ def plot_residual_diagnostics(
     # Validate inputs
     _validate_inputs(df, time_col, actual_col, fitted_col, backend, width, height)
 
-    # Sort by time
-    df = df.sort_values(by=time_col).reset_index(drop=True)
-
-    # Extract data
-    time_vals = df[time_col].values
-    actual = df[actual_col].values
-    fitted = df[fitted_col].values
-    residuals = actual - fitted
-
-    # Compute ACF
-    n = len(residuals)
-    if nlags is None:
-        nlags = min(40, n // 4)
-    acf_values = acf(residuals, nlags=nlags, fft=True)
-    conf_interval = 1.96 / np.sqrt(n)
-
-    # Compute KDE
-    kde = gaussian_kde(residuals)
-    kde_x = np.linspace(residuals.min(), residuals.max(), 200)
-    kde_y = kde(kde_x)
+    diagnostics_data = _compute_diagnostics(df, time_col, actual_col, fitted_col, nlags)
 
     # Dispatch to backend
     if backend == "matplotlib":
         fig = _plot_matplotlib(
-            time_vals,
-            actual,
-            fitted,
-            residuals,
-            acf_values,
-            nlags,
-            conf_interval,
-            kde_x,
-            kde_y,
+            diagnostics_data,
             hist_bins,
             width,
             height,
@@ -100,15 +163,7 @@ def plot_residual_diagnostics(
         return None
     else:
         fig = _plot_plotly(
-            time_vals,
-            actual,
-            fitted,
-            residuals,
-            acf_values,
-            nlags,
-            conf_interval,
-            kde_x,
-            kde_y,
+            diagnostics_data,
             hist_bins,
             width,
             height,
@@ -119,11 +174,11 @@ def plot_residual_diagnostics(
         return None
 
 
-def _convert_to_pandas(df: Union[pd.DataFrame, "pl.DataFrame"]) -> pd.DataFrame:
+def _convert_to_pandas(df: DataFrameLike) -> pd.DataFrame:
     """Convert polars DataFrame to pandas if needed."""
-    if hasattr(df, "to_pandas"):
-        return df.to_pandas()
-    return df
+    if isinstance(df, pd.DataFrame):
+        return df
+    return df.to_pandas()
 
 
 def _validate_inputs(
@@ -136,24 +191,27 @@ def _validate_inputs(
     height: int,
 ) -> None:
     """Validate input parameters."""
+
+    if len(df) < 2:
+        raise ValueError(f"DataFrame must have at least 2 rows, got {len(df)}.")
+
+    cols_list = [time_col, actual_col, fitted_col]
+
     # Check columns exist
-    missing_cols = []
-    for col in [time_col, actual_col, fitted_col]:
-        if col not in df.columns:
-            missing_cols.append(col)
-    if missing_cols:
+    missing_cols_list = [col for col in cols_list if col not in df.columns]
+
+    if missing_cols_list:
         raise ValueError(
-            f"Column(s) {missing_cols} not found in DataFrame. "
+            f"Column(s) {missing_cols_list} not found in DataFrame. "
             f"Available columns: {df.columns.tolist()}"
         )
 
     # Check for NaN values
-    for col in [time_col, actual_col, fitted_col]:
-        if df[col].isna().any():
-            raise ValueError(
-                f"Column '{col}' contains missing values. "
-                f"Found {df[col].isna().sum()} NaN values."
-            )
+    na_counts = df[cols_list].isna().sum()
+    has_na = na_counts[na_counts > 0]
+    if len(has_na) > 0:
+        details = ", ".join(f"{col}={int(count)}" for col, count in has_na.items())
+        raise ValueError(f"NaN values found (column=count): {details}")
 
     # Check backend
     if backend not in ("plotly", "matplotlib"):
@@ -169,26 +227,17 @@ def _validate_inputs(
 
 
 def _plot_matplotlib(
-    time_vals: np.ndarray,
-    actual: np.ndarray,
-    fitted: np.ndarray,
-    residuals: np.ndarray,
-    acf_values: np.ndarray,
-    nlags: int,
-    conf_interval: float,
-    kde_x: np.ndarray,
-    kde_y: np.ndarray,
-    hist_bins: Union[int, str],
+    data: ResidualDiagnostics,
+    hist_bins: int | str,
     width: int,
     height: int,
-) -> "plt.Figure":
+) -> mpl_fig.Figure:
     """Create diagnostic plot using matplotlib."""
     import matplotlib.pyplot as plt
 
-    DPI = 100
-    figsize = (width / DPI, height / DPI)
+    figsize = (width / _DPI, height / _DPI)
 
-    fig = plt.figure(figsize=figsize, dpi=DPI)
+    fig = plt.figure(figsize=figsize, dpi=_DPI)
 
     # Layout: 3 rows, 2 columns
     # Row 1: Actual vs Fitted (spans both columns)
@@ -198,15 +247,32 @@ def _plot_matplotlib(
 
     # Panel 1: Actual vs Fitted
     ax1 = fig.add_subplot(gs[0, :])
-    ax1.plot(time_vals, actual, label="Actual", color="#1f77b4", linewidth=1)
-    ax1.plot(time_vals, fitted, label="Fitted", color="#ff7f0e", linewidth=1)
+    ax1.plot(
+        data.timestamps,
+        data.actual,
+        label="Actual",
+        color=_COLOR_PRIMARY,
+        linewidth=_LINEWIDTH_PRIMARY,
+    )
+    ax1.plot(
+        data.timestamps,
+        data.fitted,
+        label="Fitted",
+        color=_COLOR_SECONDARY,
+        linewidth=_LINEWIDTH_PRIMARY,
+    )
     ax1.legend(loc="upper left", bbox_to_anchor=(1.01, 1))
     ax1.set_ylabel("Value")
     ax1.grid(alpha=0.3)
 
     # Panel 2: Residuals over time
     ax2 = fig.add_subplot(gs[1, :], sharex=ax1)
-    ax2.plot(time_vals, residuals, color="#1f77b4", linewidth=1)
+    ax2.plot(
+        data.timestamps,
+        data.residuals,
+        color=_COLOR_PRIMARY,
+        linewidth=_LINEWIDTH_PRIMARY,
+    )
     ax2.axhline(y=0, color="black", linestyle="-", linewidth=0.8)
     ax2.set_ylabel("Residual")
     ax2.set_xlabel("Time")
@@ -217,12 +283,14 @@ def _plot_matplotlib(
 
     # Panel 3: ACF
     ax3 = fig.add_subplot(gs[2, 0])
-    lags = np.arange(len(acf_values))
-    ax3.vlines(lags, 0, acf_values, color="#1f77b4", linewidth=1)
-    ax3.scatter(lags, acf_values, color="#1f77b4", s=10, zorder=3)
+    lags = np.arange(len(data.acf_values))
+    ax3.vlines(
+        lags, 0, data.acf_values, color=_COLOR_PRIMARY, linewidth=_LINEWIDTH_PRIMARY
+    )
+    ax3.scatter(lags, data.acf_values, color=_COLOR_PRIMARY, s=10, zorder=3)
     ax3.axhline(y=0, color="black", linestyle="-", linewidth=0.8)
-    ax3.axhline(y=conf_interval, color="red", linestyle="--", linewidth=0.8)
-    ax3.axhline(y=-conf_interval, color="red", linestyle="--", linewidth=0.8)
+    ax3.axhline(y=data.conf_interval, color="red", linestyle="--", linewidth=0.8)
+    ax3.axhline(y=-data.conf_interval, color="red", linestyle="--", linewidth=0.8)
     ax3.set_xlabel("Lag")
     ax3.set_ylabel("ACF")
     ax3.grid(alpha=0.3)
@@ -230,16 +298,16 @@ def _plot_matplotlib(
     # Panel 4: Histogram with KDE
     ax4 = fig.add_subplot(gs[2, 1])
     ax4.hist(
-        residuals,
+        data.residuals,
         bins=hist_bins,
         density=True,
         alpha=0.7,
-        color="#1f77b4",
+        color=_COLOR_PRIMARY,
         edgecolor="white",
     )
-    ax4.plot(kde_x, kde_y, color="#ff7f0e", linewidth=1.5)
+    ax4.plot(data.kde_x, data.kde_y, color=_COLOR_SECONDARY, linewidth=1.5)
     ax4.axvline(x=0, color="black", linestyle="-", linewidth=0.8)
-    ax4.axvline(x=residuals.mean(), color="red", linestyle="--", linewidth=0.8)
+    ax4.axvline(x=data.residuals.mean(), color="red", linestyle="--", linewidth=0.8)
     ax4.set_xlabel("Residual")
     ax4.set_ylabel("Density")
     ax4.grid(alpha=0.3)
@@ -249,19 +317,11 @@ def _plot_matplotlib(
 
 
 def _plot_plotly(
-    time_vals: np.ndarray,
-    actual: np.ndarray,
-    fitted: np.ndarray,
-    residuals: np.ndarray,
-    acf_values: np.ndarray,
-    nlags: int,
-    conf_interval: float,
-    kde_x: np.ndarray,
-    kde_y: np.ndarray,
-    hist_bins: Union[int, str],
+    data: ResidualDiagnostics,
+    hist_bins: int | str,
     width: int,
     height: int,
-) -> "go.Figure":
+) -> go.Figure:
     """Create diagnostic plot using plotly."""
     from plotly.subplots import make_subplots
     import plotly.graph_objects as go
@@ -284,14 +344,20 @@ def _plot_plotly(
     # Panel 1: Actual vs Fitted
     fig.add_trace(
         go.Scatter(
-            x=time_vals, y=actual, name="Actual", line=dict(color="#1f77b4", width=1)
+            x=data.timestamps,
+            y=data.actual,
+            name="Actual",
+            line=dict(color=_COLOR_PRIMARY, width=_LINEWIDTH_PRIMARY),
         ),
         row=1,
         col=1,
     )
     fig.add_trace(
         go.Scatter(
-            x=time_vals, y=fitted, name="Fitted", line=dict(color="#ff7f0e", width=1)
+            x=data.timestamps,
+            y=data.fitted,
+            name="Fitted",
+            line=dict(color=_COLOR_SECONDARY, width=_LINEWIDTH_PRIMARY),
         ),
         row=1,
         col=1,
@@ -300,26 +366,26 @@ def _plot_plotly(
     # Panel 2: Residuals over time
     fig.add_trace(
         go.Scatter(
-            x=time_vals,
-            y=residuals,
+            x=data.timestamps,
+            y=data.residuals,
             name="Residuals",
-            line=dict(color="#1f77b4", width=1),
+            line=dict(color=_COLOR_PRIMARY, width=_LINEWIDTH_PRIMARY),
             showlegend=False,
         ),
         row=2,
         col=1,
     )
-    fig.add_hline(y=0, line=dict(color="black", width=1), row=2, col=1)
+    fig.add_hline(y=0, line=dict(color="black", width=_LINEWIDTH_PRIMARY), row=2, col=1)
 
     # Panel 3: ACF
-    lags = list(range(len(acf_values)))
-    for i, (lag, val) in enumerate(zip(lags, acf_values)):
+    lags = list(range(len(data.acf_values)))
+    for lag, val in zip(lags, data.acf_values):
         fig.add_trace(
             go.Scatter(
                 x=[lag, lag],
                 y=[0, val],
                 mode="lines",
-                line=dict(color="#1f77b4", width=1),
+                line=dict(color=_COLOR_PRIMARY, width=_LINEWIDTH_PRIMARY),
                 showlegend=False,
             ),
             row=3,
@@ -328,30 +394,38 @@ def _plot_plotly(
     fig.add_trace(
         go.Scatter(
             x=lags,
-            y=acf_values,
+            y=data.acf_values,
             mode="markers",
-            marker=dict(color="#1f77b4", size=5),
+            marker=dict(color=_COLOR_PRIMARY, size=5),
             showlegend=False,
         ),
         row=3,
         col=1,
     )
-    fig.add_hline(y=0, line=dict(color="black", width=1), row=3, col=1)
+    fig.add_hline(y=0, line=dict(color="black", width=_LINEWIDTH_PRIMARY), row=3, col=1)
     fig.add_hline(
-        y=conf_interval, line=dict(color="red", width=1, dash="dash"), row=3, col=1
+        y=data.conf_interval,
+        line=dict(color="red", width=_LINEWIDTH_PRIMARY, dash="dash"),
+        row=3,
+        col=1,
     )
     fig.add_hline(
-        y=-conf_interval, line=dict(color="red", width=1, dash="dash"), row=3, col=1
+        y=-data.conf_interval,
+        line=dict(color="red", width=_LINEWIDTH_PRIMARY, dash="dash"),
+        row=3,
+        col=1,
     )
 
     # Panel 4: Histogram with KDE
     nbins = hist_bins if isinstance(hist_bins, int) else None
     fig.add_trace(
         go.Histogram(
-            x=residuals,
+            x=data.residuals,
             nbinsx=nbins,
             histnorm="probability density",
-            marker=dict(color="#1f77b4", line=dict(color="white", width=1)),
+            marker=dict(
+                color=_COLOR_PRIMARY, line=dict(color="white", width=_LINEWIDTH_PRIMARY)
+            ),
             opacity=0.7,
             showlegend=False,
         ),
@@ -360,19 +434,19 @@ def _plot_plotly(
     )
     fig.add_trace(
         go.Scatter(
-            x=kde_x,
-            y=kde_y,
+            x=data.kde_x,
+            y=data.kde_y,
             mode="lines",
-            line=dict(color="#ff7f0e", width=1.5),
+            line=dict(color=_COLOR_SECONDARY, width=1.5),
             showlegend=False,
         ),
         row=3,
         col=2,
     )
-    fig.add_vline(x=0, line=dict(color="black", width=1), row=3, col=2)
+    fig.add_vline(x=0, line=dict(color="black", width=_LINEWIDTH_PRIMARY), row=3, col=2)
     fig.add_vline(
-        x=float(residuals.mean()),
-        line=dict(color="red", width=1, dash="dash"),
+        x=float(data.residuals.mean()),
+        line=dict(color="red", width=_LINEWIDTH_PRIMARY, dash="dash"),
         row=3,
         col=2,
     )
