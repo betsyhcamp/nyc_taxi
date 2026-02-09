@@ -19,15 +19,19 @@ from IPython.display import display
 from datetime import datetime
 from pathlib import Path
 
-from coreforecast.scalers import boxcox_lambda
+from statsmodels.graphics.tsaplots import plot_acf
+
+from coreforecast.scalers import boxcox_lambda, boxcox
 
 from statsforecast import StatsForecast
-from statsforecast.models import AutoETS, AutoTBATS, SeasonalNaive
+from statsforecast.models import AutoETS, AutoTBATS, SeasonalNaive, AutoARIMA
 from fcstnyctaxi.lib.utils import get_project_root_dir
 
 from utilsforecast.plotting import plot_series
 from utilsforecast.evaluation import evaluate
 from utilsforecast.losses import rmse
+
+from fcstnyctaxi.lib.diagnostics import plot_residual_diagnostics
 
 # %% [markdown]
 # ## Metric Rationale
@@ -91,7 +95,7 @@ print(total_daily_df["pickup_date"].max())
 max_date = pd.to_datetime("2025-10-25")
 
 # %%
-# Hold out last 28 days (4 weeks) as test set - not used in this script
+# Hold out last 28 days (4 weeks) as test set. Test set not used in this script
 test_cutoff_date = max_date - pd.Timedelta(days=27)
 test_set = total_daily_df[total_daily_df["pickup_date"] >= test_cutoff_date].copy()
 train_val_df = total_daily_df[total_daily_df["pickup_date"] < test_cutoff_date].copy()
@@ -103,7 +107,7 @@ print(f"Total observations: {len(total_daily_df)}")
 print(f"Train/Val observations: {len(train_val_df)}")
 print(f"Test set observations: {len(test_set)}")
 print(f"Test cutoff date: {test_cutoff_date}")
-print(f"Train cutoff date: {train_cutoff_date}")
+print(f"Initital train cutoff date: {train_cutoff_date}")
 
 # %%
 # Visualize entire time series (including test set for context)
@@ -139,10 +143,51 @@ bc_lambda = boxcox_lambda(
 bc_lower = bc_lambda - 0.001
 bc_upper = bc_lambda + 0.001
 
+bc_ts_loglik = boxcox(train_val_df["number_ride_pickups"].values, lmbda=bc_lambda)
 print(f"Optimal Box-Cox lambda: {bc_lambda:{PRINT_PRECISION}}")
 print(
     f"TBATS Box-Cox bounds: [{bc_lower:{PRINT_PRECISION}}, {bc_upper:{PRINT_PRECISION}}]"
 )
+
+# %%
+bc_lambda_guerrero = boxcox_lambda(
+    train_val_df.loc[
+        train_val_df["pickup_date"] <= train_cutoff_date, "number_ride_pickups"
+    ].values,
+    method="guerrero",
+    season_length=7,
+)
+
+bc_ts_guerrero = boxcox(
+    train_val_df["number_ride_pickups"].values, lmbda=bc_lambda_guerrero
+)
+print(f"Optimal Box-Cox lambda: {bc_lambda_guerrero:{PRINT_PRECISION}}")
+
+# %%
+fig, ax = plt.subplots(figsize=(12, 4))
+ax.plot(bc_ts_loglik)
+
+ax.set_title("Daily Yellow Taxi Pickups in Manhattan")
+ax.set_xlabel("Date")
+ax.set_ylabel("Number of Pickups")
+ax.grid(alpha=0.2)
+fig.autofmt_xdate()
+
+plt.tight_layout()
+plt.show()
+
+# %%
+fig, ax = plt.subplots(figsize=(12, 4))
+ax.plot(bc_ts_guerrero)
+
+ax.set_title("Daily Yellow Taxi Pickups in Manhattan")
+ax.set_xlabel("Date")
+ax.set_ylabel("Number of Pickups")
+ax.grid(alpha=0.2)
+fig.autofmt_xdate()
+
+plt.tight_layout()
+plt.show()
 
 # %%
 train_val_df.info()
@@ -167,6 +212,8 @@ models = [
     AutoTBATS(
         season_length=[7, 365],
         use_boxcox=True,
+        bc_upper_bound=bc_upper,
+        bc_lower_bound=bc_lower,
         alias="TBATS_bc",
     ),
     AutoTBATS(
@@ -176,6 +223,7 @@ models = [
     ),
     AutoETS(season_length=7, alias="AutoETS_7"),
     AutoETS(season_length=365, alias="AutoETS_365"),
+    AutoARIMA(season_length=7, alias="AutoARIMA_7"),
     SeasonalNaive(season_length=7, alias="SeasonalNaive_7"),
 ]
 
@@ -202,12 +250,15 @@ cv_forecasts = sf.cross_validation(
 cv_fitted = sf.cross_validation_fitted_values()
 
 # %%
-print("CV Forecasts shape:", cv_forecasts.shape)
+cv_fitted
+
+# %%
+print("CV folds cutoff dates:", cv_forecasts["cutoff"].unique())
 cv_forecasts.info()
 cv_forecasts.head()
 
 # %%
-print("CV Fitted values shape:", cv_fitted.shape)
+print("CV Fitted values; cutoff dates:", cv_fitted["cutoff"].unique())
 cv_fitted.info()
 cv_fitted.head()
 
@@ -223,7 +274,7 @@ for col in alias_name_list:
 # %%
 # Verify residual columns added
 print("CV Forecasts columns:", cv_forecasts.columns.tolist())
-print("\nCV Fitted columns:", cv_fitted.columns.tolist())
+print("CV Fitted columns:", cv_fitted.columns.tolist())
 
 # %%
 cv_forecasts.info()
@@ -234,19 +285,17 @@ cv_forecasts.head()
 cutoff_list = list(cv_forecasts["cutoff"].unique())
 print("CV Fold cutoff dates:")
 for i, cutoff in enumerate(cutoff_list, 1):
-    print(f"  Fold {i}: {cutoff}")
+    print(f"Fold {i}: {cutoff}")
 
 # %%
 # Visualization: Summary plot of all CV forecasts
 plot_series(df_long, cv_forecasts.drop(columns=["y", "cutoff"]), engine="plotly")
 
 # %%
-
-
 # Visualization: Per-fold plots
 for cutoff_id in cv_forecasts["cutoff"].unique():
     temp_df = cv_forecasts[cv_forecasts["cutoff"] == cutoff_id].copy()
-    print(f"\nFold cutoff: {cutoff_id}")
+    print(f"Fold cutoff: {cutoff_id}")
     fig = plot_series(df_long, temp_df.drop(columns=["y", "cutoff"]))
     display(fig)
 
@@ -281,21 +330,88 @@ avg_rmse_df = (
     .reset_index()
 )
 avg_rmse_df["metric"] = "rmse_avg"
-print("\nAverage RMSE (across 5 folds):")
+print("Average RMSE (across 5 folds):")
 print(avg_rmse_df)
 
 # %%
 # Summary comparison
-print("EVALUATION SUMMARY")
-print("\nPooled RMSE:")
+print("Pooled RMSE:")
 for col in alias_name_list:
     if col in pooled_eval.columns:
         print(f"  {col}: {pooled_eval[col].values[0]:{PRINT_PRECISION}}")
 
-print("\nAverage RMSE:")
+print("Average RMSE:")
 for col in alias_name_list:
     if col in avg_rmse_df.columns:
         print(f"  {col}: {avg_rmse_df[col].values[0]:{PRINT_PRECISION}}")
+
+# %%
+print("cv_fitted cutoff dates:", cv_fitted["cutoff"].unique())
+cv_fitted.info()
+cv_fitted.head(10)
+
+# %%
+plot_residual_diagnostics(
+    df=cv_fitted[cv_fitted["cutoff"] == "2025-05-10 00:00:00"],
+    time_col="ds",
+    actual_col="y",
+    fitted_col="AutoARIMA_7",
+    backend="plotly",
+)
+
+# %%
+plot_residual_diagnostics(
+    df=cv_fitted[cv_fitted["cutoff"] == "2025-05-10 00:00:00"],
+    time_col="ds",
+    actual_col="y",
+    fitted_col="AutoETS_7",
+    backend="plotly",
+)
+
+# %%
+plot_residual_diagnostics(
+    df=cv_fitted[cv_fitted["cutoff"] == "2025-05-10 00:00:00"],
+    time_col="ds",
+    actual_col="y",
+    fitted_col="AutoETS_365",
+    backend="plotly",
+)
+
+# %%
+plot_residual_diagnostics(
+    df=cv_fitted[cv_fitted["cutoff"] == "2025-05-10 00:00:00"],
+    time_col="ds",
+    actual_col="y",
+    fitted_col="TBATS_no_bc",
+    backend="plotly",
+)
+
+# %%
+plot_residual_diagnostics(
+    df=cv_fitted[cv_fitted["cutoff"] == "2025-05-10 00:00:00"],
+    time_col="ds",
+    actual_col="y",
+    fitted_col="TBATS_bc",
+    backend="plotly",
+)
+
+# %%
+# Filter data and compute residuals
+df_fold = cv_fitted[cv_fitted["cutoff"] == "2025-05-10 00:00:00"]
+
+# Plot ACF
+fig, ax = plt.subplots(figsize=(10, 4))
+plot_acf(df_fold["AutoETS_7_residual"], lags=370, ax=ax)
+plt.show()
+
+# %%
+# Filter data and compute residuals
+df_fold = cv_fitted[cv_fitted["cutoff"] == "2025-05-10 00:00:00"]
+
+# Plot ACF
+fig, ax = plt.subplots(figsize=(10, 4))
+plot_acf(df_fold["AutoETS_365_residual"], lags=370, ax=ax)
+plt.show()
 
 # %%
 # Save results dataframes to parquet
@@ -314,3 +430,5 @@ if SAVE_BACKTEST_RESULTS_TO_FILE:
     print(f"  - cv_fitted_{timestamp}_daily_total.parquet")
     print(f"  - cv_forecasts_{timestamp}_daily_total.parquet")
     print(f"  - test_set_{timestamp}_daily_total.parquet")
+else:
+    print("Backtest results not saved to files.")
