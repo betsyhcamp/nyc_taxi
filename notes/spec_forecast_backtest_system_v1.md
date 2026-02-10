@@ -31,7 +31,7 @@ The system accepts pandas DataFrames in Nixtla long format:
 | `unique_id` | Unique identifier for each time series |
 | `y` | Target variable |
 
-Exogenous variables (`X_exogenous`) are provided as a separate DataFrame with `ds`, `unique_id`, and one or more exogenous feature columns. The exogenous DataFrame may be `None` if no exogenous variables are used.
+Exogenous variables (`X_exogenous`) are provided as a separate DataFrame with `ds`, `unique_id`, and one or more exogenous feature columns. The exogenous DataFrame may be `None` if no exogenous variables are used. Alternatively, exogenous variables may also be provided as columns in the same dataframe as the dataframe that contains `ds`, `unique_id`, `y` where the user provides the column names of the exogenous variables and if no exogenous variables are provided, the column names of the exogenous columns is `None`.
 
 ### 3.2 Data Loading
 
@@ -57,7 +57,7 @@ The system supports both single time series and panel data (multiple `unique_id`
 
 ### 3.4 Temporal Granularity
 
-The system supports daily, weekly, and monthly time series. The granularity is not explicitly configured; it is inferred from the `ds` column and the user's cross-validation and horizon settings.
+The system supports hourly, daily, weekly, and monthly time series. The granularity is not explicitly configured; it is inferred from the `ds` column and the user's cross-validation and horizon settings.
 
 ---
 
@@ -65,7 +65,7 @@ The system supports daily, weekly, and monthly time series. The granularity is n
 
 ### 4.1 Windowing Strategy
 
-V1 uses an **expanding window** approach. For each fold, the training set is anchored at the start of the data and extends to the fold's forecast origin. The validation set begins immediately after the forecast origin and extends for the fixed forecast horizon.
+V1 uses an **expanding window** approach. For each fold, the training set is anchored at the start of the data and extends to the fold's forecast origin. The validation set begins immediately after the forecast origin and extends for the fixed forecast horizon. Note that each time series, identified by a `unique_id` may have a different start of data.
 
 The system is designed to accommodate sliding window in a future version.
 
@@ -73,7 +73,7 @@ The system is designed to accommodate sliding window in a future version.
 
 The user specifies folds in one of two mutually exclusive modes:
 
-**Explicit forecast origins.** The user provides a list of forecast origin dates. Each date defines where the training set ends and the forecast begins.
+**Explicit forecast origins.** The user provides a list of forecast origin dates. Each date defines where the training set ends and the forecast begins. These forecast origin dates are the date of the last and most recent data point in the cross-validation training sets.
 
 ```yaml
 cross_validation:
@@ -98,11 +98,11 @@ cross_validation:
 
 ### 4.3 Fixed Forecast Horizon
 
-The forecast horizon is constant across all folds within a run. It is specified in the `cross_validation` section of the config.
+The forecast horizon is constant across all folds within a run. The forecast horizon is then number of time steps to forecast for each cross-validation fold. It is specified in the `cross_validation` section of the config.
 
 ### 4.4 Internal Representation
 
-Both modes produce the same internal representation: an ordered list of forecast origin dates. All downstream logic (splitting, fitting, evaluating) operates on this list without knowledge of which mode produced it.
+Both the "explicit forecast origin" and the "parametric" modes produce the same internal representation: an ordered list of forecast origin dates. All downstream logic (splitting, fitting, evaluating) operates on this list without knowledge of which mode produced it.
 
 ---
 
@@ -110,7 +110,7 @@ Both modes produce the same internal representation: an ordered list of forecast
 
 ### 5.1 Overview
 
-Transforms are a small, ordered chain of operations applied to the data before modeling and (for invertible transforms on `y`) inverted after forecasting. Transforms are applied sequentially in the order specified in the config.
+Transforms are a small, ordered chain of operations applied to the data before modeling and (for invertible transforms on `y`) inverted after forecasting and before metric evaluation. Transforms are applied sequentially in the order specified in the config.
 
 ### 5.2 Transform Object Interface
 
@@ -136,7 +136,7 @@ class SomeTransform:
         ...
 ```
 
-The `fit_transform` method is called on each fold's training data. The `transform` method is called on the validation set using the parameters fitted from the training set. The `inverse_transform` method is applied to the model's forecasted `y` to return predictions to the original scale.
+The `fit_transform` method is called on each fold's training data. The `transform` method is called on the validation set using the parameters fitted from the training set. The `inverse_transform` method is applied to the model's forecasted `y` to return predictions to the original scale before metric evaluation.
 
 Inverse transforms are only applied to `y`. Exogenous variables are model inputs and do not require inverse transformation after forecasting.
 
@@ -145,11 +145,11 @@ Inverse transforms are only applied to `y`. Exogenous variables are model inputs
 Each transform declares a scope:
 
 - **`per_series`**: A separate transform instance is created (or refit) for each `unique_id`. Fitted parameters may differ across series. Examples: Box-Cox, Z-score standardization.
-- **`global`**: A single transform instance is shared across all series. Examples: trading day normalization using a shared calendar.
+- **`global`**: A single transform instance is shared across all series. Examples: trading day normalization using a shared calendar, company working day normalization using company holidays, Z-score standardazation applied once over the entire panel dataset, or a transformation from nominal dollars to real dollars for groups of time series all having the same currency.
 
 ### 5.4 Targets
 
-Each transform declares which columns it operates on via the `targets` field. The reserved keyword `y` refers to the target variable. Any other name refers to a specific column in `X_exogenous`. Different exogenous variables can receive different transforms.
+Each transform declares which columns it operates on via the `targets` field. The reserved keyword `y` refers to the target variable. Any other name refers to a specific column in `X_exogenous` or the columns corresponding to the exogenous variables. Different exogenous variables can receive different transforms.
 
 ```yaml
 transforms:
@@ -172,8 +172,10 @@ transforms:
 
 Transforms support both modes:
 
-- **Fitted parameters.** The `fit_transform` method learns parameters from the training data (e.g., Box-Cox lambda, Z-score mean and std). These parameters are refit on each fold's training data to avoid data leakage.
+- **Fitted parameters.** The `fit_transform` method learns parameters from the training data (e.g., Box-Cox lambda, Z-score mean and std). These parameters are refit on each fold's training data to avoid data leakage. For fitted parameters, the user may optionally provide an allowed range within which the fitted parameter must be found. For some fitted parameters, the user may also specify the objective for the parameter fitting such as for the Box Cox transform the `loglik` (log likelihood) or `guerrero` may be specified by the user.
 - **Fixed parameters.** The user supplies a parameter value in the config (e.g., `power: 0.3333` for a cube root). The `fit_transform` method uses the supplied value without fitting.
+
+There is also the ability to have overrides per-series where the user specifies the `unique_id` of the individual time series and the parameter overrides.
 
 The transform object decides internally whether to fit or use a fixed value based on the `**params` it receives. The system treats all transforms identically, always calling `fit_transform` on each fold's training data.
 
@@ -209,9 +211,9 @@ The transform object decides internally whether to fit or use a fixed value base
 
 ### 5.6 Model-Native Transforms
 
-Some forecast models handle certain transforms internally (e.g., AutoTBATS accepts `box_cox: true` with `bc_lower_bound` and `bc_upper_bound`; AutoARIMA accepts a `lambda` parameter). When `model_native: true` is set on a transform, the system skips external application of that transform and instead merges the transform's parameters into the model callable's `**kwargs`.
+Some forecast models handle certain transforms internally (e.g., AutoTBATS accepts `box_cox: true` with `bc_lower_bound` and `bc_upper_bound`; AutoARIMA accepts a Box-Cox `lambda` parameter). When `model_native: true` is set on a transform, the system skips external application of that transform and instead merges the transform's parameters into the model callable's `**kwargs`.
 
-The `model_params_mapping` field translates between transform parameter names and the model's expected parameter names.
+The `model_params_mapping` field translates between transform parameter names and the model's expected parameter names. The parameter names should be named identically as the model's expected parameter names.
 
 ```yaml
 - name: box_cox
@@ -224,7 +226,7 @@ The `model_params_mapping` field translates between transform parameter names an
 
 ### 5.7 Built-in Transforms
 
-The system ships with built-in transform classes for common operations: Box-Cox, power transforms (including cube root), Z-score standardization, add-constant, and trading day normalization. Users can provide custom transforms following the same four-method interface.
+The system ships with built-in transform classes for common operations: Box-Cox, power transforms (including cube root), Z-score standardization, use of a natural log tranform, add-constant, and trading day normalization.  Users can provide custom transforms following the same four-method interface.
 
 ---
 
@@ -651,7 +653,7 @@ The system validates as much as possible before beginning computation:
 - Required config sections and fields are present.
 - Callable import paths for model, metrics, and transforms resolve successfully.
 - Required columns (`ds`, `unique_id`, `y`) exist in the target DataFrame.
-- Exogenous columns specified in the config exist in the exogenous DataFrame.
+- Exogenous columns specified in the config exist in the exogenous DataFrame or as columns in the same dataframe as the required columns (`ds`, `unique_id`, `y`).
 - Forecast origins (explicit mode) fall within the data's date range.
 - Horizon is a positive integer.
 - Parametric CV settings produce valid fold origins.
@@ -676,7 +678,7 @@ All errors and warnings are aggregated into the `run_summary` field of `Backtest
 
 ### 13.1 Framework and Style
 
-All tests use pytest in functional format. No class-based tests. Fixtures are defined in `conftest.py`. No setup/teardown methods.
+All tests use pytest in functional format. No class-based tests. Fixtures are defined in `conftest.py`. Minimize setup/teardown methods in favor of fixtures wherever possible.
 
 ### 13.2 Scope
 
