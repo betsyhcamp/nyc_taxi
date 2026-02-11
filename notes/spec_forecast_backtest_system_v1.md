@@ -6,6 +6,8 @@ This document specifies the V1 design of a forecast backtesting and evaluation s
 
 The system is model-agnostic, configuration-driven, and designed for use within Vertex AI pipelines, Vertex AI notebook instances, and local development environments.
 
+The backtesting system is part of the `tsbricks` package and is accessed via `from tsbricks.backtesting import run_backtest`. Built-in transforms and metrics are provided in the `tsbricks.blocks` namespace (e.g., `tsbricks.blocks.transforms.BoxCoxTransform`, `tsbricks.blocks.metrics.rmsse`). See `PACKAGE_MAINTAINER_SPEC.md` for package architecture details.
+
 ---
 
 ## 2. Design Principles
@@ -16,6 +18,7 @@ The system is model-agnostic, configuration-driven, and designed for use within 
 - **User as adult.** The system does not impose minimum training sizes or other guardrails that restrict valid experimentation. Models that cannot handle the data will raise their own errors.
 - **Resilient execution.** Failed series and folds are skipped and logged, not halted on. The system produces results for everything that succeeds.
 - **Structured output.** Results are returned as a typed Python dataclass. The user controls how artifacts are logged to Vertex AI Experiments.
+- **Reusable primitives for forward-looking forecasting.** The internal code must be decomposed into primitives that are shared between backtesting and a future `run_forecast` entry point. Config parsing, transform pipeline execution (fit, transform, inverse transform), model invocation, and model serialization are all building blocks that `run_backtest` calls per fold and `run_forecast` will call once on the full dataset. The fold loop, metric computation, and result dataclasses are the only backtest-specific logic. This architectural requirement ensures that the same YAML config that produces the best backtest results can directly drive a forward-looking forecast without any translation or re-specification.
 
 ---
 
@@ -41,7 +44,7 @@ The `run_backtest` function accepts the configuration as either a YAML file path
 
 ```python
 import pandas as pd
-from backtest_system import run_backtest
+from tsbricks.backtesting import run_backtest
 
 df = pd.read_parquet("gs://my-bucket/data/sales_with_features.parquet")
 
@@ -173,7 +176,7 @@ Each transform declares which columns it operates on via the `targets` field. Th
 ```yaml
 transforms:
   - name: trading_day_normalization
-    class: mypackage.transforms.TradingDayNormalization
+    class: tsbricks.blocks.transforms.TradingDayNormalization
     scope: global
     targets: [y, revenue]
     invertible: true
@@ -181,7 +184,7 @@ transforms:
       calendar: NYSE
 
   - name: log_transform
-    class: mypackage.transforms.LogTransform
+    class: tsbricks.blocks.transforms.LogTransform
     scope: per_series
     targets: [price]
     invertible: true
@@ -201,7 +204,7 @@ The transform object decides internally whether to fit or use a fixed value base
 ```yaml
 # Fitted from data
 - name: box_cox
-  class: mypackage.transforms.BoxCoxTransform
+  class: tsbricks.blocks.transforms.BoxCoxTransform
   scope: per_series
   targets: [y]
   params:
@@ -209,7 +212,7 @@ The transform object decides internally whether to fit or use a fixed value base
 
 # Fixed cube root
 - name: cube_root
-  class: mypackage.transforms.PowerTransform
+  class: tsbricks.blocks.transforms.PowerTransform
   scope: per_series
   targets: [y]
   params:
@@ -218,7 +221,7 @@ The transform object decides internally whether to fit or use a fixed value base
 
 # Per-series overrides: fixed for some, fitted for others
 - name: box_cox
-  class: mypackage.transforms.BoxCoxTransform
+  class: tsbricks.blocks.transforms.BoxCoxTransform
   scope: per_series
   targets: [y]
   params:
@@ -266,21 +269,21 @@ The system ships with built-in transform classes for common operations. Users ca
 ```yaml
 # Natural log (strict — errors on non-positive values)
 - name: natural_log
-  class: mypackage.transforms.NaturalLogTransform
+  class: tsbricks.blocks.transforms.NaturalLogTransform
   scope: per_series
   targets: [y]
   invertible: true
 
 # Log1p (handles zeros)
 - name: log1p
-  class: mypackage.transforms.Log1pTransform
+  class: tsbricks.blocks.transforms.Log1pTransform
   scope: per_series
   targets: [y]
   invertible: true
 
 # Box-Cox with Guerrero method
 - name: box_cox
-  class: mypackage.transforms.BoxCoxTransform
+  class: tsbricks.blocks.transforms.BoxCoxTransform
   scope: per_series
   targets: [y]
   invertible: true
@@ -369,7 +372,7 @@ The user can compute residuals from fitted values in whichever convention they p
 
 ```yaml
 model:
-  callable: mypackage.models.my_arima_model
+  callable: my_project.models.my_arima_model
   hyperparameters:
     order: [1, 1, 1]
     seasonal_order: [1, 1, 1, 12]
@@ -393,7 +396,7 @@ All methods require the model callable to return the fitted model object as the 
 ```yaml
 # Using Nixtla's built-in .save() method
 model:
-  callable: mypackage.models.my_statsforecast_model
+  callable: my_project.models.my_statsforecast_model
   hyperparameters: {}
   model_n_jobs: 4
   serialization:
@@ -403,7 +406,7 @@ model:
 
 # Using joblib
 model:
-  callable: mypackage.models.my_model
+  callable: my_project.models.my_model
   hyperparameters: {}
   serialization:
     enabled: true
@@ -411,11 +414,11 @@ model:
 
 # Using a custom serialization callable
 model:
-  callable: mypackage.models.my_model
+  callable: my_project.models.my_model
   hyperparameters: {}
   serialization:
     enabled: true
-    method: mypackage.serializers.custom_save
+    method: my_project.serializers.custom_save
 ```
 
 ---
@@ -463,13 +466,13 @@ A single metric callable can be defined multiple times with different scopes to 
 metrics:
   definitions:
     - name: wape_per_series
-      callable: mypackage.metrics.wape
+      callable: tsbricks.blocks.metrics.wape
       type: simple
       scope: per_series
       aggregation: per_fold_mean
 
     - name: wape_by_category
-      callable: mypackage.metrics.wape
+      callable: tsbricks.blocks.metrics.wape
       type: simple
       scope: group
       aggregation: per_fold_mean
@@ -493,7 +496,7 @@ A single run can specify multiple metrics. All metrics are computed on the same 
 metrics:
   definitions:
     - name: rmsse
-      callable: mypackage.metrics.rmsse
+      callable: tsbricks.blocks.metrics.rmsse
       type: context_aware
       scope: per_series
       aggregation: per_fold_mean
@@ -502,7 +505,7 @@ metrics:
         return_components: false
 
     - name: scaled_bias
-      callable: mypackage.metrics.difference_scaled_bias
+      callable: tsbricks.blocks.metrics.difference_scaled_bias
       type: context_aware
       scope: per_series
       aggregation: per_fold_mean
@@ -511,7 +514,7 @@ metrics:
         scale_stat: rms
 
     - name: wrmsse
-      callable: mypackage.metrics.wrmsse
+      callable: tsbricks.blocks.metrics.wrmsse
       type: context_aware
       scope: global
       aggregation: pooled
@@ -519,20 +522,20 @@ metrics:
         weights_path: gs://my-bucket/data/weights.parquet
 
     - name: mae
-      callable: mypackage.metrics.mae
+      callable: tsbricks.blocks.metrics.mae
       type: simple
       scope: per_series
       aggregation: per_fold_mean
 
     - name: wape_by_category
-      callable: mypackage.metrics.wape
+      callable: tsbricks.blocks.metrics.wape
       type: simple
       scope: group
       aggregation: per_fold_mean
       grouping_columns: [product_category]  # per-definition override
 
     - name: wape_by_country
-      callable: mypackage.metrics.wape
+      callable: tsbricks.blocks.metrics.wape
       type: simple
       scope: group
       aggregation: per_fold_mean
@@ -612,7 +615,7 @@ test:
 # --- Transforms ---
 transforms:
   - name: trading_day_normalization
-    class: mypackage.transforms.TradingDayNormalization
+    class: tsbricks.blocks.transforms.TradingDayNormalization
     scope: global
     targets: [y]
     invertible: true
@@ -620,7 +623,7 @@ transforms:
       calendar: NYSE
 
   - name: box_cox
-    class: mypackage.transforms.BoxCoxTransform
+    class: tsbricks.blocks.transforms.BoxCoxTransform
     scope: per_series
     targets: [y]
     invertible: true
@@ -630,7 +633,7 @@ transforms:
 
 # --- Model ---
 model:
-  callable: mypackage.models.auto_arima_forecast
+  callable: my_project.models.auto_arima_forecast
   hyperparameters:
     order: [1, 1, 1]
     seasonal_order: [1, 1, 1, 12]
@@ -644,20 +647,20 @@ model:
 metrics:
   definitions:
     - name: rmsse
-      callable: mypackage.metrics.rmsse
+      callable: tsbricks.blocks.metrics.rmsse
       type: context_aware
       scope: per_series
       aggregation: per_fold_mean
       params:
         m: 1
     - name: wrmsse
-      callable: mypackage.metrics.wrmsse
+      callable: tsbricks.blocks.metrics.wrmsse
       type: context_aware
       scope: global
       aggregation: pooled
       params: {}
     - name: mae
-      callable: mypackage.metrics.mae
+      callable: tsbricks.blocks.metrics.mae
       type: simple
       scope: per_series
       aggregation: per_fold_mean
@@ -922,3 +925,4 @@ The following capabilities are acknowledged but deferred beyond V1:
 - **Custom company working day normalization.** A built-in transform that supports working day normalization based on a user-provided company working day calendar, accommodating company-specific holidays and non-standard schedules.
 - **Transform parallelization.** Parallelization of per-series transform fitting across `unique_id` values, which is especially important when transforms involve a fitting process to find a parameter (e.g., Box-Cox lambda via Guerrero method). V1 parallelizes model fitting (via model's own `n_jobs`) and evaluation (via the system's `multiprocessing`), but transform fitting is sequential.
 - **Native hyperparameter optimization.** Built-in integration with Optuna or similar frameworks, allowing the config to specify hyperparameter search spaces instead of fixed values and having the system manage the optimization loop internally. V1 supports hyperparameter optimization via external orchestration using the dict-based config option.
+- **Forward-looking forecast (`run_forecast`).** A second entry point that reuses the same YAML config, transform pipeline, and model invocation primitives to produce a forward-looking forecast on the full dataset. The V1 internal architecture is designed to support this with minimal additional code.
