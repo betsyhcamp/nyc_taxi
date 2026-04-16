@@ -882,7 +882,7 @@ wheels = [
 
 [[package]]
 name = "google-cloud-bigquery"
-version = "3.38.0"
+version = "3.40.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "google-api-core", extra = ["grpc"] },
@@ -893,9 +893,9 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/07/b2/a17e40afcf9487e3d17db5e36728ffe75c8d5671c46f419d7b6528a5728a/google_cloud_bigquery-3.38.0.tar.gz", hash = "sha256:8afcb7116f5eac849097a344eb8bfda78b7cfaae128e60e019193dd483873520", size = 503666, upload-time = "2025-09-17T20:33:33.47Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/11/0c/153ee546c288949fcc6794d58811ab5420f3ecad5fa7f9e73f78d9512a6e/google_cloud_bigquery-3.40.1.tar.gz", hash = "sha256:75afcfb6e007238fe1deefb2182105249321145ff921784fe7b1de2b4ba24506", size = 511761, upload-time = "2026-02-12T18:44:18.958Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/39/3c/c8cada9ec282b29232ed9aed5a0b5cca6cf5367cb2ffa8ad0d2583d743f1/google_cloud_bigquery-3.38.0-py3-none-any.whl", hash = "sha256:e06e93ff7b245b239945ef59cb59616057598d369edac457ebf292bd61984da6", size = 259257, upload-time = "2025-09-17T20:33:31.404Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/f5/081cf5b90adfe524ae0d671781b0d497a75a0f2601d075af518828e22d8f/google_cloud_bigquery-3.40.1-py3-none-any.whl", hash = "sha256:9082a6b8193aba87bed6a2c79cf1152b524c99bb7e7ac33a785e333c09eac868", size = 262018, upload-time = "2026-02-12T18:44:16.913Z" },
 ]
 
 [package.optional-dependencies]
@@ -1995,6 +1995,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "scipy" },
     { name = "statsforecast" },
+    { name = "tsbricks", extra = ["matplotlib"] },
     { name = "utilsforecast" },
 ]
 
@@ -2038,6 +2039,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "scipy", specifier = "<1.16.0" },
     { name = "statsforecast", specifier = ">=2.0.1" },
+    { name = "tsbricks", extras = ["matplotlib"], git = "https://github.com/betsyhcamp/tsbricks.git?rev=v0.3.0" },
     { name = "utilsforecast", specifier = ">=0.2.12" },
 ]
 
@@ -3588,6 +3590,30 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/88/28/fca2981080bfb44e317b3fc6cc4119a0abf14f18e707a612764fcad28790/triad-0.9.8.tar.gz", hash = "sha256:5b67673124891981daf8afbab44b2e6358932ca35ef3ff38a25bc3e0f6f03f17", size = 56086, upload-time = "2024-06-28T06:11:32.537Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4f/c6/4aedce0522bb3c72f2d770e7e4c18b0e1f7716d2c70a865e94c89ebcf7e6/triad-0.9.8-py3-none-any.whl", hash = "sha256:2c0ba7d83977c6d4e7b59e3cc70727f858014ef7676c62d184aa8e63f7bef5de", size = 62340, upload-time = "2024-06-28T06:11:30.764Z" },
+]
+
+[[package]]
+name = "tsbricks"
+version = "0.3.0"
+source = { git = "https://github.com/betsyhcamp/tsbricks.git?rev=v0.3.0#375675baf947fd295102fda177aad0433bac30f9" }
+dependencies = [
+    { name = "coreforecast" },
+    { name = "gcsfs" },
+    { name = "google-cloud-bigquery", extra = ["bqstorage", "pandas"] },
+    { name = "jinja2" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "plotly" },
+    { name = "pyarrow" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "scipy" },
+    { name = "statsmodels" },
+]
+
+[package.optional-dependencies]
+matplotlib = [
+    { name = "matplotlib" },
 ]
 
 [[package]]

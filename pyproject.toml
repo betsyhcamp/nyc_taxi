@@ -24,6 +24,7 @@ dependencies = [
     "utilsforecast>=0.2.12",
     "coreforecast>=0.0.16",
     "kfp>=2.15.2",
+    "tsbricks[matplotlib]==0.3.0",
 ]
 
 [dependency-groups]
@@ -88,6 +89,9 @@ indent-width = 4
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[tool.uv.sources]
+tsbricks = { git = "https://github.com/betsyhcamp/tsbricks.git", rev = "v0.3.0" }
 
 [tool.ruff.lint]
 # Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`) codes by default.
