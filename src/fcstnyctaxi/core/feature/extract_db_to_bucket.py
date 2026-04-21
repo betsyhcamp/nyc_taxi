@@ -1,97 +1,72 @@
-print("stub: commented out everything")
-## %%
-# import uuid
-# from google.cloud import bigquery, storage
-# import pandas as pd
-# from pathlib import Path
-#
-# from datetime import datetime, timezone
-# from fcstnyctaxi.lib.utils import get_project_root_dir, load_config_file
-# from fcstnyctaxi.lib.dataio import read_sql,
-#
-#
-## %%
-# def extract_db_to_bucket_impl(
-#    project_id: str,
-#    db_location: str,
-#    sql_query_str: str,
-#    sql_query_params: dict,
-#    bucket_name: str,
-#    gcs_prefix: str,
-# ) -> str:
-#
-#    # read in config.yaml .... put outside *_impl() function
-#    # and pass into func what is needed
-#
-#    # put defining root project path & loading SQL to a str in pipeline definition
-#
-#    # manipulate sql query string: sub in any variables using jinja
-#    # use function from dataio
-#
-#    # query to dataframe function
-#
-#    # construct GCS URI string
-#
-#    # write df to GCS function in gcs
-#
-#
-#    # run BQ
-#    bq_client = bigquery.Client(project=project_id, location=db_location)
-#    job = bq_client.query(sql_query_str)
-#    print("Billed project (job.project):", job.project)
-#    df = job.result().to_dataframe()
-#
-#    # consider later transfering queried data directly to GCS rather than
-#    # going through pandas and a local write
-#
-#    # write to local .parquet file w/ string in the filename: UUID_utctimenow
-#    dataset_id = uuid.uuid4().hex[:8]
-#    timestamp = datetime.now(timezone.utc).strftime("UTC%Y%m%d_%H%M%S")
-#    filename = f"manhattan_daily_zone_pickups_{dataset_id}_{timestamp}.parquet"
-#    tmp_dir = Path("/tmp/data")
-#    tmp_dir.mkdir(parents=False, exist_ok=True)
-#    local_path = tmp_dir / filename
-#    df.to_parquet(local_path, index=False)
-#
-#    # upload to GCS
-#    gcs_uri = f"gs://{bucket_name}/{prefix}/{filename}"
-#    storage_client = storage.Client(project=project_id)
-#    bucket = storage_client.bucket(bucket_name)
-#    blob = bucket.blob(f"{prefix}/{filename}")
-#    blob.upload_from_filename(local_path)
-#
-#    # TO DO: any print statement should be part of logging
-#    print(f"Wrote {len(df)} rows to {gcs_uri}")
-#
-#    return gcs_uri
-#
-#
-## %%
-# if __name__ == "__main__":
-#    # local smoke test
-#    from pathlib import Path
-#    from fcstnyctaxi.lib.utils import get_project_root_dir, load_config_file
-#
-#    # load configs
-#    config_filename = "config_daily_zone.yaml"
-#    project_root_path = get_project_root_dir()
-#    config_path = project_root_path / "config" / config_filename
-#    configs = load_config_file(config_path)
-#
-#    env = configs["project_settings"].get("env")
-#    gcs_prefix = configs["extract_db_to_bucket"].get("gcs_prefix")
-#    gcs_prefix = env + "/" + gcs_prefix
-#
-#    # load SQL query to a string
-#    query_filename = configs["extract_db_to_bucket"].get("query_filename")
-#    sql_query_str = read_sql(project_root_path / "queries" / query_filename)
-#
-#    gcs_uri = extract_db_to_bucket(
-#        project_id=configs["project_settings"].get("project_id"),
-#        db_location=configs["project_settings"].get("location"),
-#        bucket_name=configs["project_settings"].get("gcs_bucket_name"),
-#        prefix=gcs_prefix,
-#        sql_query_str=sql_query_str,
-#    )
-#    print(gcs_uri)
-#
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Mapping
+from google.cloud import bigquery
+from tsbricks.blocks.dataio import (
+    read_sql,
+    render_sql_template,
+    query_to_dataframe,
+    BigQueryQueryStats,
+    write_df_to_gcs_parquet,
+)
+
+
+def extract_db_to_bucket_impl(
+    sql_path: Path,
+    sql_params: Mapping[str, object],
+    bq_client: bigquery.Client,
+    bucket_name: str,
+    gcs_prefix: str,
+    job_config: bigquery.QueryJobConfig | None = None,
+) -> tuple[str, BigQueryQueryStats, Mapping[str, Any]]:
+    """Extract data from BigQuery and write the result as a Parquet file to GCS.
+
+    Composes read_sql, render_sql_template, query_to_dataframe, and
+    write_df_to_gcs_parquet into a single callable so the component stays thin.
+    Documented exception to the core/ no-GCP-clients rule: this step has no
+    business logic — it exists solely to compose IO functions.
+
+    Args:
+        sql_path (Path): Path to the .sql file containing the query to execute.
+        sql_params (Mapping[str, object]): Parameters to substitute into the SQL
+            template as a mapping of placeholder name to value. Pass an empty
+            mapping if the SQL contains no Jinja placeholders; rendering is
+            skipped in that case.
+        bq_client (bigquery.Client): Authenticated BigQuery client used to run
+            the query.
+        bucket_name (str): Name of the destination GCS bucket.
+        gcs_prefix (str): GCS object prefix (path between the bucket name and
+            the filename, without leading or trailing slashes).
+        job_config (bigquery.QueryJobConfig | None, optional): Optional BigQuery
+            job configuration (e.g., maximum_bytes_billed, dry_run). Defaults to
+            None.
+
+    Raises:
+        RuntimeError: If the BigQuery query returns zero rows.
+
+    Returns:
+        tuple[str, BigQueryQueryStats, Mapping[str, Any]]: The destination GCS
+            URI of the written Parquet file, BigQuery query execution
+            statistics, and GCS write confirmation metadata.
+    """
+    sql_text = read_sql(sql_path)
+
+    if sql_params:
+        sql_text = render_sql_template(sql_text, sql_params)
+
+    df, bq_stats = query_to_dataframe(sql_text, client=bq_client, job_config=job_config)
+
+    if bq_stats.total_rows == 0:
+        raise RuntimeError(
+            f"BigQuery query returned zero rows (job_id={bq_stats.job_id})."
+            f"SQL file: {sql_path}."
+        )
+
+    filename = "manhattan_daily_zone_pickups.parquet"
+
+    gs_uri = f"gs://{bucket_name}/{gcs_prefix}/{filename}"
+
+    write_metadata = write_df_to_gcs_parquet(df, gs_uri)
+
+    return gs_uri, bq_stats, write_metadata
