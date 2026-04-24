@@ -1,22 +1,49 @@
+# Pre-commit handles file utilities; Taskfile handles linting/formatting.
+# CI runs: task pre-commit (which invokes pre-commit run --all-files).
+
 minimum_pre_commit_version: "3.5.0"
 
+exclude: '(\.ipynb$|^notebooks/)'
+
 repos:
-  # Basic hygiene checks
+  # ============== File Utilities (native pre-commit) ==============
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
       - id: check-merge-conflict
-      - id: end-of-file-fixer
       - id: trailing-whitespace
+        exclude: '\.md$'
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: ["--unsafe"]
+      - id: check-toml
       - id: detect-private-key
       - id: check-added-large-files
         args: ["--maxkb=500"]
 
-  # Ruff: formatting only
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.2
+  # ============== Project Checks (delegate to Taskfile) ==============
+  - repo: local
     hooks:
-      - id: ruff-format
+      - id: task-lint
+        name: task lint
+        entry: task lint
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: task-format-check
+        name: task format-check
+        entry: task format-check
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: task-md-check
+        name: task md-check
+        entry: task md-check
+        language: system
+        pass_filenames: false
+        types: [markdown]
 
   # SQLFluff: Automatic formatting fixes only (no linting) to use rules in .sqlfluff config file
   - repo: https://github.com/sqlfluff/sqlfluff

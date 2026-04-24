@@ -56,7 +56,7 @@ dev = [
 
 
 [tool.ruff]
-extend-include = ["build", "dist", ".venv", "notebooks/**"]
+extend-exclude = ["build", "dist", ".venv", "notebooks"]
 
 # Exclude a variety of commonly ignored directories.
 exclude = [
