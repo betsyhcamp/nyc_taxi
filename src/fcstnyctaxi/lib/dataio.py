@@ -238,8 +238,6 @@ def query_to_dataframe(
     conversion_start = time.perf_counter()
 
     if dataframe_type == "pandas":
-        import pandas as pd
-
         df = result.to_dataframe(create_bqstorage_client=use_bqstorage)
 
     elif dataframe_type == "polars":
@@ -373,8 +371,8 @@ def write_df_to_gcs_parquet(
 
     if _is_pandas_df(df):
         try:
-            import pyarrow
-            import gcsfs
+            import pyarrow  # noqa: F401
+            import gcsfs  # noqa: F401
         except ImportError as e:
             raise RuntimeError(
                 "pandas write .parquet to GCS requires 'pyarrow' and 'gcsfs'"
@@ -391,7 +389,7 @@ def write_df_to_gcs_parquet(
     elif _is_polars_df(df):
         try:
             import fsspec
-            import gcsfs
+            import gcsfs  # noqa: F401
         except ImportError as e:
             raise RuntimeError(
                 "polars write .parquet to GCS requires 'fsspec' and 'gcsfs'"
@@ -481,7 +479,7 @@ def write_df_to_gcs_csv(
     elif _is_polars_df(df):
         try:
             import fsspec
-            import gcsfs
+            import gcsfs  # noqa: F401
         except ImportError as e:
             raise RuntimeError(
                 "polars write .csv to GCS requires 'fsspec' and 'gcsfs'"

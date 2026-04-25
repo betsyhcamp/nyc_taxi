@@ -4,9 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from fcstnyctaxi.schemas.config_schemas import (
-    ExtractDbToBucketConfig,
     PipelineConfig,
-    ProjectSettings,
 )
 
 
