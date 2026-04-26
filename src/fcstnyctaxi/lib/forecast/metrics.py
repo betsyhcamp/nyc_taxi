@@ -1,5 +1,7 @@
 from __future__ import annotations
-from typing import Iterable, Tuple, Literal
+
+from typing import Iterable, Literal, Tuple
+
 import numpy as np
 
 # Small number bound to use in checking stability of numerical results

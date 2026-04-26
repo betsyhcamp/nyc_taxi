@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
-import time
-from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Mapping, Set, Any, Literal, Optional
-from jinja2 import Environment, BaseLoader, StrictUndefined, meta
+import time
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Optional, Set
+
 from google.cloud import bigquery
+from jinja2 import BaseLoader, Environment, StrictUndefined, meta
+
 from .forecast.checks import _is_pandas_df, _is_polars_df
 
 if TYPE_CHECKING:
@@ -371,8 +373,8 @@ def write_df_to_gcs_parquet(
 
     if _is_pandas_df(df):
         try:
-            import pyarrow  # noqa: F401
             import gcsfs  # noqa: F401
+            import pyarrow  # noqa: F401
         except ImportError as e:
             raise RuntimeError(
                 "pandas write .parquet to GCS requires 'pyarrow' and 'gcsfs'"

@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Mapping
+
 from google.cloud import bigquery
 from tsbricks.blocks.dataio import (
+    BigQueryQueryStats,
+    query_to_dataframe,
     read_sql,
     render_sql_template,
-    query_to_dataframe,
-    BigQueryQueryStats,
     write_df_to_gcs_parquet,
 )
 

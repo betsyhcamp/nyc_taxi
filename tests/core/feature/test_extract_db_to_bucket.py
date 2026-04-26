@@ -10,7 +10,6 @@ from pytest_mock import MockerFixture
 
 from fcstnyctaxi.core.feature.extract_db_to_bucket import extract_db_to_bucket_impl
 
-
 PATCH_TARGET_WRITE = (
     "fcstnyctaxi.core.feature.extract_db_to_bucket.write_df_to_gcs_parquet"
 )

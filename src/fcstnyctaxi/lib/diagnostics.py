@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Literal, TYPE_CHECKING, TypeAlias
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 import numpy as np
 import pandas as pd
@@ -323,8 +323,8 @@ def _plot_plotly(
     height: int,
 ) -> go.Figure:
     """Create diagnostic plot using plotly."""
-    from plotly.subplots import make_subplots
     import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
 
     fig = make_subplots(
         rows=3,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, FrozenSet
+from typing import FrozenSet, Iterable
 
 try:
     import pandas as pd
