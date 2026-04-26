@@ -1,7 +1,5 @@
 from pathlib import Path
 import os
-from typing import Any
-import yaml
 
 
 def find_root_project_dir(
@@ -60,26 +58,3 @@ def get_project_root_dir(start_path: Path | None = None) -> Path:
     if env_root:
         return Path(env_root).resolve()
     return find_root_project_dir(start_path=start_path)
-
-
-def load_config_file(path: Path) -> dict[str, Any]:
-    """Load a .yaml / .yml configuration file and return the contents of the
-        configuration file as a dictionary
-
-    Args:
-        path (Path): Path to the configuration .yaml / .yml file
-
-    Raises:
-        ValueError: If the file extension is not .yaml / .yml, ValueError
-            raised.
-
-    Returns:
-        dict[str, Any]: Data in the configuration file
-    """
-    ext = path.suffix.lower()
-    if ext in [".yaml", ".yml"]:
-        with path.open("r", encoding="utf-8") as file_object:
-            data = yaml.safe_load(file_object) or {}
-    else:
-        raise ValueError(f"Unsupported config type {ext}, use .yaml / .yml")
-    return data

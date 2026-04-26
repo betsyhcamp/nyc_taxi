@@ -52,6 +52,7 @@ dev = [
     "furo>=2024.0.0",
     "sphinx-autodoc-typehints>=2.0.0",
     "myst-parser>=3.0.0",
+    "types-pyyaml>=6.0.12.20260408",
 ]
 
 
