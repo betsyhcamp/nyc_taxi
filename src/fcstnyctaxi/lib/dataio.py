@@ -17,7 +17,8 @@ if TYPE_CHECKING:
 
 
 def read_sql(sql_path: Path) -> str:
-    """Reads in a .sql file at the given sql_path into a string and returns the query string.
+    """Reads in a .sql file at the given sql_path into a string and returns the
+    query string.
 
     Args:
         sql_path (Path): Path object of .sql file to read.
@@ -38,9 +39,9 @@ def read_sql(sql_path: Path) -> str:
 
 
 def replace_params_sql(sql_text: str, replace_dict: dict[str, str]) -> str:
-    """In a string (SQL query) replace a placeholder denoted by <<placeholder_name>> with
-    a corresponding string and return the resulting string (SQL query) after all replacements
-    have been made.
+    """In a string (SQL query) replace a placeholder denoted by
+    <<placeholder_name>> with a corresponding string and return the resulting
+    string (SQL query) after all replacements have been made.
 
     Args:
         sql_text (str): SQL query represented as a string. Initially has placeholders
@@ -51,18 +52,21 @@ def replace_params_sql(sql_text: str, replace_dict: dict[str, str]) -> str:
             "placeholder_value".
 
     Raises:
-        KeyError: Raise KeyError if no instances of a given placeholder are found in `sql_text`
-        ValueError: Raise ValueError if there are remaining placeholders that have not been
-            replaced in `sql_text`.
+        KeyError: Raise KeyError if no instances of a given placeholder are
+            found in `sql_text`.
+        ValueError: Raise ValueError if there are remaining placeholders that
+            have not been replaced in `sql_text`.
 
     Returns:
-        str: SQL query represented as a string with all <<placeholder_name>> strings replaced.
+        str: SQL query represented as a string with all <<placeholder_name>>
+            strings replaced.
     """
     for placeholder_name, replace_placeholder_with_text in replace_dict.items():
         # define expression pattern
         pattern = re.compile(rf"<<\s*{re.escape(placeholder_name)}\s*>>")
 
-        # Check if there are no instances of placeholder_name & raise error if no instances
+        # Check if there are no instances of placeholder_name & raise error
+        # if no instances
         if not pattern.search(sql_text):
             raise KeyError(
                 f"Placeholder '<<{placeholder_name}>>' not found in SQL query"
@@ -166,7 +170,10 @@ def render_sql_template(sql_text: str, params: Mapping[str, object]) -> str:
         if extras:
             problems.append(f"unused: {sorted(extras)}")
 
-        msg = f"Jinja render error: Parameter mismatch for SQL template ({'; '.join(problems)})."
+        msg = (
+            "Jinja render error: Parameter mismatch for SQL template "
+            f"({'; '.join(problems)})."
+        )
         raise ValueError(msg)
 
     # Render with strict undefined to catch structural mistakes at runtime.
@@ -324,7 +331,8 @@ def _check_gcs_file_stats(
             filesystem_obj = fsspec.filesystem(filesystem, **storage_options)
     except ImportError as e:
         raise RuntimeError(
-            f"Checking {filesystem} stats requires package fsspec which could not be imported"
+            f"Checking {filesystem} stats requires package fsspec "
+            "which could not be imported"
         ) from e
 
     try:
@@ -352,7 +360,8 @@ def write_df_to_gcs_parquet(
       compression: Parquet compression {"snappy" | "zstd" | "gzip"}
       storage_options: Passed to fsspec/gcsfs (e.g., {"token": "cloud"})
       confirm: "none" to skip post-write stat, "stat" to validate and return metadata.
-      **kwargs: Forwarded to the writer (e.g., pandas to_parquet or polars write_parquet)
+      **kwargs: Forwarded to the writer (e.g., pandas to_parquet or polars
+            write_parquet)
 
     Returns:
       Mapping with at least {"uri": gs_uri}. If `confirm="stat"`, also includes
@@ -438,7 +447,8 @@ def write_df_to_gcs_csv(
     Write a pandas or polars DataFrame directly to GCS as a CSV file.
 
     CSV is lossy (no schema, no types). Intended for debugging or interchange,
-    not production forecasting artifacts. For production, use `write_df_to_gcs_parquet()`.
+    not production forecasting artifacts. For production, use
+    `write_df_to_gcs_parquet()`.
 
     Args:
       df: pandas.DataFrame or polars.DataFrame

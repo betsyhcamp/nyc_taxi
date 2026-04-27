@@ -112,7 +112,7 @@ tsbricks = { git = "https://github.com/betsyhcamp/tsbricks.git", rev = "v0.3.0" 
 # Enable Pyflakes (`F`), a subset of pycodestyle (`E`), and isort (`I`).
 # Unlike Flake8, Ruff doesn't enable pycodestyle warnings (`W`) or
 # McCabe complexity (`C901`) by default.
-select = ["E4", "E7", "E9", "F", "I"]
+select = ["E4", "E5", "E7", "E9", "F", "I"]
 ignore = []
 
 # Allow fix for all enabled rules (when `--fix`) is provided.

@@ -11,8 +11,8 @@ def find_root_project_dir(
     Args:
         markers_list (list[str] | None, optional): filename strings of files that are in
             the root project directory. Defaults to None.
-        start_path (Path | None, optional): Intial starting location to start path search.
-            Defaults to None.
+        start_path (Path | None, optional): Intial starting location to start
+            path search. Defaults to None.
 
     Raises:
         RuntimeError: Could not find marker files so could not find project directory.
@@ -34,7 +34,8 @@ def find_root_project_dir(
         if any(check) and path_candidate.is_dir():
             return path_candidate
     raise RuntimeError(
-        f"Count not locate project root directory using marker files:{root_markers_list}"
+        "Count not locate project root directory using marker files:"
+        f"{root_markers_list}"
     )
 
 
@@ -44,8 +45,8 @@ def get_project_root_dir(start_path: Path | None = None) -> Path:
         location.
 
     Args:
-        start_path (Path | None, optional): Intial starting location to start path search.
-            Defaults to None.
+        start_path (Path | None, optional): Intial starting location to start
+            path search. Defaults to None.
 
     Returns:
         Path: Path of project root directory.

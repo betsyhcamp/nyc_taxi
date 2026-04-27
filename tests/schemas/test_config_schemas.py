@@ -10,7 +10,9 @@ from fcstnyctaxi.schemas.config_schemas import (
 
 @pytest.fixture
 def valid_config_dict() -> dict:
-    """A complete, valid raw config dict. Each test receives a fresh instance that may be mutated."""
+    """A complete, valid raw config dict. Each test receives a fresh
+    instance that may be mutated.
+    """
     return {
         "project_settings": {
             "project_id": "nyc_taxi_ehc",
@@ -55,7 +57,9 @@ def test_missing_required_field_raises_validation_error(
 
 
 def test_extra_field_raises_validation_error(valid_config_dict: dict) -> None:
-    """An unknown field in a nested config section raises ValidationError (extra="forbid")."""
+    """An unknown field in a nested config section raises ValidationError
+    (extra="forbid").
+    """
     extra_dict = valid_config_dict
     extra_dict["project_settings"]["not_a_real_field"] = "value"
 
@@ -73,7 +77,9 @@ def test_wrong_type_raises_validation_error(valid_config_dict: dict) -> None:
 
 
 def test_frozen_model_rejects_mutation(valid_config_dict: dict) -> None:
-    """Field assignment on a frozen nested model raises ValidationError (frozen=True)."""
+    """Field assignment on a frozen nested model raises ValidationError
+    (frozen=True).
+    """
     config = PipelineConfig(**valid_config_dict)
 
     with pytest.raises(ValidationError, match="frozen"):
