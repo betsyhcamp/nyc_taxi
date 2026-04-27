@@ -9,7 +9,6 @@ from google.api_core.exceptions import DeadlineExceeded, GoogleAPIError
 
 from fcstnyctaxi.lib.dataio import BigQueryQueryStats, query_to_dataframe
 
-
 #################################################################
 # tests for query_to_dataframe()
 #################################################################

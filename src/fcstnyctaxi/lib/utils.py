@@ -1,7 +1,5 @@
-from pathlib import Path
 import os
-from typing import Any
-import yaml
+from pathlib import Path
 
 
 def find_root_project_dir(
@@ -13,8 +11,8 @@ def find_root_project_dir(
     Args:
         markers_list (list[str] | None, optional): filename strings of files that are in
             the root project directory. Defaults to None.
-        start_path (Path | None, optional): Intial starting location to start path search.
-            Defaults to None.
+        start_path (Path | None, optional): Intial starting location to start
+            path search. Defaults to None.
 
     Raises:
         RuntimeError: Could not find marker files so could not find project directory.
@@ -36,7 +34,8 @@ def find_root_project_dir(
         if any(check) and path_candidate.is_dir():
             return path_candidate
     raise RuntimeError(
-        f"Count not locate project root directory using marker files:{root_markers_list}"
+        "Count not locate project root directory using marker files:"
+        f"{root_markers_list}"
     )
 
 
@@ -46,8 +45,8 @@ def get_project_root_dir(start_path: Path | None = None) -> Path:
         location.
 
     Args:
-        start_path (Path | None, optional): Intial starting location to start path search.
-            Defaults to None.
+        start_path (Path | None, optional): Intial starting location to start
+            path search. Defaults to None.
 
     Returns:
         Path: Path of project root directory.
@@ -60,26 +59,3 @@ def get_project_root_dir(start_path: Path | None = None) -> Path:
     if env_root:
         return Path(env_root).resolve()
     return find_root_project_dir(start_path=start_path)
-
-
-def load_config_file(path: Path) -> dict[str, Any]:
-    """Load a .yaml / .yml configuration file and return the contents of the
-        configuration file as a dictionary
-
-    Args:
-        path (Path): Path to the configuration .yaml / .yml file
-
-    Raises:
-        ValueError: If the file extension is not .yaml / .yml, ValueError
-            raised.
-
-    Returns:
-        dict[str, Any]: Data in the configuration file
-    """
-    ext = path.suffix.lower()
-    if ext in [".yaml", ".yml"]:
-        with path.open("r", encoding="utf-8") as file_object:
-            data = yaml.safe_load(file_object) or {}
-    else:
-        raise ValueError(f"Unsupported config type {ext}, use .yaml / .yml")
-    return data

@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
+
 import pandas as pd
 import pyarrow as pa
 import pytest
-from pytest_mock import MockerFixture
-
 from google.cloud import bigquery
 from google.cloud.bigquery.job import QueryJob
 from google.cloud.bigquery.table import RowIterator
+from pytest_mock import MockerFixture
 
 
 @pytest.fixture

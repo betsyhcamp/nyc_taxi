@@ -1,0 +1,81 @@
+version: '3'
+
+tasks:
+  # ===========================================
+  # DEPENDENCIES
+  # ===========================================
+  install:
+    desc: Install dependencies
+    cmds:
+      - uv sync
+
+  # ===========================================
+  # FILE UTILITIES (delegates to pre-commit)
+  # ===========================================
+  pre-commit:
+    desc: Run pre-commit hooks on all files
+    cmds:
+      - uv run pre-commit run --all-files
+
+  # ===========================================
+  # PROJECT CHECKS (single source of truth)
+  # ===========================================
+  lint:
+    desc: Run ruff linter
+    cmds:
+      - uv run ruff check .
+
+  lint-fix:
+    desc: Run ruff linter with auto-fix
+    cmds:
+      - uv run ruff check --fix .
+
+  format:
+    desc: Format code with ruff
+    cmds:
+      - uv run ruff format .
+
+  format-check:
+    desc: Check code formatting with ruff
+    cmds:
+      - uv run ruff format --check .
+
+  md-format:
+    desc: Format tracked Markdown files with mdformat
+    cmds:
+      - git ls-files '*.md' | xargs uv run mdformat --wrap keep
+
+  md-check:
+    desc: Check tracked Markdown formatting with mdformat
+    cmds:
+      - git ls-files '*.md' | xargs uv run mdformat --wrap keep --check
+
+  md-format-all:
+    desc: Format all Markdown files (tracked and untracked)
+    cmds:
+      - find . -name '*.md' -not -path './.venv/*' -not -path './.git/*' -not -path './node_modules/*' -not -path './docs/_build/*' | xargs uv run mdformat --wrap keep
+
+  md-check-all:
+    desc: Check all Markdown formatting (tracked and untracked)
+    cmds:
+      - find . -name '*.md' -not -path './.venv/*' -not -path './.git/*' -not -path './node_modules/*' -not -path './docs/_build/*' | xargs uv run mdformat --wrap keep --check
+
+  test:
+    desc: Run tests
+    cmds:
+      - uv run pytest
+
+  test-cov:
+    desc: Run tests with coverage report
+    cmds:
+      - uv run pytest --cov --cov-report=term-missing --cov-report=html
+
+  # ===========================================
+  # COMPOSITE TASKS
+  # ===========================================
+
+  check:
+    desc: Run all CI checks
+    cmds:
+      - task: pre-commit
+      - task: test

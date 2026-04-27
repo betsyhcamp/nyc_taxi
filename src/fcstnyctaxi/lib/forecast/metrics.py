@@ -1,5 +1,7 @@
 from __future__ import annotations
-from typing import Iterable, Tuple, Literal
+
+from typing import Iterable, Literal, Tuple
+
 import numpy as np
 
 # Small number bound to use in checking stability of numerical results
@@ -104,7 +106,8 @@ def rmsse(
         m (int): The number of indices between datapoints used to construct
             the denominator scale (m-lag differences). Defaults to 1.
         y_train (Iterable[float] | None): The 1D in-sample series used to construct
-            scaling term via m-lag differences. None if scale provided in `fallback_scale`
+            scaling term via m-lag differences. None if scale provided in
+            `fallback_scale`.
         fallback_scale (float | None): Scale to use if y_train not provided.
         return_components (bool): If True, also return the numerator MSE and
             the denominator scale, along with instability flag. Defaults to False.
