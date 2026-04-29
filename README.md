@@ -1,5 +1,7 @@
 # Exploring and modeling NYC Yellow Taxi Demand
 
+[![CI](https://github.com/betsyhcamp/nyc_taxi/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/betsyhcamp/nyc_taxi/actions/workflows/ci.yml) ![Python](https://img.shields.io/badge/python-3.12-blue.svg)
+
 ______________________________________________________________________
 
 ## Purpose
