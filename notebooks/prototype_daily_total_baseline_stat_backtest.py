@@ -31,7 +31,7 @@ from utilsforecast.plotting import plot_series
 from utilsforecast.evaluation import evaluate
 from utilsforecast.losses import rmse
 
-from fcstnyctaxi.lib.diagnostics import plot_residual_diagnostics
+from tsbricks.blocks.diagnostics import plot_residual_diagnostics
 
 # %% [markdown]
 # ## Metric Rationale
