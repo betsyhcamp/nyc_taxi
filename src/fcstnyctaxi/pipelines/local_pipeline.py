@@ -3,7 +3,7 @@ import time
 
 from google.cloud import bigquery
 
-from fcstnyctaxi.core.feature.extract_db_to_bucket import extract_db_to_bucket_impl
+from fcstnyctaxi.core.feature.extract_db_to_bucket_impl import extract_db_to_bucket_impl
 from fcstnyctaxi.lib.config import load_pipeline_config
 from fcstnyctaxi.lib.utils import get_project_root_dir
 
