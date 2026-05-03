@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -59,3 +60,15 @@ def get_project_root_dir(start_path: Path | None = None) -> Path:
     if env_root:
         return Path(env_root).resolve()
     return find_root_project_dir(start_path=start_path)
+
+
+def generate_run_id() -> str:
+    """Return a UTC microsecond-precision timestamp suitable as a per-run identifier.
+
+    Format: YYYYMMDDTHHMMSSffffffZ (e.g. 20260502T143022123456Z).
+    Lexicographic sort matches chronological order; microsecond precision
+    avoiding collisions.
+
+    Interim implementation pending the architecture lineage/run_id decision.
+    """
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
