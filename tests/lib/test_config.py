@@ -26,6 +26,7 @@ def test_valid_yaml_file_returns_pipeline_config(
           sql_filename: "x.sql"
           sql_params: {}
           gcs_prefix: "p"
+          output_filename: "y.parquet"
     """
     )
     config = load_pipeline_config(yaml_path)
