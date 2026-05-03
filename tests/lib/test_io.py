@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from fcstnyctaxi.lib.io import prepare_sql
+from fcstnyctaxi.lib.io import build_run_scoped_uri, prepare_sql
 
 EXPECTED_HASH = "e004ebd5b5532a4b85984a62f8ad48a81aa3460c1ca07701f386135d72cdecf5"
 
@@ -75,3 +75,19 @@ def test_prep_sql_hash_deterministic(tmp_path: Path) -> None:
 
     result2 = prepare_sql(sql_path=sql_path, sql_params={})
     assert result.sha256 == result2.sha256
+
+
+# ================================================
+# build_run_scoped_uri tests
+# ================================================
+
+
+def test_build_run_scoped_id_constructs_expected_string() -> None:
+    bucket = "BUCKET"
+    prefix = "PREFIX"
+    run_id = "RUNID"
+    filename = "FILE.parquet"
+    uri = build_run_scoped_uri(
+        bucket=bucket, prefix=prefix, run_id=run_id, filename=filename
+    )
+    assert uri == "gs://BUCKET/PREFIX/RUNID/FILE.parquet"
