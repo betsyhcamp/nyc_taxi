@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ProjectSettings(BaseModel):
@@ -16,6 +16,7 @@ class ExtractDbToBucketConfig(BaseModel):
     sql_filename: str
     sql_params: dict[str, object] = {}
     gcs_prefix: str
+    output_filename: str = Field(..., min_length=1)
 
 
 class PipelineConfig(BaseModel):

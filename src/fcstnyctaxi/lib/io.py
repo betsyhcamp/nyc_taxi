@@ -4,6 +4,7 @@ import hashlib
 from pathlib import Path
 from typing import Mapping, NamedTuple
 
+import fsspec
 from tsbricks.blocks.dataio import read_sql, render_sql_template
 
 
@@ -50,3 +51,18 @@ def build_run_scoped_uri(bucket: str, prefix: str, run_id: str, filename: str) -
         Fully-qualified GCS URI
     """
     return f"gs://{bucket}/{prefix}/{run_id}/{filename}"
+
+
+def write_text_to_gcs(text: str, gcs_uri: str) -> None:
+    """Write text to GCS URI as utf-8
+
+    This general purpose IO function is a candidate for promotion to
+    tsbricks once the API stabilizes.
+
+    Args:
+      text: The string to be written to GCS as a text file.
+      gcs_uri: The string GCS URI of the form "gs://.. .txt"
+    """
+    fs, path = fsspec.url_to_fs(gcs_uri)
+    with fs.open(path, mode="w") as f:
+        f.write(text)

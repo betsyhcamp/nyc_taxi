@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import fsspec
 import pytest
 
-from fcstnyctaxi.lib.io import build_run_scoped_uri, prepare_sql
+from fcstnyctaxi.lib.io import build_run_scoped_uri, prepare_sql, write_text_to_gcs
 
 EXPECTED_HASH = "e004ebd5b5532a4b85984a62f8ad48a81aa3460c1ca07701f386135d72cdecf5"
 
@@ -91,3 +92,22 @@ def test_build_run_scoped_id_constructs_expected_string() -> None:
         bucket=bucket, prefix=prefix, run_id=run_id, filename=filename
     )
     assert uri == "gs://BUCKET/PREFIX/RUNID/FILE.parquet"
+
+
+# ================================================
+# write_text_to_gcs tests
+# ================================================
+
+
+def test_write_text_to_gcs_writes_text_at_uri() -> None:
+    """Test that text file can be written to & read from fsspec memory system"""
+
+    uri = "memory://text_write_to_gcs/file.sql"
+
+    write_text_to_gcs("SELECT 1", uri)
+
+    fs, path = fsspec.url_to_fs(uri)
+    with fs.open(path, "r") as f:
+        text = f.read()
+
+    assert text == "SELECT 1"

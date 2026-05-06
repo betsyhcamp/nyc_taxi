@@ -24,6 +24,7 @@ def valid_config_dict() -> dict:
             "sql_filename": "initial_daily_taxi_rides.sql",
             "sql_params": {},
             "gcs_prefix": "dev/initial_datapull",
+            "output_filename": "manhattan_daily_zone_pickups.parquet",
         },
     }
 
@@ -84,3 +85,13 @@ def test_frozen_model_rejects_mutation(valid_config_dict: dict) -> None:
 
     with pytest.raises(ValidationError, match="frozen"):
         config.project_settings.env = "prod"
+
+
+def test_empty_output_filename_raises_validation_error(valid_config_dict: dict) -> None:
+    """Empty string for output_filename violates min_length; raises ValidationError."""
+
+    bad_filename_config = valid_config_dict
+    bad_filename_config["extract_db_to_bucket"]["output_filename"] = ""
+
+    with pytest.raises(ValidationError, match="output_filename"):
+        PipelineConfig(**bad_filename_config)
