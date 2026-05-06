@@ -6,7 +6,12 @@ from google.cloud import bigquery
 
 from fcstnyctaxi.core.feature.extract_db_to_bucket_impl import extract_db_to_bucket_impl
 from fcstnyctaxi.lib.config import load_pipeline_config
-from fcstnyctaxi.lib.io import PreparedSql, build_run_scoped_uri, prepare_sql
+from fcstnyctaxi.lib.io import (
+    PreparedSql,
+    build_run_scoped_uri,
+    prepare_sql,
+    write_text_to_gcs,
+)
 from fcstnyctaxi.lib.utils import generate_run_id, get_project_root_dir
 from fcstnyctaxi.schemas.config_schemas import PipelineConfig
 
@@ -59,15 +64,24 @@ def main() -> None:
         bq_client=bq_client,
     )
 
+    sql_sidecar_gcs_uri = build_run_scoped_uri(
+        bucket=config.project_settings.bucket_name,
+        prefix=config.extract_db_to_bucket.gcs_prefix,
+        run_id=run_id,
+        filename="query.sql",
+    )
+
+    write_text_to_gcs(preparedsql.sql_text, sql_sidecar_gcs_uri)
     logger.info(
         "extract_db_to_bucket complete: rows=%d job_id=%s uri=%s size=%s "
-        "run_id=%s sqlsha=%s",
+        "run_id=%s sqlsha=%s sidecar_sql_uri=%s",
         bq_stats.total_rows,
         bq_stats.job_id,
         output_gcs_uri,
         write_meta.get("size"),
         run_id,
         preparedsql.sha256,
+        sql_sidecar_gcs_uri,
     )
 
 
