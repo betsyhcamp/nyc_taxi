@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from kfp import dsl
 from kfp.dsl import Dataset, Output
 
