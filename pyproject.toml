@@ -101,9 +101,15 @@ testpaths = ["tests"]
 [tool.coverage.run]
 source = ["fcstnyctaxi"]
 branch = true
+omit = ["src/fcstnyctaxi/pipelines/*"]
 
 [tool.coverage.report]
 show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
 
 [tool.uv.sources]
 tsbricks = { git = "https://github.com/betsyhcamp/tsbricks.git", rev = "v0.3.0" }
