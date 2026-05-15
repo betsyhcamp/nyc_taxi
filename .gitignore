@@ -19,3 +19,6 @@ __pycache__/
 .coverage.*
 htmlcov/
 coverage.xml
+
+# exclude directory for pipeline local (testing) output
+local_outputs/
