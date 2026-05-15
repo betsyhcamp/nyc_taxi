@@ -1,5 +1,5 @@
-"""Manual smoke test (not unit test) of local KFP subprocess runner
-hitting GCP resources via redentials set up in Google Application Default Credentials"""
+"""Manual smoke test (not unit test) of local KFP subprocess runner hitting
+GCP resources via credentials set up in Google Application Default Credentials"""
 
 import kfp.local
 
@@ -19,7 +19,7 @@ def main() -> None:
 
     project_root = get_project_root_dir()
 
-    config_path = project_root / "config" / "configs_zeon_demand_pipeline.yaml"
+    config_path = project_root / "config" / "configs_zone_demand_pipeline.yaml"
     config = load_pipeline_config(config_path)
 
     run_id = generate_run_id()
@@ -43,8 +43,7 @@ def main() -> None:
         filename="query.sql",
     )
 
-    # TODO: Take care of Pylance warning that "snapshot" param is missing
-    task = extract_db_to_bucket(
+    task = extract_db_to_bucket(  # type: ignore[call-arg]
         project_id=config.project_settings.project_id,
         bq_location=config.project_settings.location,
         sql_query=preparedsql.sql_text,
@@ -56,7 +55,7 @@ def main() -> None:
 
     snapshot = task.outputs["snapshot"]
     print("Component completed.")
-    print(f"  uri: {snapshot.uri}\n  metadata: {snapshot.metadata}")
+    print(f"    uri: {snapshot.uri}\n    metadata: {snapshot.metadata}")
 
 
 if __name__ == "__main__":
