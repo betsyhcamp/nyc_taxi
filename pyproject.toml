@@ -12,26 +12,28 @@ dependencies = [
     "cloudpickle>=3.1.1",
     "fsspec>=2025.12.0",
     "gcsfs>=2025.12.0",
-    "google-cloud-aiplatform>=1.130.0",
-    "google-cloud-bigquery[bqstorage,pandas]>=3.38.0",
     "google-cloud-storage>=3.6.0",
-    "holidays>=0.86",
-    "jinja2>=3.1.6",
-    "mlforecast>=1.0.2",
-    "pandas>=2.3.0",
-    "pandas-gbq>=0.31.0",
-    "pandera>=0.27.0",
-    "pathlib>=1.0.1",
-    "pydantic>=2.12.5",
-    "statsforecast>=2.0.1",
-    "scipy<1.16.0",
-    "utilsforecast>=0.2.12",
-    "coreforecast>=0.0.16",
     "kfp>=2.15.2",
-    "tsbricks[matplotlib]==0.3.0",
+    "pandas>=2.3.0",
+    "pydantic>=2.12.5",
+    "tsbricks==0.3.0",
 ]
 
 [dependency-groups]
+extract = [
+    "google-cloud-bigquery[bqstorage,pandas]>=3.38.0",
+    "jinja2>=3.1.6",
+]
+
+forecasting = [
+    "coreforecast>=0.0.16",
+    "holidays>=0.86",
+    "mlforecast>=1.0.2",
+    "scipy<1.16.0",
+    "statsforecast>=2.0.1",
+    "utilsforecast>=0.2.12",
+]
+
 dev = [
     "ruff>=0.12.1",
     "ipykernel>=6.29.5",
@@ -58,6 +60,9 @@ dev = [
     "myst-parser>=3.0.0",
     "types-pyyaml>=6.0.12.20260408",
     "docker>=7.1.0",
+    "google-cloud-aiplatform>=1.130.0",
+    "pandas-gbq>=0.31.0",
+    "tsbricks[matplotlib]==0.3.0",
 ]
 
 [tool.ruff]
