@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "nyc-taxi"
+name = "fcstnyctaxi"
 version = "0.1.0"
 description = "NYC Yellow taxi demand modeling"
 readme = "README.md"

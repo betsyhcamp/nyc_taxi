@@ -751,6 +751,115 @@ wheels = [
 ]
 
 [[package]]
+name = "fcstnyctaxi"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "cloudpickle" },
+    { name = "coreforecast" },
+    { name = "fsspec" },
+    { name = "gcsfs" },
+    { name = "google-cloud-aiplatform" },
+    { name = "google-cloud-bigquery", extra = ["bqstorage", "pandas"] },
+    { name = "google-cloud-storage" },
+    { name = "holidays" },
+    { name = "jinja2" },
+    { name = "kfp" },
+    { name = "mlforecast" },
+    { name = "pandas" },
+    { name = "pandas-gbq" },
+    { name = "pandera" },
+    { name = "pathlib" },
+    { name = "pydantic" },
+    { name = "scipy" },
+    { name = "statsforecast" },
+    { name = "tsbricks", extra = ["matplotlib"] },
+    { name = "utilsforecast" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "docker" },
+    { name = "furo" },
+    { name = "ipykernel" },
+    { name = "jupytext" },
+    { name = "kaleido" },
+    { name = "matplotlib" },
+    { name = "mdformat" },
+    { name = "mdformat-gfm" },
+    { name = "meteostat" },
+    { name = "myst-parser" },
+    { name = "plotly" },
+    { name = "polars" },
+    { name = "pre-commit" },
+    { name = "pre-commit-uv" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-mock" },
+    { name = "ruff" },
+    { name = "seaborn" },
+    { name = "sphinx" },
+    { name = "sphinx-autodoc-typehints" },
+    { name = "sqlfluff" },
+    { name = "statsmodels" },
+    { name = "streamlit" },
+    { name = "types-pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cloudpickle", specifier = ">=3.1.1" },
+    { name = "coreforecast", specifier = ">=0.0.16" },
+    { name = "fsspec", specifier = ">=2025.12.0" },
+    { name = "gcsfs", specifier = ">=2025.12.0" },
+    { name = "google-cloud-aiplatform", specifier = ">=1.130.0" },
+    { name = "google-cloud-bigquery", extras = ["bqstorage", "pandas"], specifier = ">=3.38.0" },
+    { name = "google-cloud-storage", specifier = ">=3.6.0" },
+    { name = "holidays", specifier = ">=0.86" },
+    { name = "jinja2", specifier = ">=3.1.6" },
+    { name = "kfp", specifier = ">=2.15.2" },
+    { name = "mlforecast", specifier = ">=1.0.2" },
+    { name = "pandas", specifier = ">=2.3.0" },
+    { name = "pandas-gbq", specifier = ">=0.31.0" },
+    { name = "pandera", specifier = ">=0.27.0" },
+    { name = "pathlib", specifier = ">=1.0.1" },
+    { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "scipy", specifier = "<1.16.0" },
+    { name = "statsforecast", specifier = ">=2.0.1" },
+    { name = "tsbricks", extras = ["matplotlib"], git = "https://github.com/betsyhcamp/tsbricks.git?rev=v0.3.0" },
+    { name = "utilsforecast", specifier = ">=0.2.12" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "docker", specifier = ">=7.1.0" },
+    { name = "furo", specifier = ">=2024.0.0" },
+    { name = "ipykernel", specifier = ">=6.29.5" },
+    { name = "jupytext", specifier = ">=1.17.2" },
+    { name = "kaleido", specifier = ">=1.2.0" },
+    { name = "matplotlib", specifier = ">=3.10.3" },
+    { name = "mdformat", specifier = ">=0.7.17" },
+    { name = "mdformat-gfm", specifier = ">=0.3.6" },
+    { name = "meteostat", specifier = "==2.0.1" },
+    { name = "myst-parser", specifier = ">=3.0.0" },
+    { name = "plotly", specifier = ">=6.1.2" },
+    { name = "polars", specifier = ">=1.37.1" },
+    { name = "pre-commit", specifier = ">=4.5.0" },
+    { name = "pre-commit-uv", specifier = ">=4.2.0" },
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-cov", specifier = ">=5.0.0" },
+    { name = "pytest-mock", specifier = ">=3.15.1" },
+    { name = "ruff", specifier = ">=0.12.1" },
+    { name = "seaborn", specifier = ">=0.13.2" },
+    { name = "sphinx", specifier = ">=7.0.0" },
+    { name = "sphinx-autodoc-typehints", specifier = ">=2.0.0" },
+    { name = "sqlfluff", specifier = ">=3.5.0" },
+    { name = "statsmodels", specifier = ">=0.14.4" },
+    { name = "streamlit", specifier = ">=1.52.1" },
+    { name = "types-pyyaml", specifier = ">=6.0.12.20260408" },
+]
+
+[[package]]
 name = "filelock"
 version = "3.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2189,115 +2298,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/76/95/bef5b37f29fc5e739947e9ce5179ad402875633308504a52d188302319c8/numpy-2.2.6-cp313-cp313t-musllinux_1_2_x86_64.whl", hash = "sha256:8e9ace4a37db23421249ed236fdcdd457d671e25146786dfc96835cd951aa7c1", size = 18385260, upload-time = "2025-05-17T21:43:05.189Z" },
     { url = "https://files.pythonhosted.org/packages/09/04/f2f83279d287407cf36a7a8053a5abe7be3622a4363337338f2585e4afda/numpy-2.2.6-cp313-cp313t-win32.whl", hash = "sha256:038613e9fb8c72b0a41f025a7e4c3f0b7a1b5d768ece4796b674c8f3fe13efff", size = 6377225, upload-time = "2025-05-17T21:43:16.254Z" },
     { url = "https://files.pythonhosted.org/packages/67/0e/35082d13c09c02c011cf21570543d202ad929d961c02a147493cb0c2bdf5/numpy-2.2.6-cp313-cp313t-win_amd64.whl", hash = "sha256:6031dd6dfecc0cf9f668681a37648373bddd6421fff6c66ec1624eed0180ee06", size = 12771374, upload-time = "2025-05-17T21:43:35.479Z" },
-]
-
-[[package]]
-name = "nyc-taxi"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "cloudpickle" },
-    { name = "coreforecast" },
-    { name = "fsspec" },
-    { name = "gcsfs" },
-    { name = "google-cloud-aiplatform" },
-    { name = "google-cloud-bigquery", extra = ["bqstorage", "pandas"] },
-    { name = "google-cloud-storage" },
-    { name = "holidays" },
-    { name = "jinja2" },
-    { name = "kfp" },
-    { name = "mlforecast" },
-    { name = "pandas" },
-    { name = "pandas-gbq" },
-    { name = "pandera" },
-    { name = "pathlib" },
-    { name = "pydantic" },
-    { name = "scipy" },
-    { name = "statsforecast" },
-    { name = "tsbricks", extra = ["matplotlib"] },
-    { name = "utilsforecast" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "docker" },
-    { name = "furo" },
-    { name = "ipykernel" },
-    { name = "jupytext" },
-    { name = "kaleido" },
-    { name = "matplotlib" },
-    { name = "mdformat" },
-    { name = "mdformat-gfm" },
-    { name = "meteostat" },
-    { name = "myst-parser" },
-    { name = "plotly" },
-    { name = "polars" },
-    { name = "pre-commit" },
-    { name = "pre-commit-uv" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "pytest-mock" },
-    { name = "ruff" },
-    { name = "seaborn" },
-    { name = "sphinx" },
-    { name = "sphinx-autodoc-typehints" },
-    { name = "sqlfluff" },
-    { name = "statsmodels" },
-    { name = "streamlit" },
-    { name = "types-pyyaml" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cloudpickle", specifier = ">=3.1.1" },
-    { name = "coreforecast", specifier = ">=0.0.16" },
-    { name = "fsspec", specifier = ">=2025.12.0" },
-    { name = "gcsfs", specifier = ">=2025.12.0" },
-    { name = "google-cloud-aiplatform", specifier = ">=1.130.0" },
-    { name = "google-cloud-bigquery", extras = ["bqstorage", "pandas"], specifier = ">=3.38.0" },
-    { name = "google-cloud-storage", specifier = ">=3.6.0" },
-    { name = "holidays", specifier = ">=0.86" },
-    { name = "jinja2", specifier = ">=3.1.6" },
-    { name = "kfp", specifier = ">=2.15.2" },
-    { name = "mlforecast", specifier = ">=1.0.2" },
-    { name = "pandas", specifier = ">=2.3.0" },
-    { name = "pandas-gbq", specifier = ">=0.31.0" },
-    { name = "pandera", specifier = ">=0.27.0" },
-    { name = "pathlib", specifier = ">=1.0.1" },
-    { name = "pydantic", specifier = ">=2.12.5" },
-    { name = "scipy", specifier = "<1.16.0" },
-    { name = "statsforecast", specifier = ">=2.0.1" },
-    { name = "tsbricks", extras = ["matplotlib"], git = "https://github.com/betsyhcamp/tsbricks.git?rev=v0.3.0" },
-    { name = "utilsforecast", specifier = ">=0.2.12" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "docker", specifier = ">=7.1.0" },
-    { name = "furo", specifier = ">=2024.0.0" },
-    { name = "ipykernel", specifier = ">=6.29.5" },
-    { name = "jupytext", specifier = ">=1.17.2" },
-    { name = "kaleido", specifier = ">=1.2.0" },
-    { name = "matplotlib", specifier = ">=3.10.3" },
-    { name = "mdformat", specifier = ">=0.7.17" },
-    { name = "mdformat-gfm", specifier = ">=0.3.6" },
-    { name = "meteostat", specifier = "==2.0.1" },
-    { name = "myst-parser", specifier = ">=3.0.0" },
-    { name = "plotly", specifier = ">=6.1.2" },
-    { name = "polars", specifier = ">=1.37.1" },
-    { name = "pre-commit", specifier = ">=4.5.0" },
-    { name = "pre-commit-uv", specifier = ">=4.2.0" },
-    { name = "pytest", specifier = ">=9.0.2" },
-    { name = "pytest-cov", specifier = ">=5.0.0" },
-    { name = "pytest-mock", specifier = ">=3.15.1" },
-    { name = "ruff", specifier = ">=0.12.1" },
-    { name = "seaborn", specifier = ">=0.13.2" },
-    { name = "sphinx", specifier = ">=7.0.0" },
-    { name = "sphinx-autodoc-typehints", specifier = ">=2.0.0" },
-    { name = "sqlfluff", specifier = ">=3.5.0" },
-    { name = "statsmodels", specifier = ">=0.14.4" },
-    { name = "streamlit", specifier = ">=1.52.1" },
-    { name = "types-pyyaml", specifier = ">=6.0.12.20260408" },
 ]
 
 [[package]]
