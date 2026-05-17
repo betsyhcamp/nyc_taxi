@@ -1,0 +1,48 @@
+# objects to exclude from a Docker image
+
+# Version control
+.git
+.github
+
+# Python caches
+__pycache__
+*.pyc
+*.pyo
+.mypy_cache
+.pytest_cache
+.ruff_cache
+htmlcov
+.coverage
+
+# Virtual envs
+.venv
+venv
+
+# IDE / editor
+.vscode
+.idea
+*.swp
+.DS_Store
+
+# Build artifacts
+build
+dist
+*.egg-info
+
+# Notebooks & exploratory
+notebooks
+data
+local_outputs
+tmp_data
+
+# Tests (image doesn't need them)
+tests
+
+# SQL queries — Cycle 2 §4.5 decision: SQL is a parameter, not in image
+queries
+
+# Docs
+docs
+
+# Lockfile cache directories
+.tool-versions
