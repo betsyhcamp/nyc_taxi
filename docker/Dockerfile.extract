@@ -1,7 +1,10 @@
-# Initial single stage Dockerfile for extract_db_to_bucket
+# Dockerfile for extract_db_to_bucket; multi-stage keeps image thin
 
+# ==================================================================
+# Stage 1: Build envirionment (Alias: builder)
+# ==================================================================
 # Use python3.12 with Astral's uv preinstalled
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
 
 # Install build tools if wheel needs to be built; HTTPS certs; git for tsbricks install
 # Remove package metadata
@@ -25,6 +28,22 @@ COPY src ./src
 
 # install fcstnyctaxi as a non-editable wheel
 RUN uv pip install --no-deps --no-cache .
+
+# ==================================================================
+# Stage 2: Runtime definition (Alias: runtime)
+# ==================================================================
+# Use python3.12 with Astral's uv preinstalled
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# Change working directory to /app
+WORKDIR /app/
+
+# copy the virtual env (which also has fcstnyctaxi installed) to runtime image
+COPY --from=builder /app/.venv /app/.venv
 
 # Set image's environment so uv-managed venv is default Python
 ENV VIRTUAL_ENV=/app/.venv
