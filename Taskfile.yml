@@ -71,6 +71,56 @@ tasks:
       - uv run pytest --cov --cov-report=term-missing --cov-report=html
 
   # ===========================================
+  # DOCKER UTILS
+  # ===========================================
+  verify-image:
+    desc: Run Docker image health check (imports resolve; venv on PATH)
+    cmds:
+      - docker run --rm --platform linux/amd64 {{.IMAGE}} python -c "import fcstnyctaxi, kfp, google.cloud.bigquery; print('image OK')"
+
+  build-verify-image:
+    desc: Build Docker image and run image health check (imports resolve; venv on PATH)
+    vars:
+      # If we get 4 or more uv run python yaml calls, consider using utility yq since repeated uv run python import yaml is slow
+      PROJECT_ID:
+        # Reads project_settings.project_id from the pipeline config YAML
+        sh: uv run python -c "import yaml; print(yaml.safe_load(open('config/configs_zone_demand_pipeline.yaml'))['project_settings']['project_id'])"
+      REGION:
+        # Reads project_settings.region from the pipeline config YAML
+        sh: uv run python -c "import yaml; print(yaml.safe_load(open('config/configs_zone_demand_pipeline.yaml'))['project_settings']['location'])"
+      SHA:
+        # Get the current git SHA short 7 character hash
+        sh: git rev-parse --short HEAD
+      DIRTY:
+        # Return "dirty" if there are any changes on git tracked files
+        sh: git diff --quiet || echo "-dirty"
+      IMAGE: "{{.REGION}}-docker.pkg.dev/{{.PROJECT_ID}}/forecasting-pipeline/extract-db-to-bucket:{{.SHA}}{{.DIRTY}}"
+    cmds:
+      - docker buildx build --platform linux/amd64 -f docker/Dockerfile.extract -t {{.IMAGE}} .
+      - task: verify-image
+        vars:
+          IMAGE: "{{.IMAGE}}"
+
+  push-image:
+    desc: Push Docker image to Artifact Registry
+    vars:
+      # If we get 4 or more uv run python yaml calls, consider using utility yq since repeated uv run python import yaml is slow
+      PROJECT_ID:
+        # Reads project_settings.project_id from the pipeline config YAML
+        sh: uv run python -c "import yaml; print(yaml.safe_load(open('config/configs_zone_demand_pipeline.yaml'))['project_settings']['project_id'])"
+      REGION:
+        # Reads project_settings.region from the pipeline config YAML
+        sh: uv run python -c "import yaml; print(yaml.safe_load(open('config/configs_zone_demand_pipeline.yaml'))['project_settings']['location'])"
+      SHA:
+        # Get the current git SHA short 7 character hash
+        sh: git rev-parse --short HEAD
+      DIRTY:
+        # Return "dirty" if there are any changes on git tracked files
+        sh: git diff --quiet || echo "-dirty"
+      IMAGE: "{{.REGION}}-docker.pkg.dev/{{.PROJECT_ID}}/forecasting-pipeline/extract-db-to-bucket:{{.SHA}}{{.DIRTY}}"
+    cmds:
+      - docker push {{.IMAGE}}
+  # ===========================================
   # COMPOSITE TASKS
   # ===========================================
 

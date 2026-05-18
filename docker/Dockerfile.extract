@@ -1,0 +1,33 @@
+# Initial single stage Dockerfile for extract_db_to_bucket
+
+# Use python3.12 with Astral's uv preinstalled
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+# Install build tools if wheel needs to be built; HTTPS certs; git for tsbricks install
+# Remove package metadata
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    git \
+ && rm -rf /var/lib/apt/lists/*
+
+# Change working directory to /app
+WORKDIR /app/
+
+# Copy key project files to current working directory for first layer cache
+COPY pyproject.toml uv.lock README.md ./
+
+# create virtual envirionment with only dependancies from common & group "extract"
+RUN uv sync --locked --no-cache --no-dev --group extract --no-install-project --no-editable
+
+# copy code source code in src into src of image
+COPY src ./src
+
+# install fcstnyctaxi as a non-editable wheel
+RUN uv pip install --no-deps --no-cache .
+
+# Set image's environment so uv-managed venv is default Python
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+
+# No ENTRYPOINT or CMD— KFP's launcher provides the runtime command via base_image use.
