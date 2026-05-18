@@ -18,3 +18,26 @@ https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page
 
 Weather data can be found here:
 https://www.ncei.noaa.gov/pub/data/daily-grids/v1-0-0/averages/2025/
+
+## Setup
+
+### Artifact Registry
+
+For each Vertex AI component (ie, step) with a Docker image, the image is placed in a project specific GCP Artifact Registry
+
+Prerequisite for use of the commands below is a working installation of `gcloud` with application default credentials (ADC) for GCP.
+
+**Create the Artifact Registry (one time per project):**
+
+```{bash}
+gcloud artifacts repositories create forecasting-pipeline \
+  --repository-format=docker \
+  --location=us-central1 \
+  --description="Container images for the NYC taxi forecasting pipeline"
+```
+
+**Authorize developer machine (one time per developer machine):**
+
+```{bash}
+gcloud auth configure-docker us-central1-docker.pkg.dev
+```
