@@ -12,6 +12,8 @@ from fcstnyctaxi.lib.io import (
 )
 from fcstnyctaxi.lib.utils import generate_run_id, get_project_root_dir
 
+_ADC_PATH_IN_CONTAINER = "/kfp-workspace/application_default_credentials.json"
+
 
 def main() -> None:
     project_root = get_project_root_dir()
@@ -27,7 +29,15 @@ def main() -> None:
         extract_db_to_bucket,
     )
 
-    kfp.local.init(runner=kfp.local.DockerRunner())
+    kfp.local.init(
+        runner=kfp.local.DockerRunner(
+            environment={
+                "GOOGLE_APPLICATION_CREDENTIALS": _ADC_PATH_IN_CONTAINER,
+                "GOOGLE_CLOUD_PROJECT": "nyc-taxi-ehc",  # silences warning
+            },
+        ),
+        workspace_root=os.path.expanduser("~/.config/gcloud"),
+    )
 
     run_id = generate_run_id()
 
