@@ -22,6 +22,8 @@ def test_valid_yaml_file_returns_pipeline_config(
           location: "l"
           env: "dev"
           bucket_name: "b"
+        docker:
+          extract_db_to_bucket: "t"
         extract_db_to_bucket:
           sql_filename: "x.sql"
           sql_params: {}
