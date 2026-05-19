@@ -20,6 +20,7 @@ def valid_config_dict() -> dict:
             "env": "dev",
             "bucket_name": "nyc-taxi-ehc--modeling",
         },
+        "docker": {"extract_db_to_bucket": "extractdbimagename:sha1234"},
         "extract_db_to_bucket": {
             "sql_filename": "initial_daily_taxi_rides.sql",
             "sql_params": {},
