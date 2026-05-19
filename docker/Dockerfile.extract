@@ -21,7 +21,9 @@ WORKDIR /app/
 COPY pyproject.toml uv.lock README.md ./
 
 # create virtual envirionment with only dependancies from common & group "extract"
-RUN uv sync --locked --no-cache --no-dev --group extract --no-install-project --no-editable
+RUN uv sync --locked --no-cache --no-dev --group extract --no-install-project --no-editable \
+  && /app/.venv/bin/python -m ensurepip --upgrade \
+  && /app/.venv/bin/python -m pip install --upgrade pip
 
 # copy code source code in src into src of image
 COPY src ./src
