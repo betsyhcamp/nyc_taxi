@@ -1,11 +1,10 @@
 """Manual smoke test (not unit test) of local KFP subprocess runner hitting
 GCP resources via credentials set up in Google Application Default Credentials"""
 
+import os
+
 import kfp.local
 
-from fcstnyctaxi.components.feature.extract_db_to_bucket_component import (
-    extract_db_to_bucket,
-)
 from fcstnyctaxi.lib.config import load_pipeline_config
 from fcstnyctaxi.lib.io import (
     build_run_scoped_uri,
@@ -15,12 +14,20 @@ from fcstnyctaxi.lib.utils import generate_run_id, get_project_root_dir
 
 
 def main() -> None:
-    kfp.local.init(runner=kfp.local.SubprocessRunner(use_venv=False))
-
     project_root = get_project_root_dir()
 
     config_path = project_root / "config" / "configs_zone_demand_pipeline.yaml"
     config = load_pipeline_config(config_path)
+
+    # MUST set env var BEFORE importing the wrapper — the @dsl.component decorator
+    # captures base_image at import time. Setting after import has no effect.
+    os.environ["FCSTNYCTAXI_EXTRACT_IMAGE"] = config.docker.extract_db_to_bucket
+
+    from fcstnyctaxi.components.feature.extract_db_to_bucket_component import (
+        extract_db_to_bucket,
+    )
+
+    kfp.local.init(runner=kfp.local.DockerRunner())
 
     run_id = generate_run_id()
 

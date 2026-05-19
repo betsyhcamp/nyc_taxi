@@ -10,6 +10,12 @@ class ProjectSettings(BaseModel):
     bucket_name: str
 
 
+class DockerSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    extract_db_to_bucket: str = Field(..., min_length=1)
+
+
 class ExtractDbToBucketConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -24,3 +30,4 @@ class PipelineConfig(BaseModel):
 
     project_settings: ProjectSettings
     extract_db_to_bucket: ExtractDbToBucketConfig
+    docker: DockerSettings

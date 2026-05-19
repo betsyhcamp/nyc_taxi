@@ -1,11 +1,22 @@
+import os
+
 from kfp import dsl
 from kfp.dsl import Dataset, Output
 
+# Fallback is used only when callers don't set FCSTNYCTAXI_EXTRACT_IMAGE.
+# verify_kfp_local.py and th submission script always set it from
+# config.docker.extract_db_to_bucket. Bump this string only when emergency
+# ad-hoc imports need a different default.
+_IMAGE = os.environ.get(
+    "FCSTNYCTAXI_EXTRACT_IMAGE",
+    "us-central1-docker.pkg.dev/nyc-taxi-ehc/forecasting-pipeline/extract-db-to-bucket:9cc22b8-dirty",
+)
+
 
 @dsl.component(
-    base_image="python:3.12",
+    base_image=_IMAGE,
     packages_to_install=[],
-)  # placeholders; Docker image set up in next PR
+)
 def extract_db_to_bucket(
     project_id: str,
     bq_location: str,
