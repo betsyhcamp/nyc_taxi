@@ -9,7 +9,7 @@ from kfp.dsl import Dataset, Output
 # ad-hoc imports need a different default.
 _IMAGE = os.environ.get(
     "FCSTNYCTAXI_EXTRACT_IMAGE",
-    "us-central1-docker.pkg.dev/nyc-taxi-ehc/forecasting-pipeline/extract-db-to-bucket:f286db5",
+    "us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-data-ingress-pipeline/extract-db-to-bucket:f286db5",
 )
 
 
