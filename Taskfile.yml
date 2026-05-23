@@ -94,7 +94,7 @@ tasks:
       DIRTY:
         # Return "dirty" if there are any changes on git tracked files
         sh: git diff --quiet || echo "-dirty"
-      IMAGE: "{{.REGION}}-docker.pkg.dev/{{.PROJECT_ID}}/forecasting-pipeline/extract-db-to-bucket:{{.SHA}}{{.DIRTY}}"
+      IMAGE: "{{.REGION}}-docker.pkg.dev/{{.PROJECT_ID}}/fcst-data-ingress-pipeline/extract-db-to-bucket:{{.SHA}}{{.DIRTY}}"
     cmds:
       - docker buildx build --platform linux/amd64 -f docker/Dockerfile.extract -t {{.IMAGE}} .
       - task: verify-image
@@ -117,7 +117,7 @@ tasks:
       DIRTY:
         # Return "dirty" if there are any changes on git tracked files
         sh: git diff --quiet || echo "-dirty"
-      IMAGE: "{{.REGION}}-docker.pkg.dev/{{.PROJECT_ID}}/forecasting-pipeline/extract-db-to-bucket:{{.SHA}}{{.DIRTY}}"
+      IMAGE: "{{.REGION}}-docker.pkg.dev/{{.PROJECT_ID}}/fcst-data-ingress-pipeline/extract-db-to-bucket:{{.SHA}}{{.DIRTY}}"
     cmds:
       - docker push {{.IMAGE}}
   # ===========================================

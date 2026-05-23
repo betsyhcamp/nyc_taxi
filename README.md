@@ -30,10 +30,10 @@ Prerequisite for use of the commands below is a working installation of `gcloud`
 **Create the Artifact Registry (one time per project):**
 
 ```{bash}
-gcloud artifacts repositories create forecasting-pipeline \
+gcloud artifacts repositories create fcst-data-ingress-pipeline \
   --repository-format=docker \
   --location=us-central1 \
-  --description="Container images for the NYC taxi forecasting pipeline"
+  --description="Container image for F (data ingress) pipeline of NYC taxi forecasting system"
 ```
 
 **Authorize developer machine (one time per developer machine):**
@@ -66,7 +66,7 @@ Builds the multi-stage `linux/amd64` image and runs an image-health probe that i
 image OK
 ```
 
-The image is tagged `us-central1-docker.pkg.dev/<project>/forecasting-pipeline/extract-db-to-bucket:<short-sha>`.
+The image is tagged `us-central1-docker.pkg.dev/<project>/fcst-data-ingress-pipeline/extract-db-to-bucket:<short-sha>`.
 
 **Step 2 — Push the image to Artifact Registry:**
 
@@ -77,7 +77,7 @@ task push-image
 Confirm the push landed:
 
 ```{bash}
-gcloud artifacts docker tags list us-central1-docker.pkg.dev/nyc-taxi-ehc/forecasting-pipeline/extract-db-to-bucket
+gcloud artifacts docker tags list us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-data-ingress-pipeline/extract-db-to-bucket
 ```
 
 The newly pushed tag should appear in the list.
@@ -102,7 +102,7 @@ Reads the config, sets the `FCSTNYCTAXI_EXTRACT_IMAGE` env var, imports the wrap
 Expected output (abridged):
 
 ```
-Found image 'us-central1-docker.pkg.dev/nyc-taxi-ehc/forecasting-pipeline/extract-db-to-bucket:<sha>'
+Found image 'us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-data-ingress-pipeline/extract-db-to-bucket:<sha>'
 
 [KFP Executor ...]: Looking for component `extract_db_to_bucket` in ...
 ...
