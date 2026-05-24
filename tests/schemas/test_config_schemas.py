@@ -21,6 +21,11 @@ def valid_config_dict() -> dict:
             "bucket_name": "nyc-taxi-ehc--modeling",
         },
         "docker": {"extract_db_to_bucket": "extractdbimagename:sha1234"},
+        "vertex": {
+            "pipeline_service_account": "test-sa@testproject.iam.gserviceaccount.com",
+            "pipeline_root": "gs://test-bucket/test-pipeline-root/",
+            "display_name_prefix": "test-gcs-prefix",
+        },
         "extract_db_to_bucket": {
             "sql_filename": "initial_daily_taxi_rides.sql",
             "sql_params": {},
@@ -45,6 +50,16 @@ def test_valid_dict_constructs_pipeline_config(valid_config_dict: dict) -> None:
     assert (
         config.extract_db_to_bucket.sql_params
         == valid_config_dict["extract_db_to_bucket"]["sql_params"]
+    )
+
+    assert (
+        config.docker.extract_db_to_bucket
+        == valid_config_dict["docker"]["extract_db_to_bucket"]
+    )
+
+    assert (
+        config.vertex.pipeline_service_account
+        == valid_config_dict["vertex"]["pipeline_service_account"]
     )
 
 
@@ -96,3 +111,25 @@ def test_empty_output_filename_raises_validation_error(valid_config_dict: dict) 
 
     with pytest.raises(ValidationError, match="output_filename"):
         PipelineConfig(**bad_filename_config)
+
+
+def test_invalid_pipeline_service_account_pattern_raises_validation_error(
+    valid_config_dict: dict,
+) -> None:
+    """A value of the wrong pattern for pipeline service account raises error."""
+    wrong_sa_pattern_dict = valid_config_dict
+    wrong_sa_pattern_dict["vertex"]["pipeline_service_account"] = "email@example.com"
+
+    with pytest.raises(ValidationError, match="pattern"):
+        PipelineConfig(**wrong_sa_pattern_dict)
+
+
+def test_invalid_pipeline_root_pattern_raises_validation_error(
+    valid_config_dict: dict,
+) -> None:
+    """A value of the wrong pattern for pipeline_root raises error."""
+    wrong_pipelineroot_pattern_dict = valid_config_dict
+    wrong_pipelineroot_pattern_dict["vertex"]["pipeline_root"] = "s3://test-bucket/foo"
+
+    with pytest.raises(ValidationError, match="pattern"):
+        PipelineConfig(**wrong_pipelineroot_pattern_dict)

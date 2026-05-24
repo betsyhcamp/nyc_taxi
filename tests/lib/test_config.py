@@ -24,6 +24,10 @@ def test_valid_yaml_file_returns_pipeline_config(
           bucket_name: "b"
         docker:
           extract_db_to_bucket: "t"
+        vertex:
+          pipeline_service_account: "test-acct-name@testproject.iam.gserviceaccount.com"
+          pipeline_root: "gs://test-bucket/test-pipeline-root/"
+          display_name_prefix: "test-gcs-prefix"
         extract_db_to_bucket:
           sql_filename: "x.sql"
           sql_params: {}
