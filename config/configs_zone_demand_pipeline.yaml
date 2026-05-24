@@ -5,7 +5,7 @@ project_settings:
   bucket_name: "nyc-taxi-ehc--modeling"
 
 docker:
-  extract_db_to_bucket: "us-central1-docker.pkg.dev/nyc-taxi-ehc/forecasting-pipeline/extract-db-to-bucket:f286db5"
+  extract_db_to_bucket: "us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-data-ingress-pipeline/extract-db-to-bucket:f286db5"
 
 vertex:
   pipeline_service_account: "fcst-data-ingress-pipeline-runner@nyc-taxi-ehc.iam.gserviceaccount.com"
