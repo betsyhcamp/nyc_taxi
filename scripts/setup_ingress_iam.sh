@@ -8,6 +8,9 @@ BUCKET="nyc-taxi-ehc--modeling"
 AR_REPO="fcst-data-ingress-pipeline"
 AR_LOCATION="us-central1"
 USER_EMAIL="betsy.h.camp@gmail.com"  # my own account
+# find PROJECT_NUMBER via: gcloud projects describe ${PROJECT_ID} --format="value(projectNumber)"
+PROJECT_NUMBER="1083454808980"
+VERTEX_SA_AGENT="service-${PROJECT_NUMBER}@gcp-sa-aiplatform-cc.iam.gserviceaccount.com"
 
 echo "=== Setting up IAM for ${SA_NAME} in project ${PROJECT_ID} ==="
 echo
@@ -27,12 +30,15 @@ fi
 # Project-scoped roles. roles/bigquery.dataViewer here grants read on every
 # dataset in the project (including future ones) — fine for portfolio, narrow
 # to dataset scope for enterprise use.
+# bigquery.readSessionUser is needed because the component uses the
+# BigQuery Storage API (via to_dataframe(create_bqstorage_client=True))
 echo "[grant] Project-level roles for ${SA_EMAIL}..."
 for ROLE in \
   roles/aiplatform.user \
   roles/logging.logWriter \
   roles/bigquery.jobUser \
-  roles/bigquery.dataViewer
+  roles/bigquery.dataViewer \
+  roles/bigquery.readSessionUser
 do
   gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
     --member="serviceAccount:${SA_EMAIL}" \
@@ -53,6 +59,20 @@ gcloud artifacts repositories add-iam-policy-binding "${AR_REPO}" \
   --location="${AR_LOCATION}" \
   --project="${PROJECT_ID}" \
   --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/artifactregistry.reader" \
+  --condition=None
+
+# Vertex AI uses a Google-managed service agent to pull component container
+# images at pipeline-launch time. This is a SEPARATE SA from the runner SA
+# above. When using a custom AR repo (not gcr.io), you must explicitly grant
+# the service agent reader access. Otherwise the pipeline fails before any
+# component code runs, with "Vertex AI Service Agent ... does not have
+# permission to access Artifact Registry repository".
+echo "[grant] AR repo ${AR_REPO}: artifactregistry.reader for Vertex AI service agent (${VERTEX_SA_AGENT})..."
+gcloud artifacts repositories add-iam-policy-binding "${AR_REPO}" \
+  --location="${AR_LOCATION}" \
+  --project="${PROJECT_ID}" \
+  --member="serviceAccount:${VERTEX_SA_AGENT}" \
   --role="roles/artifactregistry.reader" \
   --condition=None
 
