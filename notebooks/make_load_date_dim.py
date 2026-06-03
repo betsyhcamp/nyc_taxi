@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.3
+#       jupytext_version: 1.17.2
 #   kernelspec:
 #     display_name: .venv-etl (3.12.9)
 #     language: python
@@ -111,7 +111,9 @@ daily_cal_df['calendar_year'] = daily_cal_df['calendar_date'].dt.year
 daily_cal_df['calendar_month'] = daily_cal_df['calendar_date'].dt.month
 daily_cal_df['month_name'] = daily_cal_df['calendar_date'].dt.month_name()
 daily_cal_df['calendar_day'] = daily_cal_df['calendar_date'].dt.day
-daily_cal_df['day_of_week'] =daily_cal_df['calendar_date'].dt.dayofweek + 1
+
+# pandas uses Sunday as day 6 and Monday as day 0; desire Sunday as day 0
+daily_cal_df['day_of_week'] = (daily_cal_df['calendar_date'].dt.dayofweek + 1)%7
 daily_cal_df['day_of_week_name'] = daily_cal_df['calendar_date'].dt.day_name()
 daily_cal_df['is_weekend']=daily_cal_df['day_of_week'].isin([6,7])
 
