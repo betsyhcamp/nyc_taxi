@@ -264,3 +264,59 @@ zone_id_list = [169, 234]
 #    plt.show()
 
 # %%
+naive_cfg_path = project_root / "notebooks" / "backtest_configs"/ "backtest_fiscalweek_naive.yaml"
+cfg_naive = parse_config(config_path=str(naive_cfg_path))
+
+cfg_naive.cross_validation
+
+# %%
+cv_folds, _ = generate_folds(
+    prep_total_fiscal_week_df, 
+    cfg_naive.cross_validation,
+    cfg_naive.data
+)
+
+# %%
+print(f"Generated {len(cv_folds)} folds")
+for fold_id, splits in cv_folds.items():
+    train_end = splits["train"]["ds"].max()
+    val_end = splits["val"]["ds"].max()
+    print(
+        f"  {fold_id}: train ends {train_end}, val ends {val_end} "
+        f"(train rows={len(splits['train'])}, val rows={len(splits['val'])})"
+    )
+
+# %%
+per_fold_metrics = []
+per_fold_forecasts: dict[str, pd.DataFrame] = {}
+
+origin_horizon_pairs = cfg_naive.cross_validation.origin_horizon_pairs()
+
+for fold_idx, (fold_id, splits) in enumerate(cv_folds.items()):
+    fold_origin, fold_horizon = origin_horizon_pairs[fold_idx]
+    print(f"fold origin: {fold_origin}, fold horizon: {fold_horizon}")
+    
+    train, val = splits["train"], splits["val"]
+    
+    fitted_transforms, train_t = fit_transforms(train, cfg_naive.transforms or [])
+    
+    val_t = apply_transforms(val, fitted_transforms)
+    
+    forecast_df, _fitted, _model_obj = invoke_model(
+        train_t, cfg_naive.model, fold_horizon
+    )
+    
+    forecast_original_scale = inverse_transforms(forecast_df, fitted_transforms)
+    per_fold_forecasts[fold_id] = forecast_original_scale
+    
+    fold_metrics = evaluate_metrics(
+        y_true=val,
+        y_pred=forecast_original_scale,
+        y_train=train,
+        metrics_config=cfg_naive.evaluation.native.metrics,
+        fold_id=fold_id,
+    )
+    
+    per_fold_metrics.append(fold_metrics)
+
+metrics_naive = pd.concat(per_fold_metrics, ignore_index=True)
