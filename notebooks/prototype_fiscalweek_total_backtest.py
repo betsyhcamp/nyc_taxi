@@ -36,6 +36,10 @@ from tsbricks.runner import (
     inverse_transforms,
     invoke_model,
 )
+from statsforecast import StatsForecast
+from statsforecast.models import Naive
+from utilsforecast.losses import mae as uf_mae
+from utilsforecast.evaluation import evaluate
 
 # %%
 project = "nyc-taxi-ehc"
@@ -320,3 +324,31 @@ for fold_idx, (fold_id, splits) in enumerate(cv_folds.items()):
     per_fold_metrics.append(fold_metrics)
 
 metrics_naive = pd.concat(per_fold_metrics, ignore_index=True)
+
+# %%
+nixtla_records = []
+
+for fold_origin, fold_horizon in origin_horizon_pairs:
+    train = prep_total_fiscal_week_df[prep_total_fiscal_week_df["ds"] <= fold_origin].copy()
+    actual = prep_total_fiscal_week_df[
+        (prep_total_fiscal_week_df["ds"] > fold_origin)
+        & (prep_total_fiscal_week_df["ds"] <= fold_origin + fold_horizon)
+    ].copy()
+
+    sf = StatsForecast(models=[Naive()], freq=1)
+    preds = sf.forecast(df=train, h=fold_horizon)
+
+    if "unique_id" not in preds.columns and preds.index.name == "unique_id":
+        preds = preds.reset_index()
+
+    eval_df = actual.merge(preds[["unique_id", "ds", "Naive"]], on=["unique_id", "ds"])
+
+    fold_eval = evaluate(eval_df, metrics=[uf_mae])
+    fold_mae = fold_eval["Naive"].iloc[0]
+
+    nixtla_records.append(
+        {"origin": fold_origin, "horizon": fold_horizon, "mae": fold_mae}
+    )
+
+nixtla_naive_df = pd.DataFrame(nixtla_records)
+nixtla_naive_df
