@@ -41,6 +41,11 @@ from statsforecast.models import Naive
 from utilsforecast.losses import mae as uf_mae
 from utilsforecast.evaluation import evaluate
 
+import warnings
+from tqdm import TqdmWarning
+warnings.filterwarnings("ignore", category=TqdmWarning)
+warnings.filterwarnings("ignore", category=UserWarning, module="fs")
+
 # %%
 project = "nyc-taxi-ehc"
 location = "us-central1"
@@ -320,10 +325,15 @@ for fold_idx, (fold_id, splits) in enumerate(cv_folds.items()):
         metrics_config=cfg_naive.evaluation.native.metrics,
         fold_id=fold_id,
     )
+    fold_metrics["fold_origin"] = fold_origin
+    fold_metrics["fold_horizon"] = fold_horizon
     
     per_fold_metrics.append(fold_metrics)
 
 metrics_naive = pd.concat(per_fold_metrics, ignore_index=True)
+
+# %%
+metrics_naive
 
 # %%
 nixtla_records = []
@@ -347,8 +357,29 @@ for fold_origin, fold_horizon in origin_horizon_pairs:
     fold_mae = fold_eval["Naive"].iloc[0]
 
     nixtla_records.append(
-        {"origin": fold_origin, "horizon": fold_horizon, "mae": fold_mae}
+        {"fold_origin": fold_origin, "fold_horizon": fold_horizon, "mae": fold_mae}
     )
 
 nixtla_naive_df = pd.DataFrame(nixtla_records)
 nixtla_naive_df
+
+# %%
+naive_fcst_metrics_df = metrics_naive.merge(nixtla_naive_df, on=['fold_origin',	'fold_horizon'])
+
+# %%
+naive_fcst_metrics_df = naive_fcst_metrics_df.rename(columns={
+        'mae': 'nixtla_mae',
+        'value':'tsbricks_mae'
+        }
+    ).drop(columns=['scope','grouping_column_name','aggregation', 'metric_name'])
+
+# %%
+naive_fcst_metrics_df['package_mae_delta'] = (
+    naive_fcst_metrics_df['nixtla_mae']
+    - naive_fcst_metrics_df['tsbricks_mae']
+)
+
+# %%
+naive_fcst_metrics_df
+
+# %%
