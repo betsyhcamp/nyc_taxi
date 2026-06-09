@@ -22,3 +22,6 @@ coverage.xml
 
 # exclude directory for pipeline local (testing) output
 local_outputs/
+
+# exclude directory for built pipeline YAML artifacts
+build/

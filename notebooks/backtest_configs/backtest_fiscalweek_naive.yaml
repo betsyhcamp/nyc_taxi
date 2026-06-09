@@ -1,0 +1,35 @@
+data:
+  freq: 1
+
+cross_validation:
+  mode: explicit
+  forecast_origins:
+    - origin: 202517
+      horizon: 9
+    - origin: 202518
+      horizon: 8
+    - origin: 202519
+      horizon: 7
+    - origin: 202520
+      horizon: 6
+    - origin: 202521
+      horizon: 5
+    - origin: 202522
+      horizon: 4
+    - origin: 202523
+      horizon: 3
+    - origin: 202524
+      horizon: 2
+    - origin: 202525
+      horizon: 1
+
+model:
+  callable: models.naive.naive_weekly
+
+evaluation:
+  native:
+    metrics:
+      definitions:
+        - name: mae
+          callable: tsbricks.blocks.metrics.mae
+          type: simple
