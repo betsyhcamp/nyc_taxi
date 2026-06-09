@@ -22,6 +22,7 @@ import seaborn as sns
 from tsbricks.blocks.dataio import read_sql, query_to_dataframe
 from tsbricks.blocks.plots import plot_seasonal
 from fcstnyctaxi.lib.utils import get_project_root_dir
+from statsforecast.models import AutoARIMA
 
 
 from tsbricks.backtesting import (
@@ -279,11 +280,19 @@ cfg_naive = parse_config(config_path=str(naive_cfg_path))
 cfg_naive.cross_validation
 
 # %%
+arima_cfg_path = project_root / "notebooks" / "backtest_configs"/ "backtest_fiscalweek_auto_arima.yaml"
+cfg_arima = parse_config(config_path=str(arima_cfg_path))
+
+cfg_arima.cross_validation
+
+# %%
 cv_folds, _ = generate_folds(
     prep_total_fiscal_week_df, 
     cfg_naive.cross_validation,
     cfg_naive.data
 )
+
+
 
 # %%
 print(f"Generated {len(cv_folds)} folds")
@@ -331,6 +340,9 @@ for fold_idx, (fold_id, splits) in enumerate(cv_folds.items()):
     per_fold_metrics.append(fold_metrics)
 
 metrics_naive = pd.concat(per_fold_metrics, ignore_index=True)
+
+
+
 
 # %%
 metrics_naive
@@ -383,3 +395,81 @@ naive_fcst_metrics_df['package_mae_delta'] = (
 naive_fcst_metrics_df
 
 # %%
+
+# %%
+cv_folds, _ = generate_folds(
+    prep_total_fiscal_week_df, 
+    cfg_arima.cross_validation,
+    cfg_arima.data
+)
+# %%
+per_fold_metrics = []
+per_fold_forecasts: dict[str, pd.DataFrame] = {}
+
+origin_horizon_pairs = cfg_arima.cross_validation.origin_horizon_pairs()
+
+for fold_idx, (fold_id, splits) in enumerate(cv_folds.items()):
+    fold_origin, fold_horizon = origin_horizon_pairs[fold_idx]
+    print(f"fold origin: {fold_origin}, fold horizon: {fold_horizon}")
+    
+    train, val = splits["train"], splits["val"]
+    
+    fitted_transforms, train_t = fit_transforms(train, cfg_arima.transforms or [])
+    
+    val_t = apply_transforms(val, fitted_transforms)
+    
+    forecast_df, _fitted, _model_obj = invoke_model(
+        train_t, cfg_arima.model, fold_horizon
+    )
+    
+    forecast_original_scale = inverse_transforms(forecast_df, fitted_transforms)
+    per_fold_forecasts[fold_id] = forecast_original_scale
+    
+    fold_metrics = evaluate_metrics(
+        y_true=val,
+        y_pred=forecast_original_scale,
+        y_train=train,
+        metrics_config=cfg_arima.evaluation.native.metrics,
+        fold_id=fold_id,
+    )
+    fold_metrics["fold_origin"] = fold_origin
+    fold_metrics["fold_horizon"] = fold_horizon
+    
+    per_fold_metrics.append(fold_metrics)
+
+metrics_arima = pd.concat(per_fold_metrics, ignore_index=True)
+
+
+# %%
+nixtla_records = []
+
+season_length = (cfg_arima.model.hyperparameters or {}).get("season_length", 52)
+
+for fold_origin, fold_horizon in origin_horizon_pairs:
+    train = prep_total_fiscal_week_df[prep_total_fiscal_week_df["ds"] <= fold_origin].copy()
+    actual = prep_total_fiscal_week_df[
+        (prep_total_fiscal_week_df["ds"] > fold_origin)
+        & (prep_total_fiscal_week_df["ds"] <= fold_origin + fold_horizon)
+    ].copy()
+     
+     
+    sf = StatsForecast(
+        models=[AutoARIMA(season_length=season_length)],
+        freq=1,
+    )
+    preds = sf.forecast(df=train, h=fold_horizon)
+
+    if "unique_id" not in preds.columns and preds.index.name == "unique_id":
+        preds = preds.reset_index()
+
+    eval_df = actual.merge(preds[["unique_id", "ds", "AutoARIMA"]], on=["unique_id", "ds"])
+
+    fold_eval = evaluate(eval_df, metrics=[uf_mae])
+    fold_mae = fold_eval["AutoARIMA"].iloc[0]
+
+    nixtla_records.append(
+        {"fold_origin": fold_origin, "fold_horizon": fold_horizon, "mae": fold_mae}
+    )
+
+nixtla_arima_df = pd.DataFrame(nixtla_records)
+nixtla_arima_df
