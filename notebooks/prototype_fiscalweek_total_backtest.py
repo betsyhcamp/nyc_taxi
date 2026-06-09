@@ -44,8 +44,6 @@ from utilsforecast.evaluation import evaluate
 
 import warnings
 from tqdm import TqdmWarning
-warnings.filterwarnings("ignore", category=TqdmWarning)
-warnings.filterwarnings("ignore", category=UserWarning, module="fs")
 
 # %%
 project = "nyc-taxi-ehc"
@@ -395,8 +393,6 @@ naive_fcst_metrics_df['package_mae_delta'] = (
 naive_fcst_metrics_df
 
 # %%
-
-# %%
 cv_folds, _ = generate_folds(
     prep_total_fiscal_week_df, 
     cfg_arima.cross_validation,
@@ -438,6 +434,7 @@ for fold_idx, (fold_id, splits) in enumerate(cv_folds.items()):
     per_fold_metrics.append(fold_metrics)
 
 metrics_arima = pd.concat(per_fold_metrics, ignore_index=True)
+metrics_arima
 
 
 # %%
@@ -473,3 +470,25 @@ for fold_origin, fold_horizon in origin_horizon_pairs:
 
 nixtla_arima_df = pd.DataFrame(nixtla_records)
 nixtla_arima_df
+
+# %%
+metrics_arima
+
+# %%
+nixtla_arima_df
+
+# %%
+arima_fcst_metrics_df = metrics_arima.merge(nixtla_arima_df, on=['fold_origin',	'fold_horizon'])
+
+# %%
+arima_fcst_metrics_df = arima_fcst_metrics_df.rename(columns={
+        'mae': 'nixtla_mae',
+        'value':'tsbricks_mae'
+        }
+    ).drop(columns=['scope','grouping_column_name','aggregation', 'metric_name'])
+
+# %%
+naive_fcst_metrics_df['package_mae_delta'] = (
+    naive_fcst_metrics_df['nixtla_mae']
+    - naive_fcst_metrics_df['tsbricks_mae']
+)
