@@ -33,18 +33,23 @@ end_date = pd.to_datetime(current) + pd.DateOffset(months=3)
 # %%
 def make_year_arrays(year: int, month_lengths: list[int])-> np.ndarray:
     total_days = sum(month_lengths)
-    
+
     if total_days % 7 !=0:
         raise ValueError("Yearly fiscal days must be divisible by 7; got remainder.")
-    
+
     fiscal_days = np.concatenate([
         np.arange(1, days_in_month+1)
         for days_in_month in month_lengths
     ])
-    
+
     weeks_in_year = total_days // 7
-    
+
     fiscal_weeks =np.repeat(np.arange(1, weeks_in_year +1), 7)
+
+    fiscal_week_of_month = np.concatenate([ 
+        np.repeat(np.arange(1, (days_in_month // 7)+1), 7)
+        for days_in_month in month_lengths
+    ])
 
     fiscal_months = np.concatenate([
         np.repeat(month, days_in_month)
@@ -52,10 +57,11 @@ def make_year_arrays(year: int, month_lengths: list[int])-> np.ndarray:
     ])
     
     fiscal_years = np.repeat(year, len(fiscal_days))
-    
+
     return np.column_stack([
         fiscal_days,
         fiscal_weeks,
+        fiscal_week_of_month,
         fiscal_months,
         fiscal_years
     ])
@@ -84,7 +90,7 @@ fiscal_array = np.vstack(fiscal_year_arrays)
 # %%
 fiscal_df = pd.DataFrame(
     fiscal_array, 
-    columns=["day_of_fiscal_month", "fiscal_week", "fiscal_month", "fiscal_year"]
+    columns=["day_of_fiscal_month", "fiscal_week", "fiscal_week_of_month", "fiscal_month", "fiscal_year"]
 )
 
 # %%
