@@ -253,6 +253,15 @@ summary_df = summary_df[[
 ]]
 
 # %%
+# revenue buckets
+summary_df["revenue_bucket"] = pd.qcut(
+    summary_df["mean_pos_N_weeks"].rank(method="first"),
+    q=5,
+    labels=["Very low", "Low", "Middle", "High", "Very high"],
+)
+
+
+# %%
 summary_df.head()
 
 # %%
@@ -478,7 +487,68 @@ fig.suptitle(f"Top-{TOP_N} Series by Net Revenue")
 plt.show()
 
 # %% [markdown]
-# ## Section 4: Negative revenue diagnostics (and revenue bucket setup)
+# # Section 3
+
+# %%
+N_WEEKS_104 = 104
+
+# Sort and compute mtd_y
+mtd_df = df.sort_values(["unique_id", "fiscal_year_month", "fiscal_week_of_month"]).copy()
+mtd_df["mtd_y"] = mtd_df.groupby(["unique_id", "fiscal_year_month"])["y"].cumsum()
+mtd_df = mtd_df.rename(columns={"fiscal_week_of_month": "origin_week"})
+mtd_df.head()
+
+# %%
+# final_month_y: total y per (unique_id, fiscal_year_month), merged back
+final_month = (
+    df.groupby(["unique_id", "fiscal_year_month"], as_index=False)["y"]
+    .sum()
+    .rename(columns={"y": "final_month_y"})
+)
+mtd_df = mtd_df.merge(final_month, on=["unique_id", "fiscal_year_month"], how="left")
+mtd_df.head()
+
+# %%
+# weeks_in_month: calendar property — max origin week per fiscal_year_month
+weeks_in_month = (
+    df.groupby("fiscal_year_month")["fiscal_week_of_month"]
+    .max()
+    .rename("weeks_in_month")
+    .reset_index()
+)
+
+
+# %%
+mtd_df = mtd_df.merge(weeks_in_month, on="fiscal_year_month", how="left")
+
+# mtd_share
+mtd_df["mtd_share"] = mtd_df["mtd_y"] / mtd_df["final_month_y"]
+
+# Join mean_pos_N_weeks and revenue_bucket from summary_df
+mtd_df = mtd_df.merge(
+    summary_df[["unique_id", "mean_pos_N_weeks", "revenue_bucket"]],
+    on="unique_id",
+    how="left",
+)
+
+# core_threshold: per-series, computed after join
+mtd_df["core_threshold"] = np.maximum(1000, 0.25 * mtd_df["mean_pos_N_weeks"])
+
+# trailing_104_months: set of fiscal_year_month values within the trailing 2-year window
+trailing_104_months = set(
+    df.loc[
+        df["fiscal_week_start_date"] >= max_date - pd.Timedelta(weeks=103),
+        "fiscal_year_month",
+    ].unique()
+)
+#Two things worth checking after you run it:
+
+#mtd_df.shape — you expect len(df) rows (one per original week row, now with cumsum added)
+#Spot-check a single series: mtd_df[mtd_df["unique_id"] == 4][["fiscal_year_month", "origin_week", "y", "mtd_y", "final_month_y", "weeks_in_month"]].head(10) — mtd_y should increase within each month and equal final_month_y on the last week of the month.
+
+
+# %% [markdown]
+# # Section 4: Negative revenue diagnostics (and revenue bucket setup)
 
 # %%
 neg_counts = df.groupby("unique_id", as_index=False).agg(
@@ -501,15 +571,6 @@ summary_df = (
 summary_df["sum_negative_y"] = summary_df["sum_negative_y"].fillna(0)
 summary_df["frac_negative_weeks"] = summary_df["n_negative_weeks"] / summary_df["n_weeks_total"]
 summary_df["neg_materiality"] = summary_df["sum_negative_y"].abs() / summary_df["total_positive_all_weeks"]
-
-
-# %%
-# revenue buckets
-summary_df["revenue_tier"] = pd.qcut(
-    summary_df["mean_pos_N_weeks"].rank(method="first"),
-    q=5,
-    labels=["Very low", "Low", "Middle", "High", "Very high"],
-)
 
 
 # %%
