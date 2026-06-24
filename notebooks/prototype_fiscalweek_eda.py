@@ -18,6 +18,8 @@ from google.cloud import bigquery
 import pandas as pd
 from pathlib import Path
 import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import seaborn as sns
 from tsbricks.blocks.dataio import read_sql, query_to_dataframe
 from tsbricks.blocks.plots import plot_seasonal
@@ -216,7 +218,7 @@ summary_df = (
 
 summary_df["time_series_length_weeks"] = (
     (max_date - summary_df["time_series_start_week"]).dt.days / 7
-)
+).astype(int)
 
 # %%
 # ── Ranks (1 = largest) ────────────────────────────────────────────────────────
@@ -247,3 +249,115 @@ summary_df = summary_df[[
     "time_series_start_week",
     "time_series_length_weeks",
 ]]
+
+# %%
+summary_df.head()
+
+# %%
+summary_df
+
+# %% [markdown]
+# # Section 1: Mean vs. Median Positive Weekly Revenue
+#
+
+# %%
+plot_df = summary_df[summary_df["mean_pos_all_weeks"].notna()].copy()
+
+diag_min = min(
+    plot_df["mean_pos_all_weeks"].min(),
+    plot_df["median_pos_all_weeks"].min(),
+)
+diag_max = max(
+    plot_df["mean_pos_all_weeks"].max(),
+    plot_df["median_pos_all_weeks"].max(),
+)
+
+# %%
+fig, axes = plt.subplots(1, 2, figsize=(12.5, 6))
+
+for ax in axes:
+    ax.scatter(
+        plot_df["mean_pos_all_weeks"],
+        plot_df["median_pos_all_weeks"],
+        facecolors="none",
+        edgecolors="black",
+        marker="o",
+        alpha=0.6,
+    )
+    ax.plot(
+        [diag_min, diag_max],
+        [diag_min, diag_max],
+        linestyle="dotted",
+        color="black",
+    )
+    ax.set_xlabel("Mean positive weekly y")
+    ax.set_ylabel("Median positive weekly y")
+    ax.set_aspect("equal", adjustable="box")
+
+axes[0].set_title("Linear Scale")
+axes[1].set_title("Log Scale")
+axes[1].set_xscale("log")
+axes[1].set_yscale("log")
+
+fig.suptitle("Mean vs. Median Positive Weekly y")
+plt.tight_layout()
+plt.show()
+
+# %%
+hover_data = plot_df[["unique_id", "mean_pos_all_weeks", "median_pos_all_weeks"]].values
+hovertemplate = (
+    "<b>Zone: %{customdata[0]}</b><br>"
+    "Mean: %{customdata[1]:.1f}<br>"
+    "Median: %{customdata[2]:.1f}"
+    "<extra></extra>"
+)
+
+fig = make_subplots(
+    rows=1,
+    cols=2,
+    subplot_titles=["Linear Scale", "Log Scale"],
+)
+
+for col in [1, 2]:
+    fig.add_trace(
+        go.Scatter(
+            x=plot_df["mean_pos_all_weeks"],
+            y=plot_df["median_pos_all_weeks"],
+            mode="markers",
+            marker=dict(
+                symbol="circle-open",
+                color="black",
+                opacity=0.6,
+            ),
+            customdata=hover_data,
+            hovertemplate=hovertemplate,
+            showlegend=False,
+        ),
+        row=1,
+        col=col,
+    )
+    fig.add_shape(
+        type="line",
+        x0=diag_min,
+        y0=diag_min,
+        x1=diag_max,
+        y1=diag_max,
+        line=dict(color="black", dash="dot"),
+        row=1,
+        col=col,
+    )
+
+fig.update_xaxes(title_text="Mean positive weekly y", row=1, col=1)
+fig.update_yaxes(title_text="Median positive weekly y", scaleanchor="x", scaleratio=1, row=1, col=1)
+fig.update_xaxes(title_text="Mean positive weekly y (log scale)", type="log", row=1, col=2)
+fig.update_yaxes(title_text="Median positive weekly y (log scale)", type="log", scaleanchor="x2", scaleratio=1, row=1, col=2)
+
+fig.update_layout(
+    title="Mean vs. Median Positive Weekly y",
+    height=550,
+    width=1100,
+)
+
+fig.show()
+
+# %%
