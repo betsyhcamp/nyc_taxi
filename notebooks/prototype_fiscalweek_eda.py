@@ -446,4 +446,34 @@ fig.suptitle("Cumulative Revenue by Top-N Series")
 plt.show()
 
 # %% [markdown]
-#
+# ## Section 2.3: Top-N Revenue Bar Chart
+
+# %%
+# ── Section 2.3: Top-N Revenue Bar Chart ──────────────────────────────────────
+TOP_N = 20
+
+top_full = summary_df.sort_values("total_all_weeks", ascending=False).head(TOP_N)
+top_trail = summary_df.sort_values("total_N_weeks", ascending=False).head(TOP_N)
+
+#y_max = max(top_full["total_all_weeks"].max(), top_trail["total_N_weeks"].max())
+
+fig, axes = plt.subplots(2, 1, figsize=(10, 8), constrained_layout=True)
+
+panels = [
+    (axes[0], top_full, "total_all_weeks", "Full History"),
+    (axes[1], top_trail, "total_N_weeks", f"Trailing {N_WEEKS} Weeks"),
+]
+
+for ax, data, col, title in panels:
+    ax.bar(range(TOP_N), data[col], color="gray")
+    ax.set_xticks(range(TOP_N))
+    ax.set_xticklabels(data["unique_id"].astype(str), rotation=90)
+    ax.set_xlabel("Zone")
+    ax.set_ylabel("Total net revenue (y)")
+    ax.set_title(title)
+    #ax.set_ylim(0, y_max * 1.05)
+
+fig.suptitle(f"Top-{TOP_N} Series by Net Revenue")
+plt.show()
+
+# %%
