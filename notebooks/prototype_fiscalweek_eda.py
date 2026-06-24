@@ -19,6 +19,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import seaborn as sns
@@ -487,7 +488,7 @@ fig.suptitle(f"Top-{TOP_N} Series by Net Revenue")
 plt.show()
 
 # %% [markdown]
-# # Section 3
+# # Section 3: Month-to-date signal
 
 # %%
 N_WEEKS_104 = 104
@@ -507,6 +508,10 @@ final_month = (
 )
 mtd_df = mtd_df.merge(final_month, on=["unique_id", "fiscal_year_month"], how="left")
 mtd_df.head()
+
+# %%
+mtd_df['fiscal_month_number'] = mtd_df['fiscal_year_month'].astype(str).str[-2:].astype(int)
+mtd_df['fiscal_week_number'] = mtd_df['fiscal_year_week'].astype(str).str[-2:].astype(int)
 
 # %%
 # weeks_in_month: calendar property — max origin week per fiscal_year_month
@@ -545,6 +550,162 @@ trailing_104_months = set(
 
 #mtd_df.shape — you expect len(df) rows (one per original week row, now with cumsum added)
 #Spot-check a single series: mtd_df[mtd_df["unique_id"] == 4][["fiscal_year_month", "origin_week", "y", "mtd_y", "final_month_y", "weeks_in_month"]].head(10) — mtd_y should increase within each month and equal final_month_y on the last week of the month.
+
+
+# %%
+mtd_df.head()
+
+# %% [markdown]
+# ## Section 3.1: MTD actuals vs. final month scatterplot 
+
+# %%
+
+
+subplot_titles = ["Week 1", "Weeks 1–2", "Weeks 1–3", "Weeks 1–4"]
+row_labels = ["4-week months", "5-week months"]
+
+cmap = plt.cm.viridis
+vmin = mdates.date2num(mtd_df["fiscal_week_start_date"].min())
+vmax = mdates.date2num(mtd_df["fiscal_week_start_date"].max())
+norm = plt.Normalize(vmin=vmin, vmax=vmax)
+
+fig, axes = plt.subplots(2, 4, figsize=(16, 8), constrained_layout=True)
+
+for row_idx, n_weeks in enumerate([4, 5]):
+    for col_idx, origin in enumerate([1, 2, 3, 4]):
+        ax = axes[row_idx, col_idx]
+        mask = (
+            (mtd_df["weeks_in_month"] == n_weeks)
+            & (mtd_df["origin_week"] == origin)
+            & (mtd_df["mtd_y"] > 0)
+            & (mtd_df["final_month_y"] > 0)
+        )
+        sub = mtd_df[mask]
+        ax.scatter(
+            sub["mtd_y"],
+            sub["final_month_y"],
+            c=mdates.date2num(sub["fiscal_week_start_date"]),
+            cmap=cmap,
+            norm=norm,
+            alpha=0.5,
+            s=15,
+        )
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        if row_idx == 0:
+            ax.set_title(subplot_titles[col_idx])
+        if col_idx == 0:
+            ax.set_ylabel(row_labels[row_idx])
+
+fig.supxlabel("MTD revenue")
+fig.supylabel("Final month revenue")
+
+sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+sm.set_array([])
+cb = fig.colorbar(sm, ax=axes, label="Fiscal week start date")
+cb.ax.yaxis.set_major_locator(mdates.YearLocator())
+cb.ax.yaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+
+fig.suptitle("MTD Actuals vs. Final Month Revenue")
+plt.show()
+
+
+# %%
+
+subplot_titles = ["Week 1", "Weeks 1–2", "Weeks 1–3", "Weeks 1–4"]
+row_labels = ["4-week months", "5-week months"]
+
+cmap = plt.cm.viridis
+vmin = mtd_df["fiscal_month_number"].min()
+vmax = mtd_df["fiscal_month_number"].max()
+norm = plt.Normalize(vmin=vmin, vmax=vmax)
+
+fig, axes = plt.subplots(2, 4, figsize=(16, 8), constrained_layout=True)
+
+for row_idx, n_weeks in enumerate([4, 5]):
+    for col_idx, origin in enumerate([1, 2, 3, 4]):
+        ax = axes[row_idx, col_idx]
+        mask = (
+            (mtd_df["weeks_in_month"] == n_weeks)
+            & (mtd_df["origin_week"] == origin)
+            & (mtd_df["mtd_y"] > 0)
+            & (mtd_df["final_month_y"] > 0)
+        )
+        sub = mtd_df[mask]
+        ax.scatter(
+            sub["mtd_y"],
+            sub["final_month_y"],
+            c=sub["fiscal_month_number"],
+            cmap=cmap,
+            norm=norm,
+            alpha=0.5,
+            s=15,
+        )
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        if row_idx == 0:
+            ax.set_title(subplot_titles[col_idx])
+        if col_idx == 0:
+            ax.set_ylabel(row_labels[row_idx])
+
+fig.supxlabel("MTD revenue")
+fig.supylabel("Final month revenue")
+
+sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+sm.set_array([])
+fig.colorbar(sm, ax=axes, label="Fiscal month number")
+
+fig.suptitle("MTD Actuals vs. Final Month Revenue")
+plt.show()
+
+
+# %%
+
+subplot_titles = ["Week 1", "Weeks 1–2", "Weeks 1–3", "Weeks 1–4"]
+row_labels = ["4-week months", "5-week months"]
+
+cmap = plt.cm.viridis
+vmin = mtd_df["fiscal_week_number"].min()
+vmax = mtd_df["fiscal_week_number"].max()
+norm = plt.Normalize(vmin=vmin, vmax=vmax)
+
+fig, axes = plt.subplots(2, 4, figsize=(16, 8), constrained_layout=True)
+
+for row_idx, n_weeks in enumerate([4, 5]):
+    for col_idx, origin in enumerate([1, 2, 3, 4]):
+        ax = axes[row_idx, col_idx]
+        mask = (
+            (mtd_df["weeks_in_month"] == n_weeks)
+            & (mtd_df["origin_week"] == origin)
+            & (mtd_df["mtd_y"] > 0)
+            & (mtd_df["final_month_y"] > 0)
+        )
+        sub = mtd_df[mask]
+        ax.scatter(
+            sub["mtd_y"],
+            sub["final_month_y"],
+            c=sub["fiscal_week_number"],
+            cmap=cmap,
+            norm=norm,
+            alpha=0.5,
+            s=15,
+        )
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        if row_idx == 0:
+            ax.set_title(subplot_titles[col_idx])
+        if col_idx == 0:
+            ax.set_ylabel(row_labels[row_idx])
+
+fig.supxlabel("MTD revenue")
+fig.supylabel("Final month revenue")
+
+sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+sm.set_array([])
+fig.colorbar(sm, ax=axes, label="Fiscal week number")
+
+fig.suptitle("MTD Actuals vs. Final Month Revenue")
+plt.show()
 
 
 # %% [markdown]
