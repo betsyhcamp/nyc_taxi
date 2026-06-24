@@ -701,6 +701,86 @@ summary_df["neg_materiality"] = summary_df["sum_negative_y"].abs() / summary_df[
 
 
 # %%
+# Plotly approach to negative quantity scatter plot
+def plot_neg_scatter(y_col, y_label, title, scale_type="log"):
+    """Can use either scale=log or scale=linear"""
+    hover_data = summary_df[["unique_id", "mean_pos_N_weeks", y_col]].values
+    hovertemplate = (
+        "<b>Zone: %{customdata[0]}</b><br>"
+        "Mean positive weekly revenue (52w): %{customdata[1]:.1f}<br>"
+        + y_label
+        + ": %{customdata[2]:.4f}<extra></extra>"
+    )
+    fig = go.Figure(
+        go.Scatter(
+            x=summary_df["mean_pos_N_weeks"],
+            y=summary_df[y_col],
+            mode="markers",
+            marker=dict(symbol="circle-open", color="black", opacity=0.6),
+            customdata=hover_data,
+            hovertemplate=hovertemplate,
+            showlegend=False,
+        )
+    )
+    fig.update_xaxes(type=scale_type, title_text="Mean positive weekly revenue (trailing 52w)")
+    fig.update_yaxes(title_text=y_label)
+    fig.update_layout(title=title, height=500, width=750)
+    fig.show()
+
+
+# %%
+# 4.1
+plot_neg_scatter(
+    "frac_negative_weeks",
+    "Fraction negative weeks",
+    "Mean Positive Weekly Revenue (trailing 52w) vs. Fraction Negative Weeks",
+)
+
+# %%
+# 4.2
+plot_neg_scatter(
+    "neg_materiality",
+    "Negative materiality",
+    "Mean Positive Weekly Revenue (trailing 52w) vs. Negative Materiality",
+)
+
+
+# %%
+# matplotlib implementation of 
+def plot_neg_scatter_mpl(y_col, y_label, title, scale_type="log"):
+    """Can use either scale=log or scale=linear"""
+    fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
+    ax.scatter(
+        summary_df["mean_pos_N_weeks"],
+        summary_df[y_col],
+        facecolors="none",
+        edgecolors="black",
+        alpha=0.6,
+    )
+    ax.set_xscale(scale_type)
+    ax.grid(alpha=0.3)
+    ax.set_xlabel("Mean positive weekly revenue (trailing 52w)")
+    ax.set_ylabel(y_label)
+    ax.set_title(title)
+    plt.show()
+
+
+# 4.1
+plot_neg_scatter_mpl(
+    "frac_negative_weeks",
+    "Fraction negative weeks",
+    "Mean Positive Weekly Revenue (trailing 52w) vs. Fraction Negative Weeks",
+)
+
+# 4.2
+plot_neg_scatter_mpl(
+    "neg_materiality",
+    "Negative materiality",
+    "Mean Positive Weekly Revenue (trailing 52w) vs. Negative Materiality",
+)
+
+
+# %%
 # Spot-check: series with no negatives should have sum_negative_y == 0 and neg_materiality == 0
 assert (summary_df["sum_negative_y"] <= 0).all(), "sum_negative_y should be ≤ 0"
 assert (summary_df["neg_materiality"] >= 0).all()
