@@ -477,3 +477,27 @@ fig.suptitle(f"Top-{TOP_N} Series by Net Revenue")
 plt.show()
 
 # %%
+hist_df = summary_df.dropna(subset=["time_series_length_weeks"])
+
+fig, ax = plt.subplots(figsize=(10, 5), constrained_layout=True)
+
+ax.hist(
+    hist_df["time_series_length_weeks"],
+    bins=range(
+        int(hist_df["time_series_length_weeks"].min()),
+        int(hist_df["time_series_length_weeks"].max()) + 2,
+    ),
+    color="gray",
+    edgecolor="gray",
+)
+ax.set_xlabel("Time series length (weeks)")
+ax.set_ylabel("Number of series")
+ax.set_title("Distribution of Time Series Lengths")
+
+plt.show()
+
+# %% [markdown]
+# # Section 8: Time Series Length Histogram
+
+# %% [markdown]
+#
