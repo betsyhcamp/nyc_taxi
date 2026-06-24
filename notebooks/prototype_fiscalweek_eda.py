@@ -44,7 +44,6 @@ from utilsforecast.evaluation import evaluate
 
 import warnings
 from tqdm import TqdmWarning
-from IPython.display import display
 
 # %%
 project = "nyc-taxi-ehc"
@@ -143,23 +142,22 @@ zone_fiscalweek_df
 # %%
 df = zone_fiscalweek_df.copy()
 
-# %% [markdown]
-# ## EDA Constants
-
 # %%
+# ── Constants ──────────────────────────────────────────────────────────────────
 N_WEEKS = 52
 
-# %% [markdown]
-# ## Summary DataFrame
 
-# %%
-df["y_pos"] = df["y"].clip(lower=0)
+df['y_pos'] = df["y"].clip(lower=0)
 
+
+# ── Trailing window ────────────────────────────────────────────────────────────
 max_date = df["fiscal_week_start_date"].max()
 cutoff_date = max_date - pd.Timedelta(weeks=N_WEEKS - 1)
-trailing_df = df[df["fiscal_week_start_date"] >= cutoff_date].copy()
+trailing_df = df[df["fiscal_week_start_date"] >= cutoff_date]
+
 
 # %%
+# ── Full history aggregations ──────────────────────────────────────────────────
 full_stats = df.groupby("unique_id", as_index=False).agg(
     mean_net_all_weeks=("y", "mean"),
     median_net_all_weeks=("y", "median"),
@@ -177,6 +175,8 @@ pos_full_stats = (
 )
 
 # %%
+# ── Trailing N weeks aggregations ──────────────────────────────────────────────
+
 trailing_stats = trailing_df.groupby("unique_id", as_index=False).agg(
     mean_net_N_weeks=("y", "mean"),
     median_net_N_weeks=("y", "median"),
@@ -194,6 +194,7 @@ pos_trailing_stats = (
 )
 
 # %%
+# ── Time series start and length ───────────────────────────────────────────────
 ts_start = (
     df[df["y"].notna() & (df["y"] != 0)]
     .groupby("unique_id")["fiscal_week_start_date"]
@@ -202,7 +203,9 @@ ts_start = (
     .rename(columns={"fiscal_week_start_date": "time_series_start_week"})
 )
 
+
 # %%
+# ── Merge into summary_df ──────────────────────────────────────────────────────
 summary_df = (
     full_stats
     .merge(pos_full_stats, on="unique_id", how="left")
@@ -215,16 +218,22 @@ summary_df["time_series_length_weeks"] = (
     (max_date - summary_df["time_series_start_week"]).dt.days / 7
 )
 
-for col, rank_col in [
+# %%
+# ── Ranks (1 = largest) ────────────────────────────────────────────────────────
+col_to_rank = [
     ("total_all_weeks",          "rank_all_weeks"),
     ("total_positive_all_weeks", "rank_positive_all_weeks"),
     ("total_N_weeks",            "rank_N_weeks"),
     ("total_positive_N_weeks",   "rank_positive_N_weeks"),
-]:
+]
+
+for col, rank_col in col_to_rank:
     summary_df[rank_col] = (
         summary_df[col].rank(ascending=False, method="min").astype("Int64")
     )
 
+# %%
+# ── Reorder columns ────────────────────────────────────────────────────────────
 summary_df = summary_df[[
     "unique_id",
     "mean_net_all_weeks",      "median_net_all_weeks",
@@ -238,8 +247,3 @@ summary_df = summary_df[[
     "time_series_start_week",
     "time_series_length_weeks",
 ]]
-
-# %%
-display(summary_df)
-
-# %%
