@@ -624,6 +624,57 @@ plot_mtd_scatter(mtd_df, "fiscal_week_number", "Fiscal week number")
 
 
 # %% [markdown]
+# ## Section 3.2: MTD share boxplots
+
+# %%
+
+def plot_mtd_share_boxplots(data, title):
+    buckets = ["Very low", "Low", "Middle", "High", "Very high"]
+    row_labels = ["4-week months", "5-week months"]
+
+    fig, axes = plt.subplots(2, 5, figsize=(20, 8), constrained_layout=True)
+
+    for col_idx, bucket in enumerate(buckets):
+        for row_idx, n_weeks in enumerate([4, 5]):
+            ax = axes[row_idx, col_idx]
+            mask = (
+                (data["weeks_in_month"] == n_weeks)
+                & (data["revenue_bucket"] == bucket)
+                & (data["final_month_y"] >= data["core_threshold"])
+            )
+            sub = data[mask]
+            box_data = [
+                sub.loc[sub["origin_week"] == k, "mtd_share"].dropna().values
+                for k in [1, 2, 3, 4]
+            ]
+            ax.boxplot(box_data, positions=[1, 2, 3, 4])
+            ax.set_xticks([1, 2, 3, 4])
+            if row_idx == 0:
+                ax.set_title(bucket)
+            if col_idx == 0:
+                ax.set_ylabel(row_labels[row_idx])
+
+    fig.supxlabel("Forecast origin (weeks of actuals)")
+    fig.supylabel("MTD share (MTD revenue / final month revenue)")
+    fig.suptitle(title)
+    plt.show()
+
+
+# 3.2a — Full history
+plot_mtd_share_boxplots(
+    mtd_df,
+    "MTD Share by Forecast Origin and Revenue Bucket — Full History",
+)
+
+# 3.2b — Trailing 104 weeks
+trailing_mtd_df = mtd_df[mtd_df["fiscal_year_month"].isin(trailing_104_months)]
+plot_mtd_share_boxplots(
+    trailing_mtd_df,
+    "MTD Share by Forecast Origin and Revenue Bucket — Trailing 104 Weeks",
+)
+
+
+# %% [markdown]
 # # Section 4: Negative revenue diagnostics (and revenue bucket setup)
 
 # %%
