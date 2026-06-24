@@ -150,8 +150,9 @@ df = zone_fiscalweek_df.copy()
 N_WEEKS = 52
 
 
+# ── Global flags ──────────────────────────────────────────────────────────────────
 df['y_pos'] = df["y"].clip(lower=0)
-
+df["y_neg_flag"] = (df["y"] < 0).astype(int)
 
 # ── Trailing window ────────────────────────────────────────────────────────────
 max_date = df["fiscal_week_start_date"].max()
@@ -354,7 +355,7 @@ fig.update_xaxes(title_text="Mean positive weekly y (log scale)", type="log", ro
 fig.update_yaxes(title_text="Median positive weekly y (log scale)", type="log", scaleanchor="x2", scaleratio=1, row=1, col=2)
 
 fig.update_layout(
-    title="Mean vs. Median Positive Weekly y",
+    #title="Mean vs. Median Positive Weekly y",
     height=550,
     width=1100,
 )
@@ -408,7 +409,7 @@ panels = [
 for ax, (full_cum, trail_cum, title) in zip(axes, panels):
     ax.plot(x_prop, full_cum, color="black", linestyle="solid", label="Full history", alpha=0.7)
     ax.plot(x_prop, trail_cum, color="tab:blue", linestyle="solid", label=f"Trailing {N_WEEKS} weeks", alpha=0.7)
-    ax.plot([0, 1], [0, 1], color="black", linestyle="dotted")
+    ax.plot([0, 1], [0, 1], color="gray", linestyle="dotted", alpha=0.6)
     ax.set_xlabel("Cumulative proportion of series, ranked descending")
     ax.set_ylabel("Cumulative revenue proportion")
     ax.set_title(title)
@@ -434,7 +435,7 @@ for ax, (full_cum, trail_cum, title) in zip(axes, panels):
     ax.plot(x_count, full_cum, color="black", linestyle="solid", label="Full history", alpha=0.7)
     ax.plot(x_count, trail_cum, color="tab:blue", linestyle="solid", label=f"Trailing {N_WEEKS} weeks", alpha=0.7)
     for ref in [0.50, 0.80, 0.90, 0.95]:
-        ax.axhline(y=ref, color="black", linestyle="dotted")
+        ax.axhline(y=ref, color="gray", linestyle="dotted", alpha=0.7)
     ax.set_xlabel("Number of top-ranked series")
     ax.set_ylabel("Cumulative revenue proportion")
     ax.set_title(title)
@@ -476,6 +477,52 @@ for ax, data, col, title in panels:
 fig.suptitle(f"Top-{TOP_N} Series by Net Revenue")
 plt.show()
 
+# %% [markdown]
+# ## Section 4: Negative revenue diagnostics (and revenue bucket setup)
+
+# %%
+neg_counts = df.groupby("unique_id", as_index=False).agg(
+    n_weeks_total=("y", "count"),
+    n_negative_weeks=("y_neg_flag", "sum"),
+)
+
+neg_sum = (
+    df[df["y"] < 0]
+    .groupby("unique_id", as_index=False)["y"]
+    .sum()
+    .rename(columns={"y": "sum_negative_y"})
+)
+
+summary_df = (
+    summary_df
+    .merge(neg_counts, on="unique_id", how="left")
+    .merge(neg_sum, on="unique_id", how="left")
+)
+summary_df["sum_negative_y"] = summary_df["sum_negative_y"].fillna(0)
+summary_df["frac_negative_weeks"] = summary_df["n_negative_weeks"] / summary_df["n_weeks_total"]
+summary_df["neg_materiality"] = summary_df["sum_negative_y"].abs() / summary_df["total_positive_all_weeks"]
+
+
+# %%
+# revenue buckets
+summary_df["revenue_tier"] = pd.qcut(
+    summary_df["mean_pos_N_weeks"].rank(method="first"),
+    q=5,
+    labels=["Very low", "Low", "Middle", "High", "Very high"],
+)
+
+
+# %%
+# Spot-check: series with no negatives should have sum_negative_y == 0 and neg_materiality == 0
+assert (summary_df["sum_negative_y"] <= 0).all(), "sum_negative_y should be ≤ 0"
+assert (summary_df["neg_materiality"] >= 0).all()
+assert summary_df["revenue_tier"].value_counts().shape[0] == 5  # all 5 buckets present
+summary_df[["unique_id", "n_weeks_total", "n_negative_weeks", "frac_negative_weeks", "sum_negative_y", "neg_materiality", "revenue_tier"]].head(10)
+
+
+# %% [markdown]
+# # Section 8: Time Series Length Histogram
+
 # %%
 hist_df = summary_df.dropna(subset=["time_series_length_weeks"])
 
@@ -495,9 +542,6 @@ ax.set_ylabel("Number of series")
 ax.set_title("Distribution of Time Series Lengths")
 
 plt.show()
-
-# %% [markdown]
-# # Section 8: Time Series Length Histogram
 
 # %% [markdown]
 #
