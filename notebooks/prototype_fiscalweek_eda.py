@@ -16,6 +16,7 @@
 import sys
 from google.cloud import bigquery
 import pandas as pd
+import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
@@ -360,4 +361,89 @@ fig.update_layout(
 
 fig.show()
 
+# %% [markdown]
+# # Section 2: Revenue concentration
+
 # %%
+n = len(summary_df)
+
+pos_full_sorted = summary_df.sort_values("total_positive_all_weeks", ascending=False)
+pos_full_cum = np.concatenate([
+    [0],
+    pos_full_sorted["total_positive_all_weeks"].cumsum().values / pos_full_sorted["total_positive_all_weeks"].sum(),
+])
+
+pos_trail_sorted = summary_df.sort_values("total_positive_N_weeks", ascending=False)
+pos_trail_cum = np.concatenate([
+    [0],
+    pos_trail_sorted["total_positive_N_weeks"].cumsum().values / pos_trail_sorted["total_positive_N_weeks"].sum(),
+])
+
+net_full_sorted = summary_df.sort_values("total_all_weeks", ascending=False)
+net_full_cum = np.concatenate([
+    [0],
+    net_full_sorted["total_all_weeks"].cumsum().values / net_full_sorted["total_all_weeks"].sum(),
+])
+
+net_trail_sorted = summary_df.sort_values("total_N_weeks", ascending=False)
+net_trail_cum = np.concatenate([
+    [0],
+    net_trail_sorted["total_N_weeks"].cumsum().values / net_trail_sorted["total_N_weeks"].sum(),
+])
+
+x_prop = np.concatenate([[0], np.arange(1, n + 1) / n])
+x_count = np.concatenate([[0], np.arange(1, n + 1)])
+
+# %% [markdown]
+# ## Section 2.1 Cumulative Revenue Concentration Curve
+
+# %%
+fig, axes = plt.subplots(1, 2, figsize=(13, 6), constrained_layout=True)
+
+panels = [
+    (pos_full_cum, pos_trail_cum, "Positive Revenue"),
+    (net_full_cum, net_trail_cum, "Net Revenue"),
+]
+
+for ax, (full_cum, trail_cum, title) in zip(axes, panels):
+    ax.plot(x_prop, full_cum, color="black", linestyle="solid", label="Full history", alpha=0.7)
+    ax.plot(x_prop, trail_cum, color="tab:blue", linestyle="solid", label=f"Trailing {N_WEEKS} weeks", alpha=0.7)
+    ax.plot([0, 1], [0, 1], color="black", linestyle="dotted")
+    ax.set_xlabel("Cumulative proportion of series, ranked descending")
+    ax.set_ylabel("Cumulative revenue proportion")
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(alpha=0.3)
+    ax.set_aspect("equal", adjustable="box")
+
+fig.suptitle("Cumulative Revenue Concentration by Series")
+plt.show()
+
+# %% [markdown]
+# ## Section 2.2: Top-N Contribution Curves
+
+# %%
+fig, axes = plt.subplots(1, 2, figsize=(13, 6), constrained_layout=True)
+
+panels = [
+    (pos_full_cum, pos_trail_cum, "Positive Revenue"),
+    (net_full_cum, net_trail_cum, "Net Revenue"),
+]
+
+for ax, (full_cum, trail_cum, title) in zip(axes, panels):
+    ax.plot(x_count, full_cum, color="black", linestyle="solid", label="Full history", alpha=0.7)
+    ax.plot(x_count, trail_cum, color="tab:blue", linestyle="solid", label=f"Trailing {N_WEEKS} weeks", alpha=0.7)
+    for ref in [0.50, 0.80, 0.90, 0.95]:
+        ax.axhline(y=ref, color="black", linestyle="dotted")
+    ax.set_xlabel("Number of top-ranked series")
+    ax.set_ylabel("Cumulative revenue proportion")
+    ax.set_title(title)
+    ax.legend()
+    ax.set_box_aspect(1)
+    ax.grid(alpha=0.3)
+
+fig.suptitle("Cumulative Revenue by Top-N Series")
+plt.show()
+
+# %% [markdown]
+#
