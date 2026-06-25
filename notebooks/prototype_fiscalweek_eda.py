@@ -149,7 +149,9 @@ df = zone_fiscalweek_df.copy()
 # %%
 # ── Constants ──────────────────────────────────────────────────────────────────
 N_WEEKS = 52
-
+ADI_THRESHOLD = 1.32
+CV2_THRESHOLD = 0.49
+CLASS_ORDER = ["Smooth", "Erratic", "Intermittent", "Lumpy"]
 
 # ── Global flags ──────────────────────────────────────────────────────────────────
 df['y_pos'] = df["y"].clip(lower=0)
@@ -704,8 +706,8 @@ summary_df["neg_materiality"] = summary_df["sum_negative_y"].abs() / summary_df[
 # Spot-check: series with no negatives should have sum_negative_y == 0 and neg_materiality == 0
 assert (summary_df["sum_negative_y"] <= 0).all(), "sum_negative_y should be ≤ 0"
 assert (summary_df["neg_materiality"] >= 0).all()
-assert summary_df["revenue_tier"].value_counts().shape[0] == 5  # all 5 buckets present
-summary_df[["unique_id", "n_weeks_total", "n_negative_weeks", "frac_negative_weeks", "sum_negative_y", "neg_materiality", "revenue_tier"]].head(10)
+assert summary_df["revenue_bucket"].value_counts().shape[0] == 5  # all 5 buckets present
+summary_df[["unique_id", "n_weeks_total", "n_negative_weeks", "frac_negative_weeks", "sum_negative_y", "neg_materiality", "revenue_bucket"]].head(10)
 
 
 # %%
@@ -836,6 +838,112 @@ plt.show()
 
 
 # %% [markdown]
+# ## Section 5.0: Extend summary_df with intermittency metrics 
+
+# %%
+# ── Section 5.0: Extend summary_df with intermittency metrics ─────────────────
+
+# Full-history counts (assign avoids modifying df in place)
+_df_full = df.assign(_is_zero=df["y"] == 0, _is_positive=df["y"] > 0)
+full_counts = _df_full.groupby("unique_id", as_index=False).agg(
+    n_zero_weeks_full=("_is_zero", "sum"),
+    n_positive_weeks_full=("_is_positive", "sum"),
+)
+
+full_pos_stats = (
+    df[df["y"] > 0]
+    .groupby("unique_id", as_index=False)
+    .agg(
+        mean_pos_full=("y", "mean"),
+        std_pos_full=("y", "std"),
+    )
+)
+
+full_metrics = (
+    full_counts
+    .merge(full_pos_stats, on="unique_id", how="left")
+    .merge(summary_df[["unique_id", "n_weeks_total"]], on="unique_id", how="left")
+)
+full_metrics["frac_zero_weeks_full"] = (
+    full_metrics["n_zero_weeks_full"] / full_metrics["n_weeks_total"]
+)
+full_metrics["cv2_full"] = (
+    (full_metrics["std_pos_full"] / full_metrics["mean_pos_full"]) ** 2
+)
+full_metrics["adi_full"] = (
+    full_metrics["n_weeks_total"]
+    / full_metrics["n_positive_weeks_full"].replace(0, np.nan)
+)
+
+conditions_full = [
+    (full_metrics["adi_full"] <  ADI_THRESHOLD) & (full_metrics["cv2_full"] <  CV2_THRESHOLD),
+    (full_metrics["adi_full"] <  ADI_THRESHOLD) & (full_metrics["cv2_full"] >= CV2_THRESHOLD),
+    (full_metrics["adi_full"] >= ADI_THRESHOLD) & (full_metrics["cv2_full"] <  CV2_THRESHOLD),
+    (full_metrics["adi_full"] >= ADI_THRESHOLD) & (full_metrics["cv2_full"] >= CV2_THRESHOLD),
+]
+full_metrics["intermittency_class_full"] = np.select(
+    conditions_full, CLASS_ORDER, default=np.nan
+)
+
+# Trailing-104w subset
+df_104 = df[df["fiscal_year_month"].isin(trailing_104_months)].copy()
+_df_104 = df_104.assign(_is_zero=df_104["y"] == 0, _is_positive=df_104["y"] > 0)
+
+counts_104 = _df_104.groupby("unique_id", as_index=False).agg(
+    n_weeks_104=("y", "count"),
+    n_zero_weeks_104=("_is_zero", "sum"),
+    n_positive_weeks_104=("_is_positive", "sum"),
+)
+
+pos_stats_104 = (
+    df_104[df_104["y"] > 0]
+    .groupby("unique_id", as_index=False)
+    .agg(
+        mean_pos_104=("y", "mean"),
+        std_pos_104=("y", "std"),
+    )
+)
+
+metrics_104 = counts_104.merge(pos_stats_104, on="unique_id", how="left")
+metrics_104["frac_zero_weeks_104"] = (
+    metrics_104["n_zero_weeks_104"] / metrics_104["n_weeks_104"]
+)
+metrics_104["cv2_104"] = (
+    (metrics_104["std_pos_104"] / metrics_104["mean_pos_104"]) ** 2
+)
+metrics_104["adi_104"] = (
+    metrics_104["n_weeks_104"]
+    / metrics_104["n_positive_weeks_104"].replace(0, np.nan)
+)
+
+conditions_104 = [
+    (metrics_104["adi_104"] <  ADI_THRESHOLD) & (metrics_104["cv2_104"] <  CV2_THRESHOLD),
+    (metrics_104["adi_104"] <  ADI_THRESHOLD) & (metrics_104["cv2_104"] >= CV2_THRESHOLD),
+    (metrics_104["adi_104"] >= ADI_THRESHOLD) & (metrics_104["cv2_104"] <  CV2_THRESHOLD),
+    (metrics_104["adi_104"] >= ADI_THRESHOLD) & (metrics_104["cv2_104"] >= CV2_THRESHOLD),
+]
+metrics_104["intermittency_class_104"] = np.select(
+    conditions_104, CLASS_ORDER, default=None
+)
+
+# Merge into summary_df
+full_cols = [
+    "unique_id", "n_zero_weeks_full", "n_positive_weeks_full", "frac_zero_weeks_full",
+    "mean_pos_full", "std_pos_full", "cv2_full", "adi_full", "intermittency_class_full",
+]
+cols_104 = [
+    "unique_id", "n_weeks_104", "n_zero_weeks_104", "n_positive_weeks_104",
+    "frac_zero_weeks_104", "mean_pos_104", "std_pos_104", "cv2_104", "adi_104",
+    "intermittency_class_104",
+]
+summary_df = (
+    summary_df
+    .merge(full_metrics[full_cols], on="unique_id", how="left")
+    .merge(metrics_104[cols_104], on="unique_id", how="left")
+)
+
+
+# %% [markdown]
 # # Section 8: Time Series Length Histogram
 
 # %%
@@ -857,6 +965,21 @@ ax.set_ylabel("Number of series")
 ax.set_title("Distribution of Time Series Lengths")
 
 plt.show()
+
+# %% [markdown]
+#
+
+# %% [markdown]
+#
+
+# %% [markdown]
+#
+
+# %% [markdown]
+#
+
+# %% [markdown]
+#
 
 # %% [markdown]
 #
