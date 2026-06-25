@@ -844,7 +844,10 @@ plt.show()
 
 
 # %% [markdown]
-# # Section 5: Extend summary_df with intermittency metrics 
+# # Section 5: Intermittency metrics 
+
+# %% [markdown]
+# ## Section 5.0: Extend summary_df with intermittency metrics
 
 # %%
 # ── Section 5.0: Extend summary_df with intermittency metrics ─────────────────
@@ -888,15 +891,20 @@ conditions_full = [
     (full_metrics["adi_full"] >= ADI_THRESHOLD) & (full_metrics["cv2_full"] >= CV2_THRESHOLD),
 ]
 full_metrics["intermittency_class_full"] = np.select(
-    conditions_full, CLASS_ORDER, default=np.nan
+    conditions_full, CLASS_ORDER, default=None
+)
+full_metrics["intermittency_class_full"] = (
+    full_metrics["intermittency_class_full"].replace({None: np.nan})
 )
 
+
+
+# %%
 # Trailing-104w subset
 df_104 = df[df["fiscal_year_month"].isin(trailing_104_months)].copy()
 _df_104 = df_104.assign(_is_zero=df_104["y"] == 0, _is_positive=df_104["y"] > 0)
 
 
-# %%
 counts_104 = _df_104.groupby("unique_id", as_index=False).agg(
     n_weeks_104=("y", "count"),
     n_zero_weeks_104=("_is_zero", "sum"),
@@ -931,7 +939,11 @@ conditions_104 = [
     (metrics_104["adi_104"] >= ADI_THRESHOLD) & (metrics_104["cv2_104"] >= CV2_THRESHOLD),
 ]
 metrics_104["intermittency_class_104"] = np.select(
-    conditions_104, CLASS_ORDER, default=np.nan
+    conditions_104, CLASS_ORDER, default=None
+)
+
+metrics_104["intermittency_class_104"] = (
+    metrics_104["intermittency_class_104"].replace({None: np.nan})
 )
 
 # %%
@@ -950,6 +962,307 @@ summary_df = (
     .merge(full_metrics[full_cols], on="unique_id", how="left")
     .merge(metrics_104[cols_104], on="unique_id", how="left")
 )
+
+
+# %%
+# ── Shared: discrete color map for intermittency classes (used in 5.2 and 5.3) ─
+CLASS_COLOR_MAP = {
+    "Smooth":       "#1f77b4",
+    "Erratic":      "#ff7f0e",
+    "Intermittent": "#2ca02c",
+    "Lumpy":        "#d62728",
+}
+
+CLASS_MARKER_MAP_MATPLOTLIB = {
+    "Smooth":       "<",
+    "Erratic":      "s",
+    "Intermittent": "o",
+    "Lumpy":        "D",
+}
+
+CLASS_MARKER_MAP_PLOTLY = {
+    "Smooth":       "triangle-left",
+    "Erratic":      "square",
+    "Intermittent": "circle",
+    "Lumpy":        "diamond",
+}
+
+# %% [markdown]
+# ## Section 5.1: ADI vs. CV²
+
+# %%
+# ── Section 5.1: ADI vs. CV² ──────────────────────────────────────────────────
+fig_51 = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=["Full History", "Trailing 104 Weeks"],
+)
+
+sub_full_51 = summary_df.dropna(subset=["adi_full", "cv2_full", "mean_pos_N_weeks"])
+hover_51_full = sub_full_51[
+    ["unique_id", "adi_full", "cv2_full", "intermittency_class_full", "mean_pos_N_weeks"]
+].values
+
+fig_51.add_trace(
+    go.Scatter(
+        x=sub_full_51["adi_full"],
+        y=sub_full_51["cv2_full"],
+        mode="markers",
+        marker=dict(color=sub_full_51["mean_pos_N_weeks"], coloraxis="coloraxis", size=6),
+        customdata=hover_51_full,
+        hovertemplate=(
+            "<b>%{customdata[0]}</b><br>"
+            "ADI: %{customdata[1]:.2f}<br>"
+            "CV²: %{customdata[2]:.2f}<br>"
+            "Class: %{customdata[3]}<br>"
+            "Mean pos revenue (52w): %{customdata[4]:,.0f}<extra></extra>"
+        ),
+        showlegend=False,
+    ),
+    row=1, col=1,
+)
+
+sub_104_51 = summary_df.dropna(subset=["adi_104", "cv2_104", "mean_pos_N_weeks"])
+hover_51_104 = sub_104_51[
+    ["unique_id", "adi_104", "cv2_104", "intermittency_class_104", "mean_pos_N_weeks"]
+].values
+
+fig_51.add_trace(
+    go.Scatter(
+        x=sub_104_51["adi_104"],
+        y=sub_104_51["cv2_104"],
+        mode="markers",
+        marker=dict(color=sub_104_51["mean_pos_N_weeks"], coloraxis="coloraxis", size=6),
+        customdata=hover_51_104,
+        hovertemplate=(
+            "<b>%{customdata[0]}</b><br>"
+            "ADI: %{customdata[1]:.2f}<br>"
+            "CV²: %{customdata[2]:.2f}<br>"
+            "Class: %{customdata[3]}<br>"
+            "Mean pos revenue (52w): %{customdata[4]:,.0f}<extra></extra>"
+        ),
+        showlegend=False,
+    ),
+    row=1, col=2,
+)
+
+for xref, yref in [("x", "y"), ("x2", "y2")]:
+    fig_51.add_shape(
+        type="line",
+        x0=ADI_THRESHOLD, x1=ADI_THRESHOLD, y0=0, y1=1,
+        xref=xref, yref=f"{yref} domain",
+        line=dict(dash="dash", color="gray", width=1),
+    )
+    fig_51.add_shape(
+        type="line",
+        x0=0, x1=1, y0=CV2_THRESHOLD, y1=CV2_THRESHOLD,
+        xref=f"{xref} domain", yref=yref,
+        line=dict(dash="dash", color="gray", width=1),
+    )
+
+fig_51.update_layout(
+    title="ADI vs. CV² — Intermittency Classification",
+    coloraxis=dict(
+        colorscale="Viridis",
+        colorbar=dict(
+            title=dict(
+                text="Mean positive weekly revenue (trailing 52w)",
+                side="right",
+            )
+        ),
+    ),
+    height=500,
+)
+fig_51.update_xaxes(title_text="ADI (average inter-demand interval)")
+fig_51.update_yaxes(title_text="CV²")
+fig_51.show()
+
+
+# %%
+# ── Section 5.1: ADI vs. CV² ──────────────────────────────────────────────────
+
+sub_full_51 = summary_df.dropna(subset=["adi_full", "cv2_full", "mean_pos_N_weeks"])
+sub_104_51  = summary_df.dropna(subset=["adi_104",  "cv2_104",  "mean_pos_N_weeks"])
+
+all_color_vals = pd.concat([sub_full_51["mean_pos_N_weeks"], sub_104_51["mean_pos_N_weeks"]])
+norm = plt.Normalize(vmin=all_color_vals.min(), vmax=all_color_vals.max())
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
+
+subplot_data_51 = [
+    (axes[0], sub_full_51, "adi_full", "cv2_full", "Full History"),
+    (axes[1], sub_104_51,  "adi_104",  "cv2_104",  "Trailing 104 Weeks"),
+]
+
+for ax, sub, adi_col, cv2_col, title in subplot_data_51:
+    sc = ax.scatter(
+        sub[adi_col], sub[cv2_col],
+        c=sub["mean_pos_N_weeks"],
+        cmap="viridis", norm=norm,
+        s=30, alpha=0.8, edgecolors="none",
+    )
+    ax.axvline(ADI_THRESHOLD, color="gray", linestyle="--", linewidth=1)
+    ax.axhline(CV2_THRESHOLD, color="gray", linestyle="--", linewidth=1)
+
+    ax.set_title(title)
+    ax.set_xlabel("ADI (average inter-demand interval)")
+    ax.set_ylabel("CV²")
+
+fig.colorbar(sc, ax=axes, label="Mean positive weekly revenue (trailing 52w)")
+fig.suptitle("ADI vs. CV² — Intermittency Classification")
+plt.show()
+
+
+# %% [markdown]
+# ## Section 5.2: Mean Positive Revenue vs. Fraction Zero Weeks
+
+# %%
+# ── Section 5.2: Mean Positive Revenue vs. Fraction Zero Weeks ────────────────
+
+fig_52 = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=["Full History", "Trailing 104 Weeks"],
+)
+
+subplot_configs_52 = [
+    (1, "frac_zero_weeks_full", "intermittency_class_full"),
+    (2, "frac_zero_weeks_104", "intermittency_class_104"),
+]
+
+for col, y_col, class_col in subplot_configs_52:
+    for cls in CLASS_ORDER:
+        sub = summary_df[summary_df[class_col] == cls].dropna(subset=["mean_pos_N_weeks", y_col])
+        hover_data = sub[["unique_id", "mean_pos_N_weeks", y_col, class_col]].values
+        fig_52.add_trace(
+            go.Scatter(
+                x=sub["mean_pos_N_weeks"],
+                y=sub[y_col],
+                mode="markers",
+                name=cls,
+                legendgroup=cls,
+                marker=dict(color=CLASS_COLOR_MAP[cls], symbol=CLASS_MARKER_MAP_PLOTLY[cls], size=6),
+                customdata=hover_data,
+                hovertemplate=(
+                    "<b>%{customdata[0]}</b><br>"
+                    "Mean pos revenue (52w): %{customdata[1]:,.0f}<br>"
+                    "Fraction zero weeks: %{customdata[2]:.2f}<br>"
+                    "Class: %{customdata[3]}<extra></extra>"
+                ),
+                showlegend=(col == 1),
+            ),
+            row=1, col=col,
+        )
+
+fig_52.update_xaxes(type="log", title_text="Mean positive weekly revenue (trailing 52w, log scale)")
+fig_52.update_yaxes(title_text="Fraction zero-revenue weeks")
+fig_52.update_layout(title="Mean Positive Revenue vs. Fraction Zero Weeks", height=500)
+fig_52.show()
+
+
+# %%
+# ── Section 5.2: Mean Positive Revenue vs. Fraction Zero Weeks ────────────────
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
+
+subplot_configs_52 = [
+    (axes[0], "frac_zero_weeks_full", "intermittency_class_full", "Full History"),
+    (axes[1], "frac_zero_weeks_104",  "intermittency_class_104",  "Trailing 104 Weeks"),
+]
+
+for ax, y_col, class_col, title in subplot_configs_52:
+    for cls in CLASS_ORDER:
+        sub = summary_df[summary_df[class_col] == cls].dropna(subset=["mean_pos_N_weeks", y_col])
+        ax.scatter(
+            sub["mean_pos_N_weeks"], sub[y_col],
+            color=CLASS_COLOR_MAP[cls],
+            marker=CLASS_MARKER_MAP_MATPLOTLIB[cls],
+            label=cls,
+            s=30, alpha=0.8, edgecolors="none",
+        )
+    ax.set_xscale("log")
+    ax.set_xlabel("Mean positive weekly revenue (trailing 52w, log scale)")
+    ax.set_ylabel("Fraction zero-revenue weeks")
+    ax.set_title(title)
+    ax.grid(alpha=0.7)
+
+handles, labels = axes[0].get_legend_handles_labels()
+fig.legend(handles, labels, loc="lower center", ncol=len(CLASS_ORDER), bbox_to_anchor=(0.5, -0.08))
+fig.suptitle("Mean Positive Revenue vs. Fraction Zero Weeks")
+plt.show()
+
+
+# %%
+# ── Section 5.3: Mean Positive Revenue vs. ADI ────────────────────────────────
+
+fig_53 = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=["Full History", "Trailing 104 Weeks"],
+)
+
+subplot_configs_53 = [
+    (1, "adi_full", "intermittency_class_full"),
+    (2, "adi_104",  "intermittency_class_104"),
+]
+
+for col, y_col, class_col in subplot_configs_53:
+    for cls in CLASS_ORDER:
+        sub = summary_df[summary_df[class_col] == cls].dropna(subset=["mean_pos_N_weeks", y_col])
+        hover_data = sub[["unique_id", "mean_pos_N_weeks", y_col, class_col]].values
+        fig_53.add_trace(
+            go.Scatter(
+                x=sub["mean_pos_N_weeks"],
+                y=sub[y_col],
+                mode="markers",
+                name=cls,
+                legendgroup=cls,
+                marker=dict(color=CLASS_COLOR_MAP[cls], symbol=CLASS_MARKER_MAP_PLOTLY[cls], size=6),
+                customdata=hover_data,
+                hovertemplate=(
+                    "<b>%{customdata[0]}</b><br>"
+                    "Mean pos revenue (52w): %{customdata[1]:,.0f}<br>"
+                    "ADI: %{customdata[2]:.2f}<br>"
+                    "Class: %{customdata[3]}<extra></extra>"
+                ),
+                showlegend=(col == 1),
+            ),
+            row=1, col=col,
+        )
+
+fig_53.update_xaxes(type="log", title_text="Mean positive weekly revenue (trailing 52w, log scale)")
+fig_53.update_yaxes(title_text="ADI")
+fig_53.update_layout(title="Mean Positive Revenue vs. ADI", height=500)
+fig_53.show()
+
+
+# %%
+# ── Section 5.3: Mean Positive Revenue vs. ADI ────────────────────────────────
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
+
+subplot_configs_53 = [
+    (axes[0], "adi_full", "intermittency_class_full", "Full History"),
+    (axes[1], "adi_104",  "intermittency_class_104",  "Trailing 104 Weeks"),
+]
+
+for ax, y_col, class_col, title in subplot_configs_53:
+    for cls in CLASS_ORDER:
+        sub = summary_df[summary_df[class_col] == cls].dropna(subset=["mean_pos_N_weeks", y_col])
+        ax.scatter(
+            sub["mean_pos_N_weeks"], sub[y_col],
+            color=CLASS_COLOR_MAP[cls],
+            marker=CLASS_MARKER_MAP_MATPLOTLIB[cls],
+            label=cls,
+            s=30, alpha=0.8, edgecolors="none",
+        )
+    ax.set_xscale("log")
+    ax.set_xlabel("Mean positive weekly revenue (trailing 52w, log scale)")
+    ax.set_ylabel("ADI")
+    ax.set_title(title)
+    ax.grid(alpha=0.7)
+
+handles, labels = axes[0].get_legend_handles_labels()
+fig.legend(handles, labels, loc="lower center", ncol=len(CLASS_ORDER), bbox_to_anchor=(0.5, -0.08))
+fig.suptitle("Mean Positive Revenue vs. ADI")
+plt.show()
 
 
 # %% [markdown]
