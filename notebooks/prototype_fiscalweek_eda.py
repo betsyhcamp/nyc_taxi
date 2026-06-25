@@ -144,6 +144,12 @@ zone_fiscalweek_df = zone_fiscalweek_df.rename(columns=
 zone_fiscalweek_df
 
 # %%
+zone_fiscalweek_df[zone_fiscalweek_df['unique_id']==104].sort_values(by='fiscal_year_week')
+
+# %%
+zone_fiscalweek_df.loc[zone_fiscalweek_df['unique_id']==104, 'y'].max()
+
+# %%
 df = zone_fiscalweek_df.copy()
 
 # %%
@@ -838,7 +844,7 @@ plt.show()
 
 
 # %% [markdown]
-# ## Section 5.0: Extend summary_df with intermittency metrics 
+# # Section 5: Extend summary_df with intermittency metrics 
 
 # %%
 # ── Section 5.0: Extend summary_df with intermittency metrics ─────────────────
@@ -889,6 +895,8 @@ full_metrics["intermittency_class_full"] = np.select(
 df_104 = df[df["fiscal_year_month"].isin(trailing_104_months)].copy()
 _df_104 = df_104.assign(_is_zero=df_104["y"] == 0, _is_positive=df_104["y"] > 0)
 
+
+# %%
 counts_104 = _df_104.groupby("unique_id", as_index=False).agg(
     n_weeks_104=("y", "count"),
     n_zero_weeks_104=("_is_zero", "sum"),
@@ -923,9 +931,10 @@ conditions_104 = [
     (metrics_104["adi_104"] >= ADI_THRESHOLD) & (metrics_104["cv2_104"] >= CV2_THRESHOLD),
 ]
 metrics_104["intermittency_class_104"] = np.select(
-    conditions_104, CLASS_ORDER, default=None
+    conditions_104, CLASS_ORDER, default=np.nan
 )
 
+# %%
 # Merge into summary_df
 full_cols = [
     "unique_id", "n_zero_weeks_full", "n_positive_weeks_full", "frac_zero_weeks_full",
@@ -941,6 +950,57 @@ summary_df = (
     .merge(full_metrics[full_cols], on="unique_id", how="left")
     .merge(metrics_104[cols_104], on="unique_id", how="left")
 )
+
+
+# %% [markdown]
+# # Section 6: Scale-variance metrics
+
+# %%
+# ── Section 6.0: Extend summary_df with scale-variance metrics ────────────────
+
+# std on all y (full history)
+scale_stats = df.groupby("unique_id", as_index=False).agg(
+    std_y_full=("y", "std"),
+)
+
+# IQR: Q75 - Q25
+q75 = df.groupby("unique_id")["y"].quantile(0.75)
+q25 = df.groupby("unique_id")["y"].quantile(0.25)
+iqr_df = (q75 - q25).rename("iqr_y_full").reset_index()
+
+# MAD: median(abs(y - median(y))) per series
+_df_mad = df.assign(_y_median=df.groupby("unique_id")["y"].transform("median"))
+_df_mad = _df_mad.assign(_abs_dev=(_df_mad["y"] - _df_mad["_y_median"]).abs())
+mad_stats = _df_mad.groupby("unique_id", as_index=False).agg(
+    mad_y_full=("_abs_dev", "median"),
+)
+
+# Median of positive-only y (full history)
+median_pos_stats = (
+    df[df["y"] > 0]
+    .groupby("unique_id", as_index=False)
+    .agg(median_pos_full=("y", "median"))
+)
+
+# Merge into summary_df
+summary_df = (
+    summary_df
+    .merge(scale_stats[["unique_id", "std_y_full"]], on="unique_id", how="left")
+    .merge(iqr_df[["unique_id", "iqr_y_full"]], on="unique_id", how="left")
+    .merge(mad_stats[["unique_id", "mad_y_full"]], on="unique_id", how="left")
+    .merge(median_pos_stats[["unique_id", "median_pos_full"]], on="unique_id", how="left")
+)
+
+# median_pos_full is NaN (not 0) for series with no positive weeks — division propagates NaN naturally
+summary_df["cv_std_full"] = summary_df["std_y_full"] / summary_df["mean_pos_N_weeks"]
+summary_df["cv_iqr_full"] = summary_df["iqr_y_full"] / summary_df["median_pos_full"]
+
+
+# %%
+summary_df[["unique_id", "std_y_full", "iqr_y_full", "mad_y_full", "median_pos_full", "cv_std_full", "cv_iqr_full"]].describe()
+
+# %%
+summary_df[summary_df["cv_std_full"].isna()][["unique_id", "n_positive_weeks_104", "intermittency_class_104"]]
 
 
 # %% [markdown]
