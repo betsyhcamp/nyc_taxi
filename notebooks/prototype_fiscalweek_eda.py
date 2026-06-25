@@ -701,6 +701,14 @@ summary_df["neg_materiality"] = summary_df["sum_negative_y"].abs() / summary_df[
 
 
 # %%
+# Spot-check: series with no negatives should have sum_negative_y == 0 and neg_materiality == 0
+assert (summary_df["sum_negative_y"] <= 0).all(), "sum_negative_y should be ≤ 0"
+assert (summary_df["neg_materiality"] >= 0).all()
+assert summary_df["revenue_tier"].value_counts().shape[0] == 5  # all 5 buckets present
+summary_df[["unique_id", "n_weeks_total", "n_negative_weeks", "frac_negative_weeks", "sum_negative_y", "neg_materiality", "revenue_tier"]].head(10)
+
+
+# %%
 # Plotly approach to negative quantity scatter plot
 def plot_neg_scatter(y_col, y_label, title, scale_type="log"):
     """Can use either scale=log or scale=linear"""
@@ -781,11 +789,50 @@ plot_neg_scatter_mpl(
 
 
 # %%
-# Spot-check: series with no negatives should have sum_negative_y == 0 and neg_materiality == 0
-assert (summary_df["sum_negative_y"] <= 0).all(), "sum_negative_y should be ≤ 0"
-assert (summary_df["neg_materiality"] >= 0).all()
-assert summary_df["revenue_tier"].value_counts().shape[0] == 5  # all 5 buckets present
-summary_df[["unique_id", "n_weeks_total", "n_negative_weeks", "frac_negative_weeks", "sum_negative_y", "neg_materiality", "revenue_tier"]].head(10)
+# ── Section 4.3: Revenue rank vs. fraction negative weeks ─────────────────────
+hover_data_43 = summary_df[["unique_id", "rank_positive_N_weeks", "frac_negative_weeks"]].values
+hovertemplate_43 = (
+    "<b>Zone: %{customdata[0]}</b><br>"
+    "Revenue rank (trailing 52w): %{customdata[1]:.0f}<br>"
+    "Fraction negative weeks: %{customdata[2]:.4f}"
+    "<extra></extra>"
+)
+
+fig = go.Figure(
+    go.Scatter(
+        x=summary_df["rank_positive_N_weeks"],
+        y=summary_df["frac_negative_weeks"],
+        mode="markers",
+        marker=dict(symbol="circle-open", color="black", opacity=0.6),
+        customdata=hover_data_43,
+        hovertemplate=hovertemplate_43,
+        showlegend=False,
+    )
+)
+fig.update_xaxes(title_text="Revenue rank (trailing 52w positive revenue, rank 1 = largest)")
+fig.update_yaxes(title_text="Fraction negative weeks")
+fig.update_layout(
+    title="Revenue Rank (trailing 52w positive revenue) vs. Fraction Negative Weeks",
+    height=500,
+    width=750,
+)
+fig.show()
+
+
+# %%
+fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
+ax.scatter(
+    summary_df["rank_positive_N_weeks"],
+    summary_df["frac_negative_weeks"],
+    facecolors="none",
+    edgecolors="black",
+    alpha=0.6,
+)
+ax.set_xlabel("Revenue rank (trailing 52w positive revenue, rank 1 = largest)")
+ax.set_ylabel("Fraction negative weeks")
+ax.set_title("Revenue Rank (trailing 52w positive revenue) vs. Fraction Negative Weeks")
+ax.grid(alpha=0.3)
+plt.show()
 
 
 # %% [markdown]
