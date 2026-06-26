@@ -386,7 +386,7 @@ fig.update_layout(
 fig.show()
 
 # %% [markdown]
-# # Section 2: Revenue concentration
+# # Section: Revenue concentration
 
 # %%
 n = len(summary_df)
@@ -419,7 +419,7 @@ x_prop = np.concatenate([[0], np.arange(1, n + 1) / n])
 x_count = np.concatenate([[0], np.arange(1, n + 1)])
 
 # %% [markdown]
-# ## Section 2.1 Cumulative Revenue Concentration Curve
+# ## Subsec: Cumulative Revenue Concentration Curve
 
 # %%
 fig, axes = plt.subplots(1, 2, figsize=(13, 6), constrained_layout=True)
@@ -444,7 +444,7 @@ fig.suptitle("Cumulative Revenue Concentration by Series")
 plt.show()
 
 # %% [markdown]
-# ## Section 2.2: Top-N Contribution Curves
+# ## Subsec: Top-N Contribution Curves
 
 # %%
 fig, axes = plt.subplots(1, 2, figsize=(13, 6), constrained_layout=True)
@@ -470,38 +470,40 @@ fig.suptitle("Cumulative Revenue by Top-N Series")
 plt.show()
 
 # %% [markdown]
-# ## Section 2.3: Top-N Revenue Bar Chart
+# ## Subsec: Top-N Revenue Bar Chart
 
 # %%
-# ── Section 2.3: Top-N Revenue Bar Chart ──────────────────────────────────────
-TOP_N = 20
+TOP_N = 30
 
-top_full = summary_df.sort_values("total_all_weeks", ascending=False).head(TOP_N)
-top_trail = summary_df.sort_values("total_short", ascending=False).head(TOP_N)
+top_full_total  = summary_df.sort_values("total_all_weeks", ascending=False).head(TOP_N)
+top_short_total = summary_df.sort_values("total_short",     ascending=False).head(TOP_N)
+top_full_mean   = summary_df.sort_values("mean_pos_full",   ascending=False).head(TOP_N)
+top_short_mean  = summary_df.sort_values("mean_pos_short",  ascending=False).head(TOP_N)
 
-#y_max = max(top_full["total_all_weeks"].max(), top_trail["total_short"].max())
-
-fig, axes = plt.subplots(2, 1, figsize=(10, 8), constrained_layout=True)
+fig, axes = plt.subplots(2, 2, figsize=(18, 8), constrained_layout=True)
+axes[1, 1].sharey(axes[0, 1])
 
 panels = [
-    (axes[0], top_full, "total_all_weeks", "Full History"),
-    (axes[1], top_trail, "total_short", f"Trailing {N_WEEKS} Weeks"),
+    (axes[0, 0], top_full_total,  "total_all_weeks", "Sum $, Full History",              "Total net revenue (y)", "silver", None),
+    (axes[1, 0], top_short_total, "total_short",     f"Sum $, Trailing {N_WEEKS} Weeks", "Total net revenue (y)", "silver", "//"),
+    (axes[0, 1], top_full_mean,   "mean_pos_full",   "Mean weekly $, Full History",              "Mean positive weekly revenue (y)", "tab:green", None),
+    (axes[1, 1], top_short_mean,  "mean_pos_short",  f"Mean weekly $, Trailing {N_WEEKS} Weeks", "Mean positive weekly revenue (y)", "tab:green", "//"),
 ]
 
-for ax, data, col, title in panels:
-    ax.bar(range(TOP_N), data[col], color="gray")
+for ax, data, col, title, ylabel, color, hatch in panels:
+    ax.bar(range(TOP_N), data[col], color=color, hatch=hatch)
     ax.set_xticks(range(TOP_N))
     ax.set_xticklabels(data["unique_id"].astype(str), rotation=90)
     ax.set_xlabel("Zone")
-    ax.set_ylabel("Total net revenue (y)")
+    ax.set_ylabel(ylabel)
     ax.set_title(title)
-    #ax.set_ylim(0, y_max * 1.05)
 
-fig.suptitle(f"Top-{TOP_N} Series by Net Revenue")
+fig.suptitle(f"Top {TOP_N} Ranked Series by Revenue")
 plt.show()
 
+
 # %% [markdown]
-# # Section 3: Month-to-date signal
+# # Section: Month-to-date signal
 
 # %%
 N_WEEKS_104 = 104
@@ -561,7 +563,7 @@ mtd_df.head()
 
 
 # %% [markdown]
-# ## Section 3.1: MTD actuals vs. final month scatterplot 
+# ## Subsec: MTD actuals vs. final month scatterplot 
 
 # %%
 def plot_mtd_scatter(data, color_col, colorbar_label, date_color=False):
@@ -627,7 +629,7 @@ plot_mtd_scatter(mtd_df, "fiscal_week_number", "Fiscal week number")
 
 
 # %% [markdown]
-# ## Section 3.2: MTD share boxplots
+# ## Subsec: MTD share boxplots
 
 # %%
 
@@ -678,7 +680,7 @@ plot_mtd_share_boxplots(
 
 
 # %% [markdown]
-# # Section 4: Negative revenue diagnostics (and revenue bucket setup)
+# # Section: Negative revenue diagnostics
 
 # %%
 neg_counts = df.groupby("unique_id", as_index=False).agg(
@@ -740,7 +742,6 @@ def plot_neg_scatter(y_col, y_label, title, scale_type="log"):
 
 
 # %%
-# 4.1
 plot_neg_scatter(
     "frac_negative_weeks",
     "Fraction negative weeks",
@@ -748,7 +749,7 @@ plot_neg_scatter(
 )
 
 # %%
-# 4.2
+
 plot_neg_scatter(
     "neg_materiality",
     "Negative materiality",
@@ -757,7 +758,7 @@ plot_neg_scatter(
 
 
 # %%
-# matplotlib implementation of 
+# matplotlib implementation
 def plot_neg_scatter_mpl(y_col, y_label, title, scale_type="log"):
     """Can use either scale=log or scale=linear"""
     fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
@@ -776,14 +777,14 @@ def plot_neg_scatter_mpl(y_col, y_label, title, scale_type="log"):
     plt.show()
 
 
-# 4.1
+
 plot_neg_scatter_mpl(
     "frac_negative_weeks",
     "Fraction negative weeks",
     "Mean Positive Weekly Revenue (trailing 52w) vs. Fraction Negative Weeks",
 )
 
-# 4.2
+
 plot_neg_scatter_mpl(
     "neg_materiality",
     "Negative materiality",
@@ -792,7 +793,7 @@ plot_neg_scatter_mpl(
 
 
 # %%
-# ── Section 4.3: Revenue rank vs. fraction negative weeks ─────────────────────
+# Revenue rank vs. fraction negative weeks
 hover_data_rank_neg = summary_df[["unique_id", "rank_positive_short", "frac_negative_weeks"]].values
 hovertemplate_rank_neg = (
     "<b>Zone: %{customdata[0]}</b><br>"
@@ -839,10 +840,10 @@ plt.show()
 
 
 # %% [markdown]
-# # Section 5: Intermittency metrics 
+# # Section: Intermittency metrics 
 
 # %% [markdown]
-# ## Section 5.0: Extend summary_df with intermittency metrics
+# ## Subsec: Extend summary_df with intermittency metrics
 
 # %%
 # ── Section 5.0: Extend summary_df with intermittency metrics ─────────────────
@@ -960,7 +961,7 @@ summary_df = (
 
 
 # %%
-# ── Shared: discrete color map for intermittency classes (used in 5.2 and 5.3) ─
+# Shared: discrete color map and marker types for intermittency classes
 CLASS_COLOR_MAP = {
     "Smooth":       "#1f77b4",
     "Erratic":      "#ff7f0e",
@@ -983,10 +984,10 @@ CLASS_MARKER_MAP_PLOTLY = {
 }
 
 # %% [markdown]
-# ## Section 5.1: ADI vs. CV²
+# ## Subsec: ADI vs. $CV^2$
 
 # %%
-# ── Section 5.1: ADI vs. CV² ──────────────────────────────────────────────────
+# ADI vs. CV2
 fig_adi_cv2 = make_subplots(
     rows=1, cols=2,
     subplot_titles=["Full History", "Trailing 104 Weeks"],
@@ -1073,8 +1074,6 @@ fig_adi_cv2.show()
 
 
 # %%
-# ── Section 5.1: ADI vs. CV² ──────────────────────────────────────────────────
-
 sub_full_adi_cv2 = summary_df.dropna(subset=["adi_full", "cv2_full", "mean_pos_short"])
 sub_long_adi_cv2  = summary_df.dropna(subset=["adi_long",  "cv2_long",  "mean_pos_short"])
 
@@ -1108,11 +1107,9 @@ plt.show()
 
 
 # %% [markdown]
-# ## Section 5.2: Mean Positive Revenue vs. Fraction Zero Weeks
+# ## Subsec: Mean Positive Revenue vs. Fraction Zero Weeks
 
 # %%
-# ── Section 5.2: Mean Positive Revenue vs. Fraction Zero Weeks ────────────────
-
 fig_frac_zero = make_subplots(
     rows=1, cols=2,
     subplot_titles=["Full History", "Trailing 104 Weeks"],
@@ -1154,8 +1151,6 @@ fig_frac_zero.show()
 
 
 # %%
-# ── Section 5.2: Mean Positive Revenue vs. Fraction Zero Weeks ────────────────
-
 fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
 
 subplot_configs_frac_zero = [
@@ -1185,9 +1180,10 @@ fig.suptitle("Mean Positive Revenue vs. Fraction Zero Weeks")
 plt.show()
 
 
-# %%
-# ── Section 5.3: Mean Positive Revenue vs. ADI ────────────────────────────────
+# %% [markdown]
+# ## Subsec: Mean Positive Revenue vs. ADI
 
+# %%
 fig_adi_vs_mean = make_subplots(
     rows=1, cols=2,
     subplot_titles=["Full History", "Trailing 104 Weeks"],
@@ -1229,8 +1225,6 @@ fig_adi_vs_mean.show()
 
 
 # %%
-# ── Section 5.3: Mean Positive Revenue vs. ADI ────────────────────────────────
-
 fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
 
 subplot_configs_adi = [
@@ -1261,10 +1255,10 @@ plt.show()
 
 
 # %% [markdown]
-# # Section 6: Scale-variance metrics
+# # Section: Scale-variance metrics
 
 # %% [markdown]
-# ## Section 6.0: Extend summary_df with scale-variance metrics
+# ## Subsec: Extend summary_df with scale-variance metrics
 
 # %%
 # std on all y (full history)
@@ -1313,7 +1307,7 @@ summary_df[summary_df["cv_std_full"].isna()][["unique_id", "n_positive_weeks_lon
 
 
 # %% [markdown]
-# ## Section 6.1: Mean Positive Revenue vs. Absolute Variability
+# ## Subsec: Mean Positive Revenue vs. Absolute Variability
 
 # %%
 fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
@@ -1388,7 +1382,7 @@ fig_abs_variability.show()
 
 
 # %% [markdown]
-# ## Section 6.2: Mean Positive Revenue vs. Relative Variability
+# ## Subsec: Mean Positive Revenue vs. Relative Variability
 
 # %%
 fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
@@ -1477,7 +1471,7 @@ fig_rel_variability.show()
 
 
 # %% [markdown]
-# # Section 7: Remaining month versus dispersion 
+# # Section: Remaining month versus dispersion 
 
 # %%
 mtd_df["y_remaining"] = mtd_df["y_final_month"] - mtd_df["y_mtd"]
@@ -1604,7 +1598,7 @@ plot_dispersion_ratios(
 
 
 # %% [markdown]
-# # Section 8: Time Series Length Histogram
+# # Section: Time Series Length Histogram
 
 # %%
 hist_df = summary_df.dropna(subset=["time_series_length_weeks"])
