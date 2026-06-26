@@ -196,18 +196,18 @@ pos_full_stats = (
 # ── Trailing N weeks aggregations ──────────────────────────────────────────────
 
 trailing_stats = trailing_df.groupby("unique_id", as_index=False).agg(
-    mean_net_N_weeks=("y", "mean"),
-    median_net_N_weeks=("y", "median"),
-    total_N_weeks=("y", "sum"),
-    total_positive_N_weeks=("y_pos", "sum"),
+    mean_net_short=("y", "mean"),
+    median_net_short=("y", "median"),
+    total_short=("y", "sum"),
+    total_positive_short=("y_pos", "sum"),
 )
 
 pos_trailing_stats = (
     trailing_df[trailing_df["y"] > 0]
     .groupby("unique_id", as_index=False)
     .agg(
-        mean_pos_N_weeks=("y", "mean"),
-        median_pos_N_weeks=("y", "median"),
+        mean_pos_short=("y", "mean"),
+        median_pos_short=("y", "median"),
     )
 )
 
@@ -241,8 +241,8 @@ summary_df["time_series_length_weeks"] = (
 col_to_rank = [
     ("total_all_weeks",          "rank_all_weeks"),
     ("total_positive_all_weeks", "rank_positive_all_weeks"),
-    ("total_N_weeks",            "rank_N_weeks"),
-    ("total_positive_N_weeks",   "rank_positive_N_weeks"),
+    ("total_short",            "rank_short"),
+    ("total_positive_short",   "rank_positive_short"),
 ]
 
 for col, rank_col in col_to_rank:
@@ -256,20 +256,20 @@ summary_df = summary_df[[
     "unique_id",
     "mean_net_all_weeks",      "median_net_all_weeks",
     "mean_pos_all_weeks",      "median_pos_all_weeks",
-    "mean_net_N_weeks",        "median_net_N_weeks",
-    "mean_pos_N_weeks",        "median_pos_N_weeks",
+    "mean_net_short",        "median_net_short",
+    "mean_pos_short",        "median_pos_short",
     "total_all_weeks",         "total_positive_all_weeks",
-    "total_N_weeks",           "total_positive_N_weeks",
+    "total_short",           "total_positive_short",
     "rank_all_weeks",          "rank_positive_all_weeks",
-    "rank_N_weeks",            "rank_positive_N_weeks",
+    "rank_short",            "rank_positive_short",
     "time_series_start_week",
     "time_series_length_weeks",
 ]]
 
 # %%
 # revenue buckets
-summary_df["revenue_bucket"] = pd.qcut(
-    summary_df["mean_pos_N_weeks"].rank(method="first"),
+summary_df["bucket"] = pd.qcut(
+    summary_df["mean_pos_short"].rank(method="first"),
     q=5,
     labels=BUCKETS,
 )
@@ -282,7 +282,7 @@ summary_df.head()
 summary_df
 
 # %% [markdown]
-# # Section 1: Mean vs. Median Positive Weekly Revenue
+# # Section: Mean vs. Median Positive Weekly Revenue
 #
 
 # %%
@@ -397,10 +397,10 @@ pos_full_cum = np.concatenate([
     pos_full_sorted["total_positive_all_weeks"].cumsum().values / pos_full_sorted["total_positive_all_weeks"].sum(),
 ])
 
-pos_trail_sorted = summary_df.sort_values("total_positive_N_weeks", ascending=False)
+pos_trail_sorted = summary_df.sort_values("total_positive_short", ascending=False)
 pos_trail_cum = np.concatenate([
     [0],
-    pos_trail_sorted["total_positive_N_weeks"].cumsum().values / pos_trail_sorted["total_positive_N_weeks"].sum(),
+    pos_trail_sorted["total_positive_short"].cumsum().values / pos_trail_sorted["total_positive_short"].sum(),
 ])
 
 net_full_sorted = summary_df.sort_values("total_all_weeks", ascending=False)
@@ -409,10 +409,10 @@ net_full_cum = np.concatenate([
     net_full_sorted["total_all_weeks"].cumsum().values / net_full_sorted["total_all_weeks"].sum(),
 ])
 
-net_trail_sorted = summary_df.sort_values("total_N_weeks", ascending=False)
+net_trail_sorted = summary_df.sort_values("total_short", ascending=False)
 net_trail_cum = np.concatenate([
     [0],
-    net_trail_sorted["total_N_weeks"].cumsum().values / net_trail_sorted["total_N_weeks"].sum(),
+    net_trail_sorted["total_short"].cumsum().values / net_trail_sorted["total_short"].sum(),
 ])
 
 x_prop = np.concatenate([[0], np.arange(1, n + 1) / n])
@@ -477,15 +477,15 @@ plt.show()
 TOP_N = 20
 
 top_full = summary_df.sort_values("total_all_weeks", ascending=False).head(TOP_N)
-top_trail = summary_df.sort_values("total_N_weeks", ascending=False).head(TOP_N)
+top_trail = summary_df.sort_values("total_short", ascending=False).head(TOP_N)
 
-#y_max = max(top_full["total_all_weeks"].max(), top_trail["total_N_weeks"].max())
+#y_max = max(top_full["total_all_weeks"].max(), top_trail["total_short"].max())
 
 fig, axes = plt.subplots(2, 1, figsize=(10, 8), constrained_layout=True)
 
 panels = [
     (axes[0], top_full, "total_all_weeks", "Full History"),
-    (axes[1], top_trail, "total_N_weeks", f"Trailing {N_WEEKS} Weeks"),
+    (axes[1], top_trail, "total_short", f"Trailing {N_WEEKS} Weeks"),
 ]
 
 for ax, data, col, title in panels:
@@ -506,18 +506,18 @@ plt.show()
 # %%
 N_WEEKS_104 = 104
 
-# Sort and compute mtd_y
+# Sort and compute y_mtd
 mtd_df = df.sort_values(["unique_id", "fiscal_year_month", "fiscal_week_of_month"]).copy()
-mtd_df["mtd_y"] = mtd_df.groupby(["unique_id", "fiscal_year_month"])["y"].cumsum()
+mtd_df["y_mtd"] = mtd_df.groupby(["unique_id", "fiscal_year_month"])["y"].cumsum()
 mtd_df = mtd_df.rename(columns={"fiscal_week_of_month": "origin_week"})
 mtd_df.head()
 
 # %%
-# final_month_y: total y per (unique_id, fiscal_year_month), merged back
+# y_final_month: total y per (unique_id, fiscal_year_month), merged back
 final_month = (
     df.groupby(["unique_id", "fiscal_year_month"], as_index=False)["y"]
     .sum()
-    .rename(columns={"y": "final_month_y"})
+    .rename(columns={"y": "y_final_month"})
 )
 mtd_df = mtd_df.merge(final_month, on=["unique_id", "fiscal_year_month"], how="left")
 mtd_df.head()
@@ -531,17 +531,17 @@ mtd_df
 
 # %%
 # mtd_share
-mtd_df["mtd_share"] = mtd_df["mtd_y"] / mtd_df["final_month_y"]
+mtd_df["mtd_share"] = mtd_df["y_mtd"] / mtd_df["y_final_month"]
 
-# Join mean_pos_N_weeks and revenue_bucket from summary_df
+# Join mean_pos_short and bucket from summary_df
 mtd_df = mtd_df.merge(
-    summary_df[["unique_id", "mean_pos_N_weeks", "revenue_bucket"]],
+    summary_df[["unique_id", "mean_pos_short", "bucket"]],
     on="unique_id",
     how="left",
 )
 
 # core_threshold: per-series, computed after join
-mtd_df["core_threshold"] = np.maximum(1000, 0.25 * mtd_df["mean_pos_N_weeks"])
+mtd_df["core_threshold"] = np.maximum(1000, 0.25 * mtd_df["mean_pos_short"])
 
 # trailing_104_months: set of fiscal_year_month values within the trailing 2-year window
 trailing_104_months = set(
@@ -553,7 +553,7 @@ trailing_104_months = set(
 #Two things worth checking after you run it:
 
 #mtd_df.shape — you expect len(df) rows (one per original week row, now with cumsum added)
-#Spot-check a single series: mtd_df[mtd_df["unique_id"] == 4][["fiscal_year_month", "origin_week", "y", "mtd_y", "final_month_y", "weeks_in_month"]].head(10) — mtd_y should increase within each month and equal final_month_y on the last week of the month.
+#Spot-check a single series: mtd_df[mtd_df["unique_id"] == 4][["fiscal_year_month", "origin_week", "y", "y_mtd", "y_final_month", "weeks_in_month"]].head(10) — y_mtd should increase within each month and equal y_final_month on the last week of the month.
 
 
 # %%
@@ -586,14 +586,14 @@ def plot_mtd_scatter(data, color_col, colorbar_label, date_color=False):
             mask = (
                 (data["weeks_in_month"] == n_weeks)
                 & (data["origin_week"] == origin)
-                & (data["mtd_y"] > 0)
-                & (data["final_month_y"] > 0)
+                & (data["y_mtd"] > 0)
+                & (data["y_final_month"] > 0)
             )
             sub = data[mask]
             c = mdates.date2num(sub[color_col]) if date_color else sub[color_col]
             ax.scatter(
-                sub["mtd_y"],
-                sub["final_month_y"],
+                sub["y_mtd"],
+                sub["y_final_month"],
                 c=c,
                 cmap=cmap,
                 norm=norm,
@@ -642,8 +642,8 @@ def plot_mtd_share_boxplots(data, title):
             ax = axes[row_idx, col_idx]
             mask = (
                 (data["weeks_in_month"] == n_weeks)
-                & (data["revenue_bucket"] == bucket)
-                & (data["final_month_y"] >= data["core_threshold"])
+                & (data["bucket"] == bucket)
+                & (data["y_final_month"] >= data["core_threshold"])
             )
             sub = data[mask]
             box_data = [
@@ -707,15 +707,15 @@ summary_df["neg_materiality"] = summary_df["sum_negative_y"].abs() / summary_df[
 # Spot-check: series with no negatives should have sum_negative_y == 0 and neg_materiality == 0
 assert (summary_df["sum_negative_y"] <= 0).all(), "sum_negative_y should be ≤ 0"
 assert (summary_df["neg_materiality"] >= 0).all()
-assert summary_df["revenue_bucket"].value_counts().shape[0] == 5  # all 5 buckets present
-summary_df[["unique_id", "n_weeks_total", "n_negative_weeks", "frac_negative_weeks", "sum_negative_y", "neg_materiality", "revenue_bucket"]].head(10)
+assert summary_df["bucket"].value_counts().shape[0] == 5  # all 5 buckets present
+summary_df[["unique_id", "n_weeks_total", "n_negative_weeks", "frac_negative_weeks", "sum_negative_y", "neg_materiality", "bucket"]].head(10)
 
 
 # %%
 # Plotly approach to negative quantity scatter plot
 def plot_neg_scatter(y_col, y_label, title, scale_type="log"):
     """Can use either scale=log or scale=linear"""
-    hover_data = summary_df[["unique_id", "mean_pos_N_weeks", y_col]].values
+    hover_data = summary_df[["unique_id", "mean_pos_short", y_col]].values
     hovertemplate = (
         "<b>Zone: %{customdata[0]}</b><br>"
         "Mean positive weekly revenue (52w): %{customdata[1]:.1f}<br>"
@@ -724,7 +724,7 @@ def plot_neg_scatter(y_col, y_label, title, scale_type="log"):
     )
     fig = go.Figure(
         go.Scatter(
-            x=summary_df["mean_pos_N_weeks"],
+            x=summary_df["mean_pos_short"],
             y=summary_df[y_col],
             mode="markers",
             marker=dict(symbol="circle-open", color="black", opacity=0.6),
@@ -762,7 +762,7 @@ def plot_neg_scatter_mpl(y_col, y_label, title, scale_type="log"):
     """Can use either scale=log or scale=linear"""
     fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
     ax.scatter(
-        summary_df["mean_pos_N_weeks"],
+        summary_df["mean_pos_short"],
         summary_df[y_col],
         facecolors="none",
         edgecolors="black",
@@ -793,8 +793,8 @@ plot_neg_scatter_mpl(
 
 # %%
 # ── Section 4.3: Revenue rank vs. fraction negative weeks ─────────────────────
-hover_data_43 = summary_df[["unique_id", "rank_positive_N_weeks", "frac_negative_weeks"]].values
-hovertemplate_43 = (
+hover_data_rank_neg = summary_df[["unique_id", "rank_positive_short", "frac_negative_weeks"]].values
+hovertemplate_rank_neg = (
     "<b>Zone: %{customdata[0]}</b><br>"
     "Revenue rank (trailing 52w): %{customdata[1]:.0f}<br>"
     "Fraction negative weeks: %{customdata[2]:.4f}"
@@ -803,12 +803,12 @@ hovertemplate_43 = (
 
 fig = go.Figure(
     go.Scatter(
-        x=summary_df["rank_positive_N_weeks"],
+        x=summary_df["rank_positive_short"],
         y=summary_df["frac_negative_weeks"],
         mode="markers",
         marker=dict(symbol="circle-open", color="black", opacity=0.6),
-        customdata=hover_data_43,
-        hovertemplate=hovertemplate_43,
+        customdata=hover_data_rank_neg,
+        hovertemplate=hovertemplate_rank_neg,
         showlegend=False,
     )
 )
@@ -825,7 +825,7 @@ fig.show()
 # %%
 fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
 ax.scatter(
-    summary_df["rank_positive_N_weeks"],
+    summary_df["rank_positive_short"],
     summary_df["frac_negative_weeks"],
     facecolors="none",
     edgecolors="black",
@@ -896,49 +896,49 @@ full_metrics["intermittency_class_full"] = (
 
 # %%
 # Trailing-104w subset
-df_104 = df[df["fiscal_year_month"].isin(trailing_104_months)].copy()
-_df_104 = df_104.assign(_is_zero=df_104["y"] == 0, _is_positive=df_104["y"] > 0)
+df_long = df[df["fiscal_year_month"].isin(trailing_104_months)].copy()
+_df_long = df_long.assign(_is_zero=df_long["y"] == 0, _is_positive=df_long["y"] > 0)
 
 
-counts_104 = _df_104.groupby("unique_id", as_index=False).agg(
-    n_weeks_104=("y", "count"),
-    n_zero_weeks_104=("_is_zero", "sum"),
-    n_positive_weeks_104=("_is_positive", "sum"),
+counts_long = _df_long.groupby("unique_id", as_index=False).agg(
+    n_weeks_long=("y", "count"),
+    n_zero_weeks_long=("_is_zero", "sum"),
+    n_positive_weeks_long=("_is_positive", "sum"),
 )
 
-pos_stats_104 = (
-    df_104[df_104["y"] > 0]
+pos_stats_long = (
+    df_long[df_long["y"] > 0]
     .groupby("unique_id", as_index=False)
     .agg(
-        mean_pos_104=("y", "mean"),
-        std_pos_104=("y", "std"),
+        mean_pos_long=("y", "mean"),
+        std_pos_long=("y", "std"),
     )
 )
 
-metrics_104 = counts_104.merge(pos_stats_104, on="unique_id", how="left")
-metrics_104["frac_zero_weeks_104"] = (
-    metrics_104["n_zero_weeks_104"] / metrics_104["n_weeks_104"]
+metrics_long = counts_long.merge(pos_stats_long, on="unique_id", how="left")
+metrics_long["frac_zero_weeks_long"] = (
+    metrics_long["n_zero_weeks_long"] / metrics_long["n_weeks_long"]
 )
-metrics_104["cv2_104"] = (
-    (metrics_104["std_pos_104"] / metrics_104["mean_pos_104"]) ** 2
+metrics_long["cv2_long"] = (
+    (metrics_long["std_pos_long"] / metrics_long["mean_pos_long"]) ** 2
 )
-metrics_104["adi_104"] = (
-    metrics_104["n_weeks_104"]
-    / metrics_104["n_positive_weeks_104"].replace(0, np.nan)
+metrics_long["adi_long"] = (
+    metrics_long["n_weeks_long"]
+    / metrics_long["n_positive_weeks_long"].replace(0, np.nan)
 )
 
-conditions_104 = [
-    (metrics_104["adi_104"] <  ADI_THRESHOLD) & (metrics_104["cv2_104"] <  CV2_THRESHOLD),
-    (metrics_104["adi_104"] <  ADI_THRESHOLD) & (metrics_104["cv2_104"] >= CV2_THRESHOLD),
-    (metrics_104["adi_104"] >= ADI_THRESHOLD) & (metrics_104["cv2_104"] <  CV2_THRESHOLD),
-    (metrics_104["adi_104"] >= ADI_THRESHOLD) & (metrics_104["cv2_104"] >= CV2_THRESHOLD),
+conditions_long = [
+    (metrics_long["adi_long"] <  ADI_THRESHOLD) & (metrics_long["cv2_long"] <  CV2_THRESHOLD),
+    (metrics_long["adi_long"] <  ADI_THRESHOLD) & (metrics_long["cv2_long"] >= CV2_THRESHOLD),
+    (metrics_long["adi_long"] >= ADI_THRESHOLD) & (metrics_long["cv2_long"] <  CV2_THRESHOLD),
+    (metrics_long["adi_long"] >= ADI_THRESHOLD) & (metrics_long["cv2_long"] >= CV2_THRESHOLD),
 ]
-metrics_104["intermittency_class_104"] = np.select(
-    conditions_104, CLASS_ORDER, default=None
+metrics_long["intermittency_class_long"] = np.select(
+    conditions_long, CLASS_ORDER, default=None
 )
 
-metrics_104["intermittency_class_104"] = (
-    metrics_104["intermittency_class_104"].replace({None: np.nan})
+metrics_long["intermittency_class_long"] = (
+    metrics_long["intermittency_class_long"].replace({None: np.nan})
 )
 
 # %%
@@ -947,15 +947,15 @@ full_cols = [
     "unique_id", "n_zero_weeks_full", "n_positive_weeks_full", "frac_zero_weeks_full",
     "mean_pos_full", "std_pos_full", "cv2_full", "adi_full", "intermittency_class_full",
 ]
-cols_104 = [
-    "unique_id", "n_weeks_104", "n_zero_weeks_104", "n_positive_weeks_104",
-    "frac_zero_weeks_104", "mean_pos_104", "std_pos_104", "cv2_104", "adi_104",
-    "intermittency_class_104",
+cols_long = [
+    "unique_id", "n_weeks_long", "n_zero_weeks_long", "n_positive_weeks_long",
+    "frac_zero_weeks_long", "mean_pos_long", "std_pos_long", "cv2_long", "adi_long",
+    "intermittency_class_long",
 ]
 summary_df = (
     summary_df
     .merge(full_metrics[full_cols], on="unique_id", how="left")
-    .merge(metrics_104[cols_104], on="unique_id", how="left")
+    .merge(metrics_long[cols_long], on="unique_id", how="left")
 )
 
 
@@ -987,23 +987,23 @@ CLASS_MARKER_MAP_PLOTLY = {
 
 # %%
 # ── Section 5.1: ADI vs. CV² ──────────────────────────────────────────────────
-fig_51 = make_subplots(
+fig_adi_cv2 = make_subplots(
     rows=1, cols=2,
     subplot_titles=["Full History", "Trailing 104 Weeks"],
 )
 
-sub_full_51 = summary_df.dropna(subset=["adi_full", "cv2_full", "mean_pos_N_weeks"])
-hover_51_full = sub_full_51[
-    ["unique_id", "adi_full", "cv2_full", "intermittency_class_full", "mean_pos_N_weeks"]
+sub_full_adi_cv2 = summary_df.dropna(subset=["adi_full", "cv2_full", "mean_pos_short"])
+hover_full_adi_cv2 = sub_full_adi_cv2[
+    ["unique_id", "adi_full", "cv2_full", "intermittency_class_full", "mean_pos_short"]
 ].values
 
-fig_51.add_trace(
+fig_adi_cv2.add_trace(
     go.Scatter(
-        x=sub_full_51["adi_full"],
-        y=sub_full_51["cv2_full"],
+        x=sub_full_adi_cv2["adi_full"],
+        y=sub_full_adi_cv2["cv2_full"],
         mode="markers",
-        marker=dict(color=sub_full_51["mean_pos_N_weeks"], coloraxis="coloraxis", size=6),
-        customdata=hover_51_full,
+        marker=dict(color=sub_full_adi_cv2["mean_pos_short"], coloraxis="coloraxis", size=6),
+        customdata=hover_full_adi_cv2,
         hovertemplate=(
             "<b>%{customdata[0]}</b><br>"
             "ADI: %{customdata[1]:.2f}<br>"
@@ -1016,18 +1016,18 @@ fig_51.add_trace(
     row=1, col=1,
 )
 
-sub_104_51 = summary_df.dropna(subset=["adi_104", "cv2_104", "mean_pos_N_weeks"])
-hover_51_104 = sub_104_51[
-    ["unique_id", "adi_104", "cv2_104", "intermittency_class_104", "mean_pos_N_weeks"]
+sub_long_adi_cv2 = summary_df.dropna(subset=["adi_long", "cv2_long", "mean_pos_short"])
+hover_long_adi_cv2 = sub_long_adi_cv2[
+    ["unique_id", "adi_long", "cv2_long", "intermittency_class_long", "mean_pos_short"]
 ].values
 
-fig_51.add_trace(
+fig_adi_cv2.add_trace(
     go.Scatter(
-        x=sub_104_51["adi_104"],
-        y=sub_104_51["cv2_104"],
+        x=sub_long_adi_cv2["adi_long"],
+        y=sub_long_adi_cv2["cv2_long"],
         mode="markers",
-        marker=dict(color=sub_104_51["mean_pos_N_weeks"], coloraxis="coloraxis", size=6),
-        customdata=hover_51_104,
+        marker=dict(color=sub_long_adi_cv2["mean_pos_short"], coloraxis="coloraxis", size=6),
+        customdata=hover_long_adi_cv2,
         hovertemplate=(
             "<b>%{customdata[0]}</b><br>"
             "ADI: %{customdata[1]:.2f}<br>"
@@ -1041,20 +1041,20 @@ fig_51.add_trace(
 )
 
 for xref, yref in [("x", "y"), ("x2", "y2")]:
-    fig_51.add_shape(
+    fig_adi_cv2.add_shape(
         type="line",
         x0=ADI_THRESHOLD, x1=ADI_THRESHOLD, y0=0, y1=1,
         xref=xref, yref=f"{yref} domain",
         line=dict(dash="dash", color="gray", width=1),
     )
-    fig_51.add_shape(
+    fig_adi_cv2.add_shape(
         type="line",
         x0=0, x1=1, y0=CV2_THRESHOLD, y1=CV2_THRESHOLD,
         xref=f"{xref} domain", yref=yref,
         line=dict(dash="dash", color="gray", width=1),
     )
 
-fig_51.update_layout(
+fig_adi_cv2.update_layout(
     title="ADI vs. CV² — Intermittency Classification",
     coloraxis=dict(
         colorscale="Viridis",
@@ -1067,31 +1067,31 @@ fig_51.update_layout(
     ),
     height=500,
 )
-fig_51.update_xaxes(title_text="ADI (average inter-demand interval)")
-fig_51.update_yaxes(title_text="CV²")
-fig_51.show()
+fig_adi_cv2.update_xaxes(title_text="ADI (average inter-demand interval)")
+fig_adi_cv2.update_yaxes(title_text="CV²")
+fig_adi_cv2.show()
 
 
 # %%
 # ── Section 5.1: ADI vs. CV² ──────────────────────────────────────────────────
 
-sub_full_51 = summary_df.dropna(subset=["adi_full", "cv2_full", "mean_pos_N_weeks"])
-sub_104_51  = summary_df.dropna(subset=["adi_104",  "cv2_104",  "mean_pos_N_weeks"])
+sub_full_adi_cv2 = summary_df.dropna(subset=["adi_full", "cv2_full", "mean_pos_short"])
+sub_long_adi_cv2  = summary_df.dropna(subset=["adi_long",  "cv2_long",  "mean_pos_short"])
 
-all_color_vals = pd.concat([sub_full_51["mean_pos_N_weeks"], sub_104_51["mean_pos_N_weeks"]])
+all_color_vals = pd.concat([sub_full_adi_cv2["mean_pos_short"], sub_long_adi_cv2["mean_pos_short"]])
 norm = plt.Normalize(vmin=all_color_vals.min(), vmax=all_color_vals.max())
 
 fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
 
-subplot_data_51 = [
-    (axes[0], sub_full_51, "adi_full", "cv2_full", "Full History"),
-    (axes[1], sub_104_51,  "adi_104",  "cv2_104",  "Trailing 104 Weeks"),
+subplot_data_adi_cv2 = [
+    (axes[0], sub_full_adi_cv2, "adi_full", "cv2_full", "Full History"),
+    (axes[1], sub_long_adi_cv2,  "adi_long",  "cv2_long",  "Trailing 104 Weeks"),
 ]
 
-for ax, sub, adi_col, cv2_col, title in subplot_data_51:
+for ax, sub, adi_col, cv2_col, title in subplot_data_adi_cv2:
     sc = ax.scatter(
         sub[adi_col], sub[cv2_col],
-        c=sub["mean_pos_N_weeks"],
+        c=sub["mean_pos_short"],
         cmap="viridis", norm=norm,
         s=30, alpha=0.8, edgecolors="none",
     )
@@ -1113,23 +1113,23 @@ plt.show()
 # %%
 # ── Section 5.2: Mean Positive Revenue vs. Fraction Zero Weeks ────────────────
 
-fig_52 = make_subplots(
+fig_frac_zero = make_subplots(
     rows=1, cols=2,
     subplot_titles=["Full History", "Trailing 104 Weeks"],
 )
 
-subplot_configs_52 = [
+subplot_configs_frac_zero = [
     (1, "frac_zero_weeks_full", "intermittency_class_full"),
-    (2, "frac_zero_weeks_104", "intermittency_class_104"),
+    (2, "frac_zero_weeks_long", "intermittency_class_long"),
 ]
 
-for col, y_col, class_col in subplot_configs_52:
+for col, y_col, class_col in subplot_configs_frac_zero:
     for cls in CLASS_ORDER:
-        sub = summary_df[summary_df[class_col] == cls].dropna(subset=["mean_pos_N_weeks", y_col])
-        hover_data = sub[["unique_id", "mean_pos_N_weeks", y_col, class_col]].values
-        fig_52.add_trace(
+        sub = summary_df[summary_df[class_col] == cls].dropna(subset=["mean_pos_short", y_col])
+        hover_data = sub[["unique_id", "mean_pos_short", y_col, class_col]].values
+        fig_frac_zero.add_trace(
             go.Scatter(
-                x=sub["mean_pos_N_weeks"],
+                x=sub["mean_pos_short"],
                 y=sub[y_col],
                 mode="markers",
                 name=cls,
@@ -1147,10 +1147,10 @@ for col, y_col, class_col in subplot_configs_52:
             row=1, col=col,
         )
 
-fig_52.update_xaxes(type="log", title_text="Mean positive weekly revenue (trailing 52w, log scale)")
-fig_52.update_yaxes(title_text="Fraction zero-revenue weeks")
-fig_52.update_layout(title="Mean Positive Revenue vs. Fraction Zero Weeks", height=500)
-fig_52.show()
+fig_frac_zero.update_xaxes(type="log", title_text="Mean positive weekly revenue (trailing 52w, log scale)")
+fig_frac_zero.update_yaxes(title_text="Fraction zero-revenue weeks")
+fig_frac_zero.update_layout(title="Mean Positive Revenue vs. Fraction Zero Weeks", height=500)
+fig_frac_zero.show()
 
 
 # %%
@@ -1158,16 +1158,16 @@ fig_52.show()
 
 fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
 
-subplot_configs_52 = [
+subplot_configs_frac_zero = [
     (axes[0], "frac_zero_weeks_full", "intermittency_class_full", "Full History"),
-    (axes[1], "frac_zero_weeks_104",  "intermittency_class_104",  "Trailing 104 Weeks"),
+    (axes[1], "frac_zero_weeks_long",  "intermittency_class_long",  "Trailing 104 Weeks"),
 ]
 
-for ax, y_col, class_col, title in subplot_configs_52:
+for ax, y_col, class_col, title in subplot_configs_frac_zero:
     for cls in CLASS_ORDER:
-        sub = summary_df[summary_df[class_col] == cls].dropna(subset=["mean_pos_N_weeks", y_col])
+        sub = summary_df[summary_df[class_col] == cls].dropna(subset=["mean_pos_short", y_col])
         ax.scatter(
-            sub["mean_pos_N_weeks"], sub[y_col],
+            sub["mean_pos_short"], sub[y_col],
             color=CLASS_COLOR_MAP[cls],
             marker=CLASS_MARKER_MAP_MATPLOTLIB[cls],
             label=cls,
@@ -1188,23 +1188,23 @@ plt.show()
 # %%
 # ── Section 5.3: Mean Positive Revenue vs. ADI ────────────────────────────────
 
-fig_53 = make_subplots(
+fig_adi_vs_mean = make_subplots(
     rows=1, cols=2,
     subplot_titles=["Full History", "Trailing 104 Weeks"],
 )
 
-subplot_configs_53 = [
+subplot_configs_adi = [
     (1, "adi_full", "intermittency_class_full"),
-    (2, "adi_104",  "intermittency_class_104"),
+    (2, "adi_long",  "intermittency_class_long"),
 ]
 
-for col, y_col, class_col in subplot_configs_53:
+for col, y_col, class_col in subplot_configs_adi:
     for cls in CLASS_ORDER:
-        sub = summary_df[summary_df[class_col] == cls].dropna(subset=["mean_pos_N_weeks", y_col])
-        hover_data = sub[["unique_id", "mean_pos_N_weeks", y_col, class_col]].values
-        fig_53.add_trace(
+        sub = summary_df[summary_df[class_col] == cls].dropna(subset=["mean_pos_short", y_col])
+        hover_data = sub[["unique_id", "mean_pos_short", y_col, class_col]].values
+        fig_adi_vs_mean.add_trace(
             go.Scatter(
-                x=sub["mean_pos_N_weeks"],
+                x=sub["mean_pos_short"],
                 y=sub[y_col],
                 mode="markers",
                 name=cls,
@@ -1222,10 +1222,10 @@ for col, y_col, class_col in subplot_configs_53:
             row=1, col=col,
         )
 
-fig_53.update_xaxes(type="log", title_text="Mean positive weekly revenue (trailing 52w, log scale)")
-fig_53.update_yaxes(title_text="ADI")
-fig_53.update_layout(title="Mean Positive Revenue vs. ADI", height=500)
-fig_53.show()
+fig_adi_vs_mean.update_xaxes(type="log", title_text="Mean positive weekly revenue (trailing 52w, log scale)")
+fig_adi_vs_mean.update_yaxes(title_text="ADI")
+fig_adi_vs_mean.update_layout(title="Mean Positive Revenue vs. ADI", height=500)
+fig_adi_vs_mean.show()
 
 
 # %%
@@ -1233,16 +1233,16 @@ fig_53.show()
 
 fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
 
-subplot_configs_53 = [
+subplot_configs_adi = [
     (axes[0], "adi_full", "intermittency_class_full", "Full History"),
-    (axes[1], "adi_104",  "intermittency_class_104",  "Trailing 104 Weeks"),
+    (axes[1], "adi_long",  "intermittency_class_long",  "Trailing 104 Weeks"),
 ]
 
-for ax, y_col, class_col, title in subplot_configs_53:
+for ax, y_col, class_col, title in subplot_configs_adi:
     for cls in CLASS_ORDER:
-        sub = summary_df[summary_df[class_col] == cls].dropna(subset=["mean_pos_N_weeks", y_col])
+        sub = summary_df[summary_df[class_col] == cls].dropna(subset=["mean_pos_short", y_col])
         ax.scatter(
-            sub["mean_pos_N_weeks"], sub[y_col],
+            sub["mean_pos_short"], sub[y_col],
             color=CLASS_COLOR_MAP[cls],
             marker=CLASS_MARKER_MAP_MATPLOTLIB[cls],
             label=cls,
@@ -1301,7 +1301,7 @@ summary_df = (
 )
 
 # median_pos_full is NaN (not 0) for series with no positive weeks — division propagates NaN naturally
-summary_df["cv_std_full"] = summary_df["std_y_full"] / summary_df["mean_pos_N_weeks"]
+summary_df["cv_std_full"] = summary_df["std_y_full"] / summary_df["mean_pos_short"]
 summary_df["cv_iqr_full"] = summary_df["iqr_y_full"] / summary_df["median_pos_full"]
 
 
@@ -1309,7 +1309,7 @@ summary_df["cv_iqr_full"] = summary_df["iqr_y_full"] / summary_df["median_pos_fu
 summary_df[["unique_id", "std_y_full", "iqr_y_full", "mad_y_full", "median_pos_full", "cv_std_full", "cv_iqr_full"]].describe()
 
 # %%
-summary_df[summary_df["cv_std_full"].isna()][["unique_id", "n_positive_weeks_104", "intermittency_class_104"]]
+summary_df[summary_df["cv_std_full"].isna()][["unique_id", "n_positive_weeks_long", "intermittency_class_long"]]
 
 
 # %% [markdown]
@@ -1318,16 +1318,16 @@ summary_df[summary_df["cv_std_full"].isna()][["unique_id", "n_positive_weeks_104
 # %%
 fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
 
-subplot_configs_61 = [
+subplot_configs_abs_var = [
     (axes[0], "iqr_y_full", "IQR of weekly revenue"),
     (axes[1], "std_y_full", "Std of weekly revenue"),
 ]
 
-for ax, y_col, title in subplot_configs_61:
+for ax, y_col, title in subplot_configs_abs_var:
     for cls in CLASS_ORDER:
-        sub = summary_df[summary_df["intermittency_class_full"] == cls].dropna(subset=["mean_pos_N_weeks", y_col])
+        sub = summary_df[summary_df["intermittency_class_full"] == cls].dropna(subset=["mean_pos_short", y_col])
         ax.scatter(
-            sub["mean_pos_N_weeks"], sub[y_col],
+            sub["mean_pos_short"], sub[y_col],
             color=CLASS_COLOR_MAP[cls],
             marker=CLASS_MARKER_MAP_MATPLOTLIB[cls],
             label=cls,
@@ -1347,23 +1347,23 @@ plt.show()
 
 
 # %%
-fig_61 = make_subplots(
+fig_abs_variability = make_subplots(
     rows=1, cols=2,
     subplot_titles=["IQR of weekly revenue", "Std of weekly revenue"],
 )
 
-subplot_configs_61 = [
+subplot_configs_abs_var = [
     (1, "iqr_y_full"),
     (2, "std_y_full"),
 ]
 
-for col, y_col in subplot_configs_61:
+for col, y_col in subplot_configs_abs_var:
     for cls in CLASS_ORDER:
-        sub = summary_df[summary_df["intermittency_class_full"] == cls].dropna(subset=["mean_pos_N_weeks", y_col])
-        hover_data = sub[["unique_id", "mean_pos_N_weeks", y_col, "intermittency_class_full"]].values
-        fig_61.add_trace(
+        sub = summary_df[summary_df["intermittency_class_full"] == cls].dropna(subset=["mean_pos_short", y_col])
+        hover_data = sub[["unique_id", "mean_pos_short", y_col, "intermittency_class_full"]].values
+        fig_abs_variability.add_trace(
             go.Scatter(
-                x=sub["mean_pos_N_weeks"],
+                x=sub["mean_pos_short"],
                 y=sub[y_col],
                 mode="markers",
                 name=cls,
@@ -1381,10 +1381,10 @@ for col, y_col in subplot_configs_61:
             row=1, col=col,
         )
 
-fig_61.update_xaxes(type="log", title_text="Mean positive weekly revenue (trailing 52w, log scale)")
-fig_61.update_yaxes(type="log", title_text="Absolute variability (log scale)")
-fig_61.update_layout(title="Mean Positive Revenue vs. Absolute Variability", height=500)
-fig_61.show()
+fig_abs_variability.update_xaxes(type="log", title_text="Mean positive weekly revenue (trailing 52w, log scale)")
+fig_abs_variability.update_yaxes(type="log", title_text="Absolute variability (log scale)")
+fig_abs_variability.update_layout(title="Mean Positive Revenue vs. Absolute Variability", height=500)
+fig_abs_variability.show()
 
 
 # %% [markdown]
@@ -1396,16 +1396,16 @@ fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
 cv_std_p99 = summary_df["cv_std_full"].quantile(0.99)
 cv_iqr_p99 = summary_df["cv_iqr_full"].quantile(0.99)
 
-subplot_configs_62 = [
+subplot_configs_rel_var = [
     (axes[0], "cv_std_full", "CV (std / mean positive, trailing 52w)",          cv_std_p99),
     (axes[1], "cv_iqr_full", "Robust CV (IQR / median positive, full history)", cv_iqr_p99),
 ]
 
-for ax, y_col, title, p99 in subplot_configs_62:
+for ax, y_col, title, p99 in subplot_configs_rel_var:
     for cls in CLASS_ORDER:
-        sub = summary_df[summary_df["intermittency_class_full"] == cls].dropna(subset=["mean_pos_N_weeks", y_col])
+        sub = summary_df[summary_df["intermittency_class_full"] == cls].dropna(subset=["mean_pos_short", y_col])
         ax.scatter(
-            sub["mean_pos_N_weeks"], sub[y_col],
+            sub["mean_pos_short"], sub[y_col],
             color=CLASS_COLOR_MAP[cls],
             marker=CLASS_MARKER_MAP_MATPLOTLIB[cls],
             label=cls,
@@ -1425,7 +1425,7 @@ plt.show()
 
 
 # %%
-fig_62 = make_subplots(
+fig_rel_variability = make_subplots(
     rows=1, cols=2,
     subplot_titles=[
         "CV (std / mean positive, trailing 52w)",
@@ -1433,18 +1433,18 @@ fig_62 = make_subplots(
     ],
 )
 
-subplot_configs_62 = [
+subplot_configs_rel_var = [
     (1, "cv_std_full"),
     (2, "cv_iqr_full"),
 ]
 
-for col, y_col in subplot_configs_62:
+for col, y_col in subplot_configs_rel_var:
     for cls in CLASS_ORDER:
-        sub = summary_df[summary_df["intermittency_class_full"] == cls].dropna(subset=["mean_pos_N_weeks", y_col])
-        hover_data = sub[["unique_id", "mean_pos_N_weeks", y_col, "intermittency_class_full"]].values
-        fig_62.add_trace(
+        sub = summary_df[summary_df["intermittency_class_full"] == cls].dropna(subset=["mean_pos_short", y_col])
+        hover_data = sub[["unique_id", "mean_pos_short", y_col, "intermittency_class_full"]].values
+        fig_rel_variability.add_trace(
             go.Scatter(
-                x=sub["mean_pos_N_weeks"],
+                x=sub["mean_pos_short"],
                 y=sub[y_col],
                 mode="markers",
                 name=cls,
@@ -1465,26 +1465,26 @@ for col, y_col in subplot_configs_62:
 cv_std_p99 = summary_df["cv_std_full"].quantile(0.99)
 cv_iqr_p99 = summary_df["cv_iqr_full"].quantile(0.99)
 
-fig_62.update_xaxes(type="log", title_text="Mean positive weekly revenue (trailing 52w, log scale)")
-fig_62.update_yaxes(title_text="Relative variability")
-fig_62.update_layout(
+fig_rel_variability.update_xaxes(type="log", title_text="Mean positive weekly revenue (trailing 52w, log scale)")
+fig_rel_variability.update_yaxes(title_text="Relative variability")
+fig_rel_variability.update_layout(
     title="Mean Positive Revenue vs. Relative Variability",
     height=500,
     yaxis=dict(range=[0, cv_std_p99]),
     yaxis2=dict(range=[0, cv_iqr_p99]),
 )
-fig_62.show()
+fig_rel_variability.show()
 
 
 # %% [markdown]
 # # Section 7: Remaining month versus dispersion 
 
 # %%
-mtd_df["y_remaining"] = mtd_df["final_month_y"] - mtd_df["mtd_y"]
-mtd_df_core = mtd_df[mtd_df["final_month_y"] >= mtd_df["core_threshold"]].copy()
+mtd_df["y_remaining"] = mtd_df["y_final_month"] - mtd_df["y_mtd"]
+mtd_df_core = mtd_df[mtd_df["y_final_month"] >= mtd_df["core_threshold"]].copy()
 
 # %%
-_grp = ["revenue_bucket", "weeks_in_month", "origin_week"]
+_grp = ["bucket", "weeks_in_month", "origin_week"]
 
 
 def compute_dispersion_ratios(data, grp_cols):
@@ -1492,10 +1492,10 @@ def compute_dispersion_ratios(data, grp_cols):
     rem_q25 = data.groupby(grp_cols, observed=True)["y_remaining"].quantile(0.25)
     rem_q90 = data.groupby(grp_cols, observed=True)["y_remaining"].quantile(0.90)
     rem_q10 = data.groupby(grp_cols, observed=True)["y_remaining"].quantile(0.10)
-    fin_q75 = data.groupby(grp_cols, observed=True)["final_month_y"].quantile(0.75)
-    fin_q25 = data.groupby(grp_cols, observed=True)["final_month_y"].quantile(0.25)
-    fin_q90 = data.groupby(grp_cols, observed=True)["final_month_y"].quantile(0.90)
-    fin_q10 = data.groupby(grp_cols, observed=True)["final_month_y"].quantile(0.10)
+    fin_q75 = data.groupby(grp_cols, observed=True)["y_final_month"].quantile(0.75)
+    fin_q25 = data.groupby(grp_cols, observed=True)["y_final_month"].quantile(0.25)
+    fin_q90 = data.groupby(grp_cols, observed=True)["y_final_month"].quantile(0.90)
+    fin_q10 = data.groupby(grp_cols, observed=True)["y_final_month"].quantile(0.10)
 
     quantile_df = pd.concat(
         [
@@ -1509,11 +1509,11 @@ def compute_dispersion_ratios(data, grp_cols):
 
     _data = data.assign(
         _rem_median=data.groupby(grp_cols, observed=True)["y_remaining"].transform("median"),
-        _fin_median=data.groupby(grp_cols, observed=True)["final_month_y"].transform("median"),
+        _fin_median=data.groupby(grp_cols, observed=True)["y_final_month"].transform("median"),
     )
     _data = _data.assign(
         _rem_abs_dev=(_data["y_remaining"] - _data["_rem_median"]).abs(),
-        _fin_abs_dev=(_data["final_month_y"] - _data["_fin_median"]).abs(),
+        _fin_abs_dev=(_data["y_final_month"] - _data["_fin_median"]).abs(),
     )
     mad_df = _data.groupby(grp_cols, as_index=False, observed=True).agg(
         mad_rem=("_rem_abs_dev", "median"),
@@ -1530,19 +1530,19 @@ def compute_dispersion_ratios(data, grp_cols):
 
 ratio_df = compute_dispersion_ratios(mtd_df_core, _grp)
 
-mtd_df_104_core = mtd_df[
+mtd_df_long_core = mtd_df[
     mtd_df["fiscal_year_month"].isin(trailing_104_months)
-    & (mtd_df["final_month_y"] >= mtd_df["core_threshold"])
+    & (mtd_df["y_final_month"] >= mtd_df["core_threshold"])
 ].copy()
 
-ratio_df_104 = compute_dispersion_ratios(mtd_df_104_core, _grp)
+ratio_df_long = compute_dispersion_ratios(mtd_df_long_core, _grp)
 
 
 # %%
 ratio_df.shape
 
 # %%
-ratio_df_104.shape
+ratio_df_long.shape
 
 # %%
 ratio_df["weeks_in_month"].value_counts()
@@ -1566,7 +1566,7 @@ def plot_dispersion_ratios(ratio_data, title):
             ax = axes[row_idx, col_idx]
             sub = ratio_data[
                 (ratio_data["weeks_in_month"] == n_weeks)
-                & (ratio_data["revenue_bucket"] == bucket)
+                & (ratio_data["bucket"] == bucket)
             ].sort_values("origin_week")
 
             for col_name, label, color in RATIO_LINE_SPECS:
@@ -1598,7 +1598,7 @@ plot_dispersion_ratios(
     "Target Dispersion Ratio by Formulation and Forecast Origin — Full History",
 )
 plot_dispersion_ratios(
-    ratio_df_104,
+    ratio_df_long,
     "Target Dispersion Ratio by Formulation and Forecast Origin — Trailing 104 Weeks",
 )
 
