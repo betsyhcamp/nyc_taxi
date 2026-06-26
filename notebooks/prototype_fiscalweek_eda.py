@@ -158,6 +158,7 @@ N_WEEKS = 52
 ADI_THRESHOLD = 1.32
 CV2_THRESHOLD = 0.49
 CLASS_ORDER = ["Smooth", "Erratic", "Intermittent", "Lumpy"]
+BUCKETS = ["Very low", "Low", "Middle", "High", "Very high"]
 
 # ── Global flags ──────────────────────────────────────────────────────────────────
 df['y_pos'] = df["y"].clip(lower=0)
@@ -270,7 +271,7 @@ summary_df = summary_df[[
 summary_df["revenue_bucket"] = pd.qcut(
     summary_df["mean_pos_N_weeks"].rank(method="first"),
     q=5,
-    labels=["Very low", "Low", "Middle", "High", "Very high"],
+    labels=BUCKETS,
 )
 
 
@@ -529,18 +530,6 @@ mtd_df['fiscal_week_number'] = mtd_df['fiscal_year_week'].astype(str).str[-2:].a
 mtd_df
 
 # %%
-# weeks_in_month: calendar property — max origin week per fiscal_year_month
-#weeks_in_month = (
-#    df.groupby("fiscal_year_month")["fiscal_week_of_month"]
-#    .max()
-#    .rename("weeks_in_month")
-#    .reset_index()
-#)
-
-
-# %%
-#mtd_df = mtd_df.merge(weeks_in_month, on="fiscal_year_month", how="left")
-
 # mtd_share
 mtd_df["mtd_share"] = mtd_df["mtd_y"] / mtd_df["final_month_y"]
 
@@ -1557,6 +1546,62 @@ ratio_df_104.shape
 
 # %%
 ratio_df["weeks_in_month"].value_counts()
+
+# %%
+WEEK_LENGTHS = [4, 5]
+ROW_LABELS = {4: "4-week months", 5: "5-week months"}
+RATIO_LINE_SPECS = [
+    ("iqr_ratio", "IQR ratio", "tab:blue"),
+    ("mad_ratio", "MAD ratio", "tab:orange"),
+    ("tail_spread_ratio", "Tail-spread ratio (P90–P10)", "tab:green"),
+]
+
+
+# %%
+def plot_dispersion_ratios(ratio_data, title):
+    fig, axes = plt.subplots(len(WEEK_LENGTHS), 5, figsize=(18, 7), constrained_layout=True)
+
+    for row_idx, n_weeks in enumerate(WEEK_LENGTHS):
+        for col_idx, bucket in enumerate(BUCKETS):
+            ax = axes[row_idx, col_idx]
+            sub = ratio_data[
+                (ratio_data["weeks_in_month"] == n_weeks)
+                & (ratio_data["revenue_bucket"] == bucket)
+            ].sort_values("origin_week")
+
+            for col_name, label, color in RATIO_LINE_SPECS:
+                ax.plot(sub["origin_week"], sub[col_name], marker="o", color=color, label=label)
+
+            ax.axhline(y=1.0, linestyle="--", color="black", linewidth=0.8, alpha=0.6)
+            ax.set_xticks(range(1, n_weeks + 1))
+
+            if row_idx == 0:
+                ax.set_title(bucket)
+            if col_idx == 0:
+                ax.set_ylabel(ROW_LABELS[n_weeks])
+
+    fig.supxlabel("Forecast origin (weeks of actuals)")
+    fig.supylabel("Remaining / Total dispersion ratio")
+    fig.suptitle(title)
+
+    legend_handles = [
+        plt.Line2D([0], [0], color=color, marker="o", label=label)
+        for col_name, label, color in RATIO_LINE_SPECS
+    ]
+    fig.legend(handles=legend_handles, loc="lower center", ncols=3, bbox_to_anchor=(0.5, -0.05))
+
+    plt.show()
+
+
+plot_dispersion_ratios(
+    ratio_df,
+    "Target Dispersion Ratio by Formulation and Forecast Origin — Full History",
+)
+plot_dispersion_ratios(
+    ratio_df_104,
+    "Target Dispersion Ratio by Formulation and Forecast Origin — Trailing 104 Weeks",
+)
+
 
 # %% [markdown]
 # # Section 8: Time Series Length Histogram
