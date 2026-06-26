@@ -170,6 +170,10 @@ trailing_df = df[df["fiscal_week_start_date"] >= cutoff_date]
 
 
 # %%
+df["weeks_in_month"] = df.groupby("fiscal_year_month")["fiscal_week_of_month"].transform("max")
+df = df[df["weeks_in_month"]>=4].reset_index(drop=True)
+
+# %%
 # ── Full history aggregations ──────────────────────────────────────────────────
 full_stats = df.groupby("unique_id", as_index=False).agg(
     mean_net_all_weeks=("y", "mean"),
@@ -522,17 +526,20 @@ mtd_df['fiscal_month_number'] = mtd_df['fiscal_year_month'].astype(str).str[-2:]
 mtd_df['fiscal_week_number'] = mtd_df['fiscal_year_week'].astype(str).str[-2:].astype(int)
 
 # %%
+mtd_df
+
+# %%
 # weeks_in_month: calendar property — max origin week per fiscal_year_month
-weeks_in_month = (
-    df.groupby("fiscal_year_month")["fiscal_week_of_month"]
-    .max()
-    .rename("weeks_in_month")
-    .reset_index()
-)
+#weeks_in_month = (
+#    df.groupby("fiscal_year_month")["fiscal_week_of_month"]
+#    .max()
+#    .rename("weeks_in_month")
+#    .reset_index()
+#)
 
 
 # %%
-mtd_df = mtd_df.merge(weeks_in_month, on="fiscal_year_month", how="left")
+#mtd_df = mtd_df.merge(weeks_in_month, on="fiscal_year_month", how="left")
 
 # mtd_share
 mtd_df["mtd_share"] = mtd_df["mtd_y"] / mtd_df["final_month_y"]
@@ -568,7 +575,6 @@ mtd_df.head()
 # ## Section 3.1: MTD actuals vs. final month scatterplot 
 
 # %%
-
 def plot_mtd_scatter(data, color_col, colorbar_label, date_color=False):
     subplot_titles = ["Week 1", "Weeks 1–2", "Weeks 1–3", "Weeks 1–4"]
     row_labels = ["4-week months", "5-week months"]
@@ -1480,6 +1486,77 @@ fig_62.update_layout(
 )
 fig_62.show()
 
+
+# %% [markdown]
+# # Section 7: Remaining month versus dispersion 
+
+# %%
+mtd_df["y_remaining"] = mtd_df["final_month_y"] - mtd_df["mtd_y"]
+mtd_df_core = mtd_df[mtd_df["final_month_y"] >= mtd_df["core_threshold"]].copy()
+
+# %%
+_grp = ["revenue_bucket", "weeks_in_month", "origin_week"]
+
+
+def compute_dispersion_ratios(data, grp_cols):
+    rem_q75 = data.groupby(grp_cols, observed=True)["y_remaining"].quantile(0.75)
+    rem_q25 = data.groupby(grp_cols, observed=True)["y_remaining"].quantile(0.25)
+    rem_q90 = data.groupby(grp_cols, observed=True)["y_remaining"].quantile(0.90)
+    rem_q10 = data.groupby(grp_cols, observed=True)["y_remaining"].quantile(0.10)
+    fin_q75 = data.groupby(grp_cols, observed=True)["final_month_y"].quantile(0.75)
+    fin_q25 = data.groupby(grp_cols, observed=True)["final_month_y"].quantile(0.25)
+    fin_q90 = data.groupby(grp_cols, observed=True)["final_month_y"].quantile(0.90)
+    fin_q10 = data.groupby(grp_cols, observed=True)["final_month_y"].quantile(0.10)
+
+    quantile_df = pd.concat(
+        [
+            (rem_q75 - rem_q25).rename("iqr_rem"),
+            (rem_q90 - rem_q10).rename("tail_rem"),
+            (fin_q75 - fin_q25).rename("iqr_fin"),
+            (fin_q90 - fin_q10).rename("tail_fin"),
+        ],
+        axis=1,
+    ).reset_index()
+
+    _data = data.assign(
+        _rem_median=data.groupby(grp_cols, observed=True)["y_remaining"].transform("median"),
+        _fin_median=data.groupby(grp_cols, observed=True)["final_month_y"].transform("median"),
+    )
+    _data = _data.assign(
+        _rem_abs_dev=(_data["y_remaining"] - _data["_rem_median"]).abs(),
+        _fin_abs_dev=(_data["final_month_y"] - _data["_fin_median"]).abs(),
+    )
+    mad_df = _data.groupby(grp_cols, as_index=False, observed=True).agg(
+        mad_rem=("_rem_abs_dev", "median"),
+        mad_fin=("_fin_abs_dev", "median"),
+    )
+
+    out = quantile_df.merge(mad_df, on=grp_cols)
+    out["iqr_ratio"] = out["iqr_rem"] / out["iqr_fin"]
+    out["mad_ratio"] = out["mad_rem"] / out["mad_fin"]
+    out["tail_spread_ratio"] = out["tail_rem"] / out["tail_fin"]
+
+    return out[grp_cols + ["iqr_ratio", "mad_ratio", "tail_spread_ratio"]]
+
+
+ratio_df = compute_dispersion_ratios(mtd_df_core, _grp)
+
+mtd_df_104_core = mtd_df[
+    mtd_df["fiscal_year_month"].isin(trailing_104_months)
+    & (mtd_df["final_month_y"] >= mtd_df["core_threshold"])
+].copy()
+
+ratio_df_104 = compute_dispersion_ratios(mtd_df_104_core, _grp)
+
+
+# %%
+ratio_df.shape
+
+# %%
+ratio_df_104.shape
+
+# %%
+ratio_df["weeks_in_month"].value_counts()
 
 # %% [markdown]
 # # Section 8: Time Series Length Histogram
