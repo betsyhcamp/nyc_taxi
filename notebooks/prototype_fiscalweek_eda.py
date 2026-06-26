@@ -1268,9 +1268,10 @@ plt.show()
 # %% [markdown]
 # # Section 6: Scale-variance metrics
 
-# %%
-# ── Section 6.0: Extend summary_df with scale-variance metrics ────────────────
+# %% [markdown]
+# ## Section 6.0: Extend summary_df with scale-variance metrics
 
+# %%
 # std on all y (full history)
 scale_stats = df.groupby("unique_id", as_index=False).agg(
     std_y_full=("y", "std"),
@@ -1314,6 +1315,170 @@ summary_df[["unique_id", "std_y_full", "iqr_y_full", "mad_y_full", "median_pos_f
 
 # %%
 summary_df[summary_df["cv_std_full"].isna()][["unique_id", "n_positive_weeks_104", "intermittency_class_104"]]
+
+
+# %% [markdown]
+# ## Section 6.1: Mean Positive Revenue vs. Absolute Variability
+
+# %%
+fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
+
+subplot_configs_61 = [
+    (axes[0], "iqr_y_full", "IQR of weekly revenue"),
+    (axes[1], "std_y_full", "Std of weekly revenue"),
+]
+
+for ax, y_col, title in subplot_configs_61:
+    for cls in CLASS_ORDER:
+        sub = summary_df[summary_df["intermittency_class_full"] == cls].dropna(subset=["mean_pos_N_weeks", y_col])
+        ax.scatter(
+            sub["mean_pos_N_weeks"], sub[y_col],
+            color=CLASS_COLOR_MAP[cls],
+            marker=CLASS_MARKER_MAP_MATPLOTLIB[cls],
+            label=cls,
+            s=30, alpha=0.8, edgecolors="none",
+        )
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("Mean positive weekly revenue (trailing 52w, log scale)")
+    ax.set_ylabel("Absolute variability (log scale)")
+    ax.set_title(title)
+    ax.grid(alpha=0.7)
+
+handles, labels = axes[0].get_legend_handles_labels()
+fig.legend(handles, labels, loc="lower center", ncol=len(CLASS_ORDER), bbox_to_anchor=(0.5, -0.08))
+fig.suptitle("Mean Positive Revenue vs. Absolute Variability")
+plt.show()
+
+
+# %%
+fig_61 = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=["IQR of weekly revenue", "Std of weekly revenue"],
+)
+
+subplot_configs_61 = [
+    (1, "iqr_y_full"),
+    (2, "std_y_full"),
+]
+
+for col, y_col in subplot_configs_61:
+    for cls in CLASS_ORDER:
+        sub = summary_df[summary_df["intermittency_class_full"] == cls].dropna(subset=["mean_pos_N_weeks", y_col])
+        hover_data = sub[["unique_id", "mean_pos_N_weeks", y_col, "intermittency_class_full"]].values
+        fig_61.add_trace(
+            go.Scatter(
+                x=sub["mean_pos_N_weeks"],
+                y=sub[y_col],
+                mode="markers",
+                name=cls,
+                legendgroup=cls,
+                marker=dict(color=CLASS_COLOR_MAP[cls], symbol=CLASS_MARKER_MAP_PLOTLY[cls], size=6),
+                customdata=hover_data,
+                hovertemplate=(
+                    "<b>%{customdata[0]}</b><br>"
+                    "Mean pos revenue (52w): %{customdata[1]:,.0f}<br>"
+                    "Absolute variability: %{customdata[2]:,.0f}<br>"
+                    "Class: %{customdata[3]}<extra></extra>"
+                ),
+                showlegend=(col == 1),
+            ),
+            row=1, col=col,
+        )
+
+fig_61.update_xaxes(type="log", title_text="Mean positive weekly revenue (trailing 52w, log scale)")
+fig_61.update_yaxes(type="log", title_text="Absolute variability (log scale)")
+fig_61.update_layout(title="Mean Positive Revenue vs. Absolute Variability", height=500)
+fig_61.show()
+
+
+# %% [markdown]
+# ## Section 6.2: Mean Positive Revenue vs. Relative Variability
+
+# %%
+fig, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
+
+cv_std_p99 = summary_df["cv_std_full"].quantile(0.99)
+cv_iqr_p99 = summary_df["cv_iqr_full"].quantile(0.99)
+
+subplot_configs_62 = [
+    (axes[0], "cv_std_full", "CV (std / mean positive, trailing 52w)",          cv_std_p99),
+    (axes[1], "cv_iqr_full", "Robust CV (IQR / median positive, full history)", cv_iqr_p99),
+]
+
+for ax, y_col, title, p99 in subplot_configs_62:
+    for cls in CLASS_ORDER:
+        sub = summary_df[summary_df["intermittency_class_full"] == cls].dropna(subset=["mean_pos_N_weeks", y_col])
+        ax.scatter(
+            sub["mean_pos_N_weeks"], sub[y_col],
+            color=CLASS_COLOR_MAP[cls],
+            marker=CLASS_MARKER_MAP_MATPLOTLIB[cls],
+            label=cls,
+            s=30, alpha=0.8, edgecolors="none",
+        )
+    ax.set_xscale("log")
+    ax.set_ylim(0, p99)
+    ax.set_xlabel("Mean positive weekly revenue (trailing 52w, log scale)")
+    ax.set_ylabel("Relative variability")
+    ax.set_title(title)
+    ax.grid(alpha=0.7)
+
+handles, labels = axes[0].get_legend_handles_labels()
+fig.legend(handles, labels, loc="lower center", ncol=len(CLASS_ORDER), bbox_to_anchor=(0.5, -0.08))
+fig.suptitle("Mean Positive Revenue vs. Relative Variability")
+plt.show()
+
+
+# %%
+fig_62 = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=[
+        "CV (std / mean positive, trailing 52w)",
+        "Robust CV (IQR / median positive, full history)",
+    ],
+)
+
+subplot_configs_62 = [
+    (1, "cv_std_full"),
+    (2, "cv_iqr_full"),
+]
+
+for col, y_col in subplot_configs_62:
+    for cls in CLASS_ORDER:
+        sub = summary_df[summary_df["intermittency_class_full"] == cls].dropna(subset=["mean_pos_N_weeks", y_col])
+        hover_data = sub[["unique_id", "mean_pos_N_weeks", y_col, "intermittency_class_full"]].values
+        fig_62.add_trace(
+            go.Scatter(
+                x=sub["mean_pos_N_weeks"],
+                y=sub[y_col],
+                mode="markers",
+                name=cls,
+                legendgroup=cls,
+                marker=dict(color=CLASS_COLOR_MAP[cls], symbol=CLASS_MARKER_MAP_PLOTLY[cls], size=6),
+                customdata=hover_data,
+                hovertemplate=(
+                    "<b>%{customdata[0]}</b><br>"
+                    "Mean pos revenue (52w): %{customdata[1]:,.0f}<br>"
+                    "Relative variability: %{customdata[2]:.3f}<br>"
+                    "Class: %{customdata[3]}<extra></extra>"
+                ),
+                showlegend=(col == 1),
+            ),
+            row=1, col=col,
+        )
+
+cv_std_p99 = summary_df["cv_std_full"].quantile(0.99)
+cv_iqr_p99 = summary_df["cv_iqr_full"].quantile(0.99)
+
+fig_62.update_xaxes(type="log", title_text="Mean positive weekly revenue (trailing 52w, log scale)")
+fig_62.update_yaxes(title_text="Relative variability")
+fig_62.update_layout(
+    title="Mean Positive Revenue vs. Relative Variability",
+    height=500,
+    yaxis=dict(range=[0, cv_std_p99]),
+    yaxis2=dict(range=[0, cv_iqr_p99]),
+)
+fig_62.show()
 
 
 # %% [markdown]
