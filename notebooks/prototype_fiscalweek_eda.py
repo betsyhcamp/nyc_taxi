@@ -14,40 +14,26 @@
 
 # %%
 import sys
-from google.cloud import bigquery
-import pandas as pd
-import numpy as np
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-import matplotlib.pyplot as plt
+
+
+from google.cloud import bigquery
 import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import seaborn as sns
+from tsbricks.backtesting import evaluate_metrics, generate_folds, parse_config
 from tsbricks.blocks.dataio import read_sql, query_to_dataframe
+from tsbricks.blocks.diagnostics import plot_acf, plot_pacf
 from tsbricks.blocks.plots import plot_seasonal
-from fcstnyctaxi.lib.utils import get_project_root_dir
-from statsforecast.models import AutoARIMA
-
-
-from tsbricks.backtesting import (
-    evaluate_metrics,
-    generate_folds,
-    parse_config,
-)
-
-from tsbricks.runner import (
-    apply_transforms,
-    fit_transforms,
-    inverse_transforms,
-    invoke_model,
-)
-from statsforecast import StatsForecast
-from statsforecast.models import Naive
-from utilsforecast.losses import mae as uf_mae
+from tsbricks.runner import apply_transforms, fit_transforms, inverse_transforms, invoke_model
 from utilsforecast.evaluation import evaluate
 
-import warnings
-from tqdm import TqdmWarning
+from fcstnyctaxi.lib.utils import get_project_root_dir
 
 # %%
 project = "nyc-taxi-ehc"
@@ -58,6 +44,9 @@ project_root = get_project_root_dir()
 
 queries_dir = project_root / "queries"
 raw_data_dir = project_root / "data"/ "raw"
+
+# %% [markdown]
+# # Section: Data ingestion
 
 # %%
 sys.path.insert(0, str(project_root))
@@ -72,6 +61,9 @@ df, *_ = query_to_dataframe(sql_str, client=client)
 # %%
 df.info()
 df.head()
+
+# %% [markdown]
+# # Section: Data preparation
 
 # %%
 dtype_map = {
@@ -101,9 +93,6 @@ df["fiscal_week_start_date"] = pd.to_datetime(df["fiscal_week_start_date"])
 df.loc[df['day_of_fiscal_month']==1, ["pickup_date", "day_of_fiscal_month",	"fiscal_year_week",	"fiscal_week", "fiscal_week_of_month","fiscal_month","fiscal_year","fiscal_year_month","fiscal_week_start_date", "day_of_week",	"day_of_week_name"]].drop_duplicates().tail(15)
 
 # %%
-# need to specify forecast origins for cross-val()(    )
-
-# %%
 df['pickup_taxi_zone_id'].nunique()
 
 # %%
@@ -122,13 +111,12 @@ zone_daily_df = (
 
 # %%
 zone_fiscalweek_df = (
-    df.groupby(['fiscal_year_month', 'fiscal_year_week','fiscal_week_start_date', 'fiscal_week_of_month', 'pickup_taxi_zone_id'])['number_ride_pickups']
+    df.groupby(['fiscal_year','fiscal_year_month', 'fiscal_year_week','fiscal_week_start_date', 'fiscal_week_of_month', 'pickup_taxi_zone_id'])['number_ride_pickups']
     .sum()
     .reset_index(drop=False)
     .sort_values('fiscal_year_week')
     .reset_index(drop=True)
 )
-
 
 zone_fiscalweek_df
 
@@ -152,30 +140,108 @@ zone_fiscalweek_df.loc[zone_fiscalweek_df['unique_id']==104, 'y'].max()
 # %%
 df = zone_fiscalweek_df.copy()
 
+# %% [markdown]
+# # Section: Weekly Time series lineplots/ ACF / PACF
+
 # %%
-# ── Constants ──────────────────────────────────────────────────────────────────
-N_WEEKS = 52
-ADI_THRESHOLD = 1.32
-CV2_THRESHOLD = 0.49
-CLASS_ORDER = ["Smooth", "Erratic", "Intermittent", "Lumpy"]
-BUCKETS = ["Very low", "Low", "Middle", "High", "Very high"]
+NUMBER_LAGS = 54
+SAVE_TS_FIGS = False  # either set True or False
 
-# ── Global flags ──────────────────────────────────────────────────────────────────
-df['y_pos'] = df["y"].clip(lower=0)
-df["y_neg_flag"] = (df["y"] < 0).astype(int)
+UNIQUE_IDS=[161, 236] 
 
-# ── Trailing window ────────────────────────────────────────────────────────────
-max_date = df["fiscal_week_start_date"].max()
-cutoff_date = max_date - pd.Timedelta(weeks=N_WEEKS - 1)
-trailing_df = df[df["fiscal_week_start_date"] >= cutoff_date]
+if SAVE_TS_FIGS:
+    _run_ts = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
+    _run_uuid = uuid.uuid4().hex[:5]
+    _fig_dir = project_root / "notebooks"/"eda_figs" / f"eda_figures_UTC{_run_ts}_{_run_uuid}"
+    _fig_dir.mkdir(parents=True, exist_ok=True)
+
+for uid in UNIQUE_IDS:
+    sub = df[df["unique_id"] == uid].sort_values("fiscal_week_start_date")
+
+    fig = plt.figure(figsize=(14, 8), constrained_layout=True)
+    gs = fig.add_gridspec(2, 2, height_ratios=[1.2, 1])
+
+    ax_top = fig.add_subplot(gs[0, :])
+    ax_acf = fig.add_subplot(gs[1, 0])
+    ax_pacf = fig.add_subplot(gs[1, 1])
+
+    ax_top.plot(sub["fiscal_week_start_date"], sub["y"], linewidth=1)
+    ax_top.set_xlabel("fiscal_week_start_date")
+    ax_top.set_ylabel("y")
+    ax_top.grid(alpha=0.3)
+
+    plot_acf(sub, time_col="fiscal_week_start_date", value_col="y",
+             lags=NUMBER_LAGS, backend="matplotlib", ax=ax_acf)
+    plot_pacf(sub, time_col="fiscal_week_start_date", value_col="y",
+              lags=NUMBER_LAGS, backend="matplotlib", ax=ax_pacf)
+
+    fig.suptitle(f"unique_id: {uid}")
+
+    if SAVE_TS_FIGS:
+        _fname = f"UTC{_run_ts}_lineplot_acf_pacf_{uid}.jpeg"
+        fig.savefig(_fig_dir / _fname, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+    else:
+        plt.show()
+
+
+# %% [markdown]
+# # Section: Seasonal plots
+
+# %%
+for uid in UNIQUE_IDS:
+    fig = plot_seasonal(
+        df=df[df["unique_id"] == uid],
+        time_col="fiscal_year_week",
+        value_col="y",
+        backend="matplotlib",
+        width=800,
+        height=450,
+        palette="viridis",
+        alpha=0.8,
+        season_col="fiscal_year",
+        return_fig=True,
+    )
+    fig.suptitle(f"unique_id: {uid}")
+
+    if SAVE_TS_FIGS:
+        _fname = f"UTC{_run_ts}_yearlyseasonalplot_{uid}.jpeg"
+        fig.savefig(_fig_dir / _fname, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+    else:
+        plt.show()
 
 
 # %%
 df["weeks_in_month"] = df.groupby("fiscal_year_month")["fiscal_week_of_month"].transform("max")
 df = df[df["weeks_in_month"]>=4].reset_index(drop=True)
 
+# %% [markdown]
+# # Section: Constant definitions, flags, window definition for summary stats
+
 # %%
-# ── Full history aggregations ──────────────────────────────────────────────────
+# Constants
+N_WEEKS = 52
+ADI_THRESHOLD = 1.32
+CV2_THRESHOLD = 0.49
+CLASS_ORDER = ["Smooth", "Erratic", "Intermittent", "Lumpy"]
+BUCKETS = ["Very low", "Low", "Middle", "High", "Very high"]
+
+# Global flags
+df['y_pos'] = df["y"].clip(lower=0)
+df["y_neg_flag"] = (df["y"] < 0).astype(int)
+
+# Trailing window
+max_date = df["fiscal_week_start_date"].max()
+cutoff_date = max_date - pd.Timedelta(weeks=N_WEEKS - 1)
+trailing_df = df[df["fiscal_week_start_date"] >= cutoff_date]
+
+
+# %% [markdown]
+# # Section: Summary stats
+
+# %%
+# Full history aggregations
 full_stats = df.groupby("unique_id", as_index=False).agg(
     mean_net_all_weeks=("y", "mean"),
     median_net_all_weeks=("y", "median"),
@@ -193,8 +259,7 @@ pos_full_stats = (
 )
 
 # %%
-# ── Trailing N weeks aggregations ──────────────────────────────────────────────
-
+# Trailing N weeks aggregations
 trailing_stats = trailing_df.groupby("unique_id", as_index=False).agg(
     mean_net_short=("y", "mean"),
     median_net_short=("y", "median"),
@@ -212,7 +277,7 @@ pos_trailing_stats = (
 )
 
 # %%
-# ── Time series start and length ───────────────────────────────────────────────
+# Time series start and length
 ts_start = (
     df[df["y"].notna() & (df["y"] != 0)]
     .groupby("unique_id")["fiscal_week_start_date"]
@@ -223,7 +288,7 @@ ts_start = (
 
 
 # %%
-# ── Merge into summary_df ──────────────────────────────────────────────────────
+# Merge into summary_df
 summary_df = (
     full_stats
     .merge(pos_full_stats, on="unique_id", how="left")
@@ -237,7 +302,7 @@ summary_df["time_series_length_weeks"] = (
 ).astype(int)
 
 # %%
-# ── Ranks (1 = largest) ────────────────────────────────────────────────────────
+# Ranks (1 = largest)
 col_to_rank = [
     ("total_all_weeks",          "rank_all_weeks"),
     ("total_positive_all_weeks", "rank_positive_all_weeks"),
@@ -251,7 +316,7 @@ for col, rank_col in col_to_rank:
     )
 
 # %%
-# ── Reorder columns ────────────────────────────────────────────────────────────
+# Reorder columns
 summary_df = summary_df[[
     "unique_id",
     "mean_net_all_weeks",      "median_net_all_weeks",
@@ -477,7 +542,7 @@ TOP_N = 30
 
 top_full_total  = summary_df.sort_values("total_all_weeks", ascending=False).head(TOP_N)
 top_short_total = summary_df.sort_values("total_short",     ascending=False).head(TOP_N)
-top_full_mean   = summary_df.sort_values("mean_pos_full",   ascending=False).head(TOP_N)
+top_full_mean   = summary_df.sort_values("mean_pos_all_weeks",   ascending=False).head(TOP_N)
 top_short_mean  = summary_df.sort_values("mean_pos_short",  ascending=False).head(TOP_N)
 
 fig, axes = plt.subplots(2, 2, figsize=(18, 8), constrained_layout=True)
@@ -486,8 +551,8 @@ axes[1, 1].sharey(axes[0, 1])
 panels = [
     (axes[0, 0], top_full_total,  "total_all_weeks", "Sum $, Full History",              "Total net revenue (y)", "silver", None),
     (axes[1, 0], top_short_total, "total_short",     f"Sum $, Trailing {N_WEEKS} Weeks", "Total net revenue (y)", "silver", "//"),
-    (axes[0, 1], top_full_mean,   "mean_pos_full",   "Mean weekly $, Full History",              "Mean positive weekly revenue (y)", "tab:green", None),
-    (axes[1, 1], top_short_mean,  "mean_pos_short",  f"Mean weekly $, Trailing {N_WEEKS} Weeks", "Mean positive weekly revenue (y)", "tab:green", "//"),
+    (axes[0, 1], top_full_mean,   "mean_pos_all_weeks",   "Mean weekly $, Full History",              "Mean positive weekly revenue (y)", "tab:blue", None),
+    (axes[1, 1], top_short_mean,  "mean_pos_short",  f"Mean weekly $, Trailing {N_WEEKS} Weeks", "Mean positive weekly revenue (y)", "tab:blue", "//"),
 ]
 
 for ax, data, col, title, ylabel, color, hatch in panels:
@@ -504,6 +569,9 @@ plt.show()
 
 # %% [markdown]
 # # Section: Month-to-date signal
+
+# %% [markdown]
+# ## Subsec: MTD data prep
 
 # %%
 N_WEEKS_104 = 104
@@ -741,6 +809,9 @@ def plot_neg_scatter(y_col, y_label, title, scale_type="log"):
     fig.show()
 
 
+# %% [markdown]
+# ## Subsec: Fraction of negative weeks
+
 # %%
 plot_neg_scatter(
     "frac_negative_weeks",
@@ -748,8 +819,10 @@ plot_neg_scatter(
     "Mean Positive Weekly Revenue (trailing 52w) vs. Fraction Negative Weeks",
 )
 
-# %%
+# %% [markdown]
+# ## Subsec: Revenue significance of negative weeks
 
+# %%
 plot_neg_scatter(
     "neg_materiality",
     "Negative materiality",
@@ -846,8 +919,6 @@ plt.show()
 # ## Subsec: Extend summary_df with intermittency metrics
 
 # %%
-# ── Section 5.0: Extend summary_df with intermittency metrics ─────────────────
-
 # Full-history counts (assign avoids modifying df in place)
 _df_full = df.assign(_is_zero=df["y"] == 0, _is_positive=df["y"] > 0)
 full_counts = _df_full.groupby("unique_id", as_index=False).agg(
@@ -1611,29 +1682,11 @@ ax.hist(
         int(hist_df["time_series_length_weeks"].min()),
         int(hist_df["time_series_length_weeks"].max()) + 2,
     ),
-    color="gray",
-    edgecolor="gray",
+    color="silver",
+    edgecolor="silver",
 )
 ax.set_xlabel("Time series length (weeks)")
 ax.set_ylabel("Number of series")
 ax.set_title("Distribution of Time Series Lengths")
 
 plt.show()
-
-# %% [markdown]
-#
-
-# %% [markdown]
-#
-
-# %% [markdown]
-#
-
-# %% [markdown]
-#
-
-# %% [markdown]
-#
-
-# %% [markdown]
-#
