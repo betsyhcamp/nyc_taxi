@@ -13,6 +13,12 @@ CREATE OR REPLACE TABLE `nyc-taxi-ehc.curated.date_dim`
     OPTIONS (
         description = "Fiscal week number within the fiscal year."
     ),
+
+    fiscal_week_of_month INT64 NOT NULL
+    OPTIONS (
+        description = "Fiscal week number within each fiscal month."
+    ),
+
     fiscal_month INT64 NOT NULL
     OPTIONS (
         description = "Fiscal month number within the fiscal year."

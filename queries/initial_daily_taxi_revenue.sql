@@ -64,6 +64,7 @@ SELECT
     p.calendar_date AS pickup_date,
     d.day_of_fiscal_month,
     d.fiscal_week,
+    d.fiscal_week_of_month,
     d.fiscal_month,
     d.fiscal_year,
     d.fiscal_year_month,
@@ -73,6 +74,7 @@ SELECT
     d.is_holiday,
     d.holiday_name,
     d.is_daylight_savings,
+    DATE_TRUNC(d.calendar_date, WEEK (SUNDAY)) AS fiscal_week_start_date,
     (d.fiscal_year * 100) + d.fiscal_week AS fiscal_year_week,
     COALESCE(t.number_ride_pickups, 0) AS number_ride_pickups
 FROM pickup_taxi_zone_id_cal AS p
