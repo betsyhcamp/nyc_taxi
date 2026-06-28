@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 import yaml
+from pytest_mock import MockerFixture
 from tsbricks.backtesting.schema import BacktestConfig
 
 from fcstnyctaxi.lib.config_utils import _deep_merge, merge_configs, save_config
@@ -119,14 +119,14 @@ def test_merge_configs_yaml_path_loads_and_merges(minimal_config_yaml: Path) -> 
 
 def test_merge_configs_three_way_merge() -> None:
     """Three-way merge: base + model_spec + runtime override — last dict wins."""
-    # TODO: implement this test.
-    # This is the core runtime pattern from the spec:
-    #   merge_configs(base_dict, model_spec_dict, runtime_override_dict)
-    # Split _MINIMAL_CONFIG across three layers (base without model, model spec,
-    # and a runtime override that changes one field like data.freq).
-    # Assert that the final BacktestConfig reflects values from all three layers,
-    # and that the runtime override value wins over earlier layers.
-    pass
+    base = {k: v for k, v in _MINIMAL_CONFIG.items() if k != "model"}
+    model_spec = {k: v for k, v in _MINIMAL_CONFIG.items() if k == "model"}
+    override = {"data": {"target_col": "y_new"}}
+
+    result = merge_configs(base, model_spec, override)
+    assert result.data.id_col == "unique_id"
+    assert result.model.callable == "models.naive.naive_weekly"
+    assert result.data.target_col == "y_new"
 
 
 def test_merge_configs_empty_yaml_raises(tmp_path: Path) -> None:
@@ -166,22 +166,22 @@ def test_save_config_backtest_config_writes_to_local_path(tmp_path: Path) -> Non
     assert loaded["model"]["callable"] == "models.naive.naive_weekly"
 
 
-def test_save_config_routes_gcs_path_to_write_text_to_gcs() -> None:
+def test_save_config_routes_gcs_path_to_write_text_to_gcs(
+    mocker: MockerFixture,
+) -> None:
     """save_config calls write_text_to_gcs for gs:// paths, not local write."""
     gcs_uri = "gs://bucket/sidecar/composed_config.yaml"
-    with patch("fcstnyctaxi.lib.config_utils.write_text_to_gcs") as mock_write:
-        save_config(_MINIMAL_CONFIG, gcs_uri)
+    mock_write = mocker.patch("fcstnyctaxi.lib.config_utils.write_text_to_gcs")
+    save_config(_MINIMAL_CONFIG, gcs_uri)
     mock_write.assert_called_once()
     assert mock_write.call_args.kwargs["gcs_uri"] == gcs_uri
 
 
 def test_save_config_key_order_preserved(tmp_path: Path) -> None:
     """Keys in saved YAML follow dict insertion order, not alphabetical order."""
-    # TODO implement this test.
-    # Construct a small dict with keys in a deliberately non-alphabetical order
-    # (e.g. "z", "a", "m"). Call save_config to a local tmp_path.
-    # Read the raw YAML text back and check that the top-level keys appear
-    # in the same order you inserted them — not sorted alphabetically.
-    # Hint: parse the raw lines rather than yaml.safe_load (which returns a dict
-    # and doesn't tell you the file's key order).
-    pass
+    config = {"z": "z_value", "a": "a_value", "m": "m_value"}
+    out_path = tmp_path / "config_preserved.yaml"
+    save_config(config, out_path)
+    loaded = out_path.read_text().splitlines()
+    loaded_keys = [item.split(":")[0].strip() for item in loaded]
+    assert loaded_keys == ["z", "a", "m"]
