@@ -1,0 +1,2 @@
+model:
+  callable: models.naive.naive_weekly
