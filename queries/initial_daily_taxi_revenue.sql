@@ -57,6 +57,55 @@ pickup_taxi_zone_id_cal AS (
         ON
             mn.min_pickup_date <= d.calendar_date
             AND mx.max_pickup_date >= d.calendar_date
+),
+
+month_pickup_cte AS (
+    SELECT DISTINCT
+        dts.pickup_date AS max_pickup_date,
+        d.fiscal_year_month
+    FROM daily_timeseries_cte AS dts
+    INNER JOIN `nyc-taxi-ehc.curated.date_dim` AS d
+        ON dts.pickup_date = d.calendar_date
+    WHERE dts.pickup_date = (
+        SELECT MAX(pickup_date)
+        FROM daily_timeseries_cte
+    )
+),
+
+month_boundary_cte AS (
+    SELECT
+        fiscal_year_month,
+        MAX(calendar_date) AS max_cal_date
+    FROM `nyc-taxi-ehc.curated.date_dim`
+    WHERE
+        fiscal_year_month = (
+            SELECT fiscal_year_month
+            FROM month_pickup_cte
+        )
+    GROUP BY fiscal_year_month
+
+),
+
+month_cutoff_cte AS (
+    SELECT
+        CASE
+            WHEN mp.max_pickup_date = mb.max_cal_date THEN mb.fiscal_year_month
+            ELSE
+                CAST(FORMAT_DATE(
+                    '%Y%m', DATE_SUB(
+                        DATE(
+                            CAST(FLOOR(mp.fiscal_year_month / 100) AS INT64),  -- year
+                            CAST(RIGHT(CAST(mp.fiscal_year_month AS STRING), 2) AS INT64),  -- month
+                            1
+                        ),
+                        INTERVAL 1 MONTH
+                    )
+                )
+                AS INT64)
+        END AS fiscal_year_month_cutoff
+    FROM month_pickup_cte AS mp
+    INNER JOIN month_boundary_cte AS mb
+        ON mp.fiscal_year_month = mb.fiscal_year_month
 )
 
 SELECT
@@ -84,6 +133,7 @@ LEFT JOIN daily_timeseries_cte AS t
         AND p.pickup_taxi_zone_id = t.pickup_taxi_zone_id
 LEFT JOIN `nyc-taxi-ehc.curated.date_dim` AS d
     ON p.calendar_date = d.calendar_date
+WHERE d.fiscal_year_month <= (SELECT fiscal_year_month_cutoff FROM month_cutoff_cte)
 ORDER BY
     p.pickup_taxi_zone_id,
     p.calendar_date
