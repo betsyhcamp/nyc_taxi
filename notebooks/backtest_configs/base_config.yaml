@@ -1,5 +1,5 @@
 data:
-  freq: W-SAT # fiscal weeks start Sunday; W-SAT = week ending Saturday
+  freq: W-SUN # fiscal weeks start Sunday; W-SUN means week anchored on Sunday
   id_col: unique_id
   date_col: ds
   target_col: y
