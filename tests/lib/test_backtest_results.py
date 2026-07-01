@@ -133,16 +133,49 @@ def test_build_cv_results_forwards_optional_fields(
 # build_cv_results — validation / error paths
 # ================================================
 
-# TODO(human): write tests covering the two ValueError checks in build_cv_results:
-#   1. Mismatched lengths -- e.g. origin_horizon_pairs has 2 entries but
-#      forecasts_per_fold only has 1 fold. Assert pytest.raises(ValueError, match=...).
-#   2. Mismatched fold identities -- e.g. forecasts_per_fold and
-#      train_val_splits_per_fold both have 2 entries (same length, so check #1
-#      passes), but different fold_id keys (e.g. "fold_0"/"fold_1" vs
-#      "fold_0"/"fold_2"). Assert pytest.raises(ValueError, match=...).
-# Additional input: build small inline dicts/lists per test rather than mutating the
-# shared fixtures above, so each test's "what's broken" is visible in the test body
-# itself without cross-referencing the fixture.
+
+def test_build_cv_results_raises_on_fold_count_mismatch(
+    sample_train_val_splits_per_fold: dict[str, dict[str, pd.DataFrame]],
+    sample_metrics: pd.DataFrame,
+) -> None:
+    """origin_horizon_pairs longer than forecasts_per_fold triggers the length check."""
+
+    forecasts_per_fold_dict = {
+        "fold_0": pd.DataFrame(
+            {"unique_id": [1], "ds": [pd.Timestamp("2025-04-27")], "ypred": [10.0]}
+        ),
+    }
+
+    with pytest.raises(ValueError, match="lengths"):
+        build_cv_results(
+            forecasts_per_fold=forecasts_per_fold_dict,
+            train_val_splits_per_fold=sample_train_val_splits_per_fold,
+            metrics=sample_metrics,
+            origin_horizon_pairs=_ORIGIN_HORIZON_PAIRS,
+        )
+
+
+def test_build_cv_results_raises_on_fold_id_mismatch(
+    sample_train_val_splits_per_fold: dict[str, dict[str, pd.DataFrame]],
+    sample_metrics: pd.DataFrame,
+) -> None:
+    """Same fold count but different fold_id keys triggers the identity check."""
+    forecasts_per_fold_dict = {
+        "fold_0": pd.DataFrame(
+            {"unique_id": [1], "ds": [pd.Timestamp("2025-04-27")], "ypred": [10.0]}
+        ),
+        "fold_2": pd.DataFrame(
+            {"unique_id": [1], "ds": [pd.Timestamp("2025-05-04")], "ypred": [11.0]}
+        ),
+    }
+
+    with pytest.raises(ValueError, match="Identities"):
+        build_cv_results(
+            forecasts_per_fold=forecasts_per_fold_dict,
+            train_val_splits_per_fold=sample_train_val_splits_per_fold,
+            metrics=sample_metrics,
+            origin_horizon_pairs=_ORIGIN_HORIZON_PAIRS,
+        )
 
 
 # ================================================
