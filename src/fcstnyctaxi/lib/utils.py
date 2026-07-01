@@ -35,7 +35,7 @@ def find_root_project_dir(
         if any(check) and path_candidate.is_dir():
             return path_candidate
     raise RuntimeError(
-        "Count not locate project root directory using marker files:"
+        "Could not locate project root directory using marker files:"
         f"{root_markers_list}"
     )
 
