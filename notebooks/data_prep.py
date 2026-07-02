@@ -67,6 +67,7 @@ df.info()
 df.head()
 
 # %%
+# TODO : Could consider putting the "ds", "unique_id", "y" alias in SQL
 ts_df = (
     df
     .groupby(["fiscal_week_start_date", "pickup_taxi_zone_id"])
@@ -113,6 +114,17 @@ cal_df["is_workday"] = (
 )
 
 cal_df = cal_df.groupby(cal_col)["is_workday"].sum().reset_index(drop=False)
+
+# %%
+cal_df 
+
+# %%
+# TODO : Could consider putting the "ds" alias in SQL
+cal_df = cal_df.rename(columns={
+    "fiscal_week_start_date": "ds",
+    "is_workday":"count_workdays"
+    }
+)
 
 # %%
 cal_df.info()

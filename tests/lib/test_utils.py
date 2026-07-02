@@ -59,15 +59,10 @@ def test_find_root_project_dir_accepts_custom_markers_list() -> None:
 # ================================================
 
 
-# TODO(human): test that RuntimeError is raised when no marker files are found.
-# Use the tmp_path fixture (pytest's built-in: just add `tmp_path: Path` to the
-# function signature — pytest injects a fresh empty directory automatically).
-# Pass tmp_path as start_path and a markers_list with a filename that doesn't
-# exist anywhere in the tmp directory tree. Assert pytest.raises(RuntimeError).
-# Tip: the error message in utils.py contains "marker files" — use that as
-# the match= string to keep the test resilient to minor wording changes.
 def test_find_root_project_dir_raises_when_no_markers_found(tmp_path: Path) -> None:
-    with pytest.raises(RuntimeError, match="Could not locate"):
+    """RuntimeError raised when no marker files exist anywhere in the directory tree."""
+
+    with pytest.raises(RuntimeError, match="not locate project"):
         find_root_project_dir(
             markers_list=["nonexistent_marker_file"],
             start_path=tmp_path,
