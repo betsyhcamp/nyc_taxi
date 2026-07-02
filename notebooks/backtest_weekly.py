@@ -15,13 +15,18 @@
 # %%
 import sys
 import pandas as pd
+import json
 
-from fcstnyctaxi.lib.utils import get_project_root_dir
-from fcstnyctaxi.lib.config_utils import merge_configs
+from fcstnyctaxi.lib.backtest_results import build_backtest_results, build_cv_results
+from fcstnyctaxi.lib.config_utils import merge_configs, save_config
+from fcstnyctaxi.lib.cross_validation_utils import sorted_origin_horizon_pairs
+from fcstnyctaxi.lib.io import write_text_to_gcs
+from fcstnyctaxi.lib.utils import get_project_root_dir, generate_run_id
 
 from tsbricks.backtesting import (
     evaluate_metrics,
-    generate_folds
+    generate_folds, 
+    aggregate_backtest
 )
 
 from tsbricks.runner import (
@@ -36,13 +41,24 @@ import fs  # noqa: F401 - surfaces pkg_resources deprecation warning here, not m
 import tqdm.auto  # noqa: F401 - surfaces TqdmWarning here, not mid-loop
 
 # %%
+project_root = get_project_root_dir()
+sys.path.insert(0, str(project_root))
+
+base_cfg_path = project_root / "notebooks" / "backtest_configs"/ "base_config.yaml"
+model_cfg_path = project_root / "notebooks" / "backtest_configs"/ "model_naive.yaml"
+
+sidecar_dir = generate_run_id()
+sidecar_uri=f"gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_weekly/{sidecar_dir}/"
+
+cfg = merge_configs(base_cfg_path, model_cfg_path)
+
+# %%
 ts_df = pd.read_parquet(
     "gs://nyc-taxi-ehc--modeling/dev/backtests/data/time_series.parquet"
 )
 
-cal_df = pd.read_parquet(
-    "gs://nyc-taxi-ehc--modeling/dev/backtests/data/fiscal_calendar.parquet"
-)
+cal_df = pd.read_parquet(cfg.aggregation.calendar_source)
+
 
 # %%
 ts_df.info()
@@ -51,14 +67,6 @@ ts_df.head()
 # %%
 cal_df.info()
 cal_df.head()
-
-# %%
-project_root = get_project_root_dir()
-sys.path.insert(0, str(project_root))
-
-base_cfg_path = project_root / "notebooks" / "backtest_configs"/ "base_config.yaml"
-model_cfg_path = project_root / "notebooks" / "backtest_configs"/ "model_naive.yaml"
-cfg = merge_configs(base_cfg_path, model_cfg_path)
 
 # %%
 cv_folds, _ = generate_folds(
@@ -81,7 +89,10 @@ for fold_id, splits in cv_folds.items():
 per_fold_metrics = []
 per_fold_forecasts: dict[str, pd.DataFrame] = {}
 
-origin_horizon_pairs = cfg.cross_validation.origin_horizon_pairs()
+origin_horizon_pairs = sorted_origin_horizon_pairs(
+    cfg.cross_validation.origin_horizon_pairs(),
+    cfg.data.freq
+    )
 
 for fold_idx, (fold_id, splits) in enumerate(cv_folds.items()):
     fold_origin, fold_horizon = origin_horizon_pairs[fold_idx]
@@ -115,6 +126,22 @@ for fold_idx, (fold_id, splits) in enumerate(cv_folds.items()):
 metrics = pd.concat(per_fold_metrics, ignore_index=True)
 
 # %%
+cv_results = build_cv_results(
+    forecasts_per_fold=per_fold_forecasts,
+    train_val_splits_per_fold=cv_folds,
+    metrics = metrics,
+    origin_horizon_pairs=origin_horizon_pairs
+)
+
+# %%
+backtest_results = build_backtest_results(
+    cv = cv_results,
+    config = cfg.model_dump(by_alias=True, exclude_none=True),
+    origin_horizon_pairs=origin_horizon_pairs,
+    capture_lineage=True
+)
+
+# %%
 metrics
 
 # %%
@@ -136,3 +163,38 @@ train_sample.tail(10)
 forecast_sample
 
 # %%
+aggregated_results = aggregate_backtest(
+    results=backtest_results,
+    aggregation_config= cfg.aggregation,
+    evaluation_level_config=cfg.evaluation.aggregated,
+    calendar_df=cal_df
+)
+
+# %%
+agg_fold_0 = aggregated_results.cv_forecasts["fold_0"]
+agg_fold_0
+
+# %%
+agg_fold_0[agg_fold_0["unique_id"]==4].sort_values(by="fiscal_year_month")
+
+# %%
+# create sidecar contents for this run
+save_config(cfg, f"{sidecar_uri}composed_config.yaml")
+
+# run_metadata.json contents
+run_metadata = {
+    "git_hash": backtest_results.git_hash,
+    "uv_lock_info": backtest_results.uv_lock_info,
+    "ts_data_uri": "gs://nyc-taxi-ehc--modeling/dev/backtests/data/time_series.parquet"
+}
+
+write_text_to_gcs(json.dumps(run_metadata, indent=2), f"{sidecar_uri}run_metadata.json")
+
+# metrics
+backtest_results.cv.metrics.to_parquet(f"{sidecar_uri}metrics.parquet", index=False)
+aggregated_results.cv_metrics.to_parquet(
+    f"{sidecar_uri}aggregated_metrics.parquet", 
+    index=False
+)
+
+print(f"Sidecar written: {sidecar_uri}")

@@ -43,7 +43,7 @@ evaluation:
           type: simple 
     
 aggregation:
-  calendar_source: null # value overridden at runtime via merge_config
+  calendar_source: gs://nyc-taxi-ehc--modeling/dev/backtests/data/fiscal_calendar.parquet
   timestamp_col: ds
   period_col: fiscal_year_month
   agg_func: sum
