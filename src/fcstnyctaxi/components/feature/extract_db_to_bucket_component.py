@@ -34,7 +34,7 @@ def extract_db_to_bucket(
     the SQL text as a sidecar object to `sql_sidecar_gcs_uri`.
     Populates `snapshot.metadata` for downstream lineage.
     """
-    from datetime import datetime, timezone
+    from datetime import UTC, datetime
 
     from google.cloud import bigquery
 
@@ -51,9 +51,7 @@ def extract_db_to_bucket(
         bq_client=bq_client,
     )
     write_text_to_gcs(text=sql_query, gcs_uri=sql_sidecar_gcs_uri)
-    extracted_at_utc = datetime.strftime(
-        datetime.now(timezone.utc), format="%Y-%m-%dT%H:%M:%S.%fZ"
-    )
+    extracted_at_utc = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
     snapshot.uri = output_gcs_uri
     snapshot.metadata.update(

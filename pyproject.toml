@@ -129,7 +129,16 @@ packages = ["src/fcstnyctaxi"]
 # Enable Pyflakes (`F`), a subset of pycodestyle (`E`), and isort (`I`).
 # Unlike Flake8, Ruff doesn't enable pycodestyle warnings (`W`) or
 # McCabe complexity (`C901`) by default.
-select = ["E4", "E5", "E7", "E9", "F", "I"]
+select = [
+    "E4",  # import/syntax-related pycodestyle errors
+    "E5",  # line too long & whitespace errors
+    "E7",  # statement-level pycodestyle errors
+    "E9",  # runtime errors (syntax errors at parse time)
+    "F",   # pyflakes — undefined names, unused imports
+    "I",   # isort — ruff format does not sort imports
+    "UP",  # pyupgrade — modern Python syntax for 3.11+
+    "B",   # flake8-bugbear — common design bugs, mutable defaults
+]
 ignore = []
 
 # Allow fix for all enabled rules (when `--fix`) is provided.

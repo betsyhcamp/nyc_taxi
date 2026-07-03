@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping, NamedTuple
+from typing import NamedTuple
 
 import fsspec
 from tsbricks.blocks.dataio import read_sql, render_sql_template

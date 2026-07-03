@@ -32,7 +32,7 @@ def merge_configs(*configs: dict | str | Path) -> BacktestConfig:
     for element in configs:
         if isinstance(element, dict):
             merged = _deep_merge(merged, element)
-        elif isinstance(element, (str, Path)):
+        elif isinstance(element, (str | Path)):
             loaded_config = yaml.safe_load(Path(element).read_text())
             if loaded_config is None:
                 raise ValueError(f"Config is empty at path {element}")
@@ -46,12 +46,12 @@ def merge_configs(*configs: dict | str | Path) -> BacktestConfig:
 
 
 def save_config(config: BacktestConfig | dict, path: str | Path) -> None:
-    if not isinstance(config, (BacktestConfig, dict)):
+    if not isinstance(config, (BacktestConfig | dict)):
         raise ValueError(
             f"Passed config is type {type(config).__name__}; "
             "only dict or BacktestConfig allowed"
         )
-    if not isinstance(path, (Path, str)):
+    if not isinstance(path, (Path | str)):
         raise ValueError(
             f"Passed path is type {type(path).__name__}; only str or Path allowed"
         )

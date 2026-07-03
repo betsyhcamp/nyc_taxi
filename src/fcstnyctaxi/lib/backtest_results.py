@@ -67,7 +67,7 @@ def build_cv_results(
         forecasts_per_fold=forecasts_per_fold,
         metrics=metrics,
         fold_origins=fold_origins,
-        fold_id_to_origin=dict(zip(fold_ids, fold_origins)),
+        fold_id_to_origin=dict(zip(fold_ids, fold_origins, strict=True)),
         train_val_splits_per_fold=train_val_splits_per_fold,
         **optional_fields,
     )
