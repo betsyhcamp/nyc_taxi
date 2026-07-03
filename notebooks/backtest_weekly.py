@@ -69,6 +69,20 @@ cal_df.info()
 cal_df.head()
 
 # %%
+#def compute_mtd_actuals(fiscal_week_startdate, ts_df, cal_df):
+    
+
+# %%
+#target_fiscal_months = 201801	
+#temp = ts_df.merge(cal_df, how= 'left', on='ds')
+
+# %%
+#temp.head()
+
+# %%
+#temp.groupby(['unique_id', 'fiscal_year_month'])
+
+# %%
 cv_folds, _ = generate_folds(
     ts_df, 
     cfg.cross_validation,
@@ -146,7 +160,7 @@ metrics
 
 # %%
 # look at a forecast and it's training data as a basic check
-fold_id = "fold_0"
+fold_id = "fold_1"
 train = cv_folds[fold_id]["train"]
 forecast = per_fold_forecasts[fold_id]
 
@@ -155,6 +169,79 @@ print(f"unique_id={sample_uid}, fold={fold_id}")
 
 train_sample = train[train["unique_id"] == sample_uid].sort_values("ds")
 forecast_sample = forecast[forecast["unique_id"] == sample_uid].sort_values("ds")
+
+
+# %%
+def compute_mtd_actuals(
+    train_df: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    target_fiscal_months: list,
+    time_col: str = "ds",
+    period_col: str = "fiscal_year_month",
+    id_col: str = "unique_id",
+    target_col: str = "y",
+) -> pd.DataFrame:
+    target_cal = (
+        calendar_df
+        .loc[calendar_df[period_col].isin(target_fiscal_months),[time_col, period_col]]
+        .drop_duplicates()
+    )
+
+    return (
+        train_df 
+        .merge(target_cal, on=time_col, how='inner')
+        .groupby([id_col, period_col])[target_col]
+        .sum()
+        .reset_index()
+        .rename(columns={target_col:"mtd_actuals"})
+    )
+
+
+# %%
+fold_id = "fold_1"
+#
+fcst_cal = (
+    per_fold_forecasts[fold_id]
+    .merge(cal_df, how='left', on='ds')
+    .loc[:,'fiscal_year_month']
+    .unique()
+)
+train = cv_folds[fold_id]["train"]
+train_cal_df = train.merge(cal_df, how='left', on='ds')
+mtd_df = (
+    train_cal_df 
+    .loc[train_cal_df['fiscal_year_month'].isin(fcst_months), :]
+    .groupby(['unique_id', 'fiscal_year_month'])['y']
+    .sum()
+    .reset_index(drop=False)
+)
+
+
+# %%
+def combine_monthly_forecast(
+    mtd_actuals_df : pd.DataFrame,
+    predicted_remaining_df : pd.DataFrame,
+    period_col: str = "fiscal_year_month",
+    forecast_col: str = "ypred",
+    mtd_actuals_col: str = "mtd_actuals",
+    id_col: str = "unique_id"
+):
+    merged_df =(
+        mtd_actuals_df[[id_col, period_col, mtd_actuals_col]]
+        .merge(
+            predicted_remaining_df[[id_col, period_col, forecast_col]], 
+            on=[id_col, period_col], 
+            how="outer"
+        )
+        .fillna(0)
+    )
+    
+    merged_df = merged_df.assign(
+        monthly_forecast=merged_df[mtd_actuals_col] + merged_df[forecast_col]
+    )
+    
+    return merge_df[[id_col, period_col, "monthly_forecast"]]
+
 
 # %%
 train_sample.tail(10)
