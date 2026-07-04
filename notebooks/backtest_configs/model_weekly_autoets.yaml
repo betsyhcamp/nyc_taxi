@@ -1,0 +1,5 @@
+model:
+  callable: models.auto_ets.auto_ets_weekly
+  hyperparameters:
+    freq: W-SUN
+    season_length: 52
