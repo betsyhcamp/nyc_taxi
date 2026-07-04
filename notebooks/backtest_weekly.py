@@ -29,6 +29,8 @@ from tsbricks.backtesting import (
     aggregate_backtest
 )
 
+from tsbricks.blocks.metrics import mae
+
 from tsbricks.runner import (
     apply_transforms,
     fit_transforms,
@@ -48,7 +50,7 @@ base_cfg_path = project_root / "notebooks" / "backtest_configs"/ "base_config.ya
 model_cfg_path = project_root / "notebooks" / "backtest_configs"/ "model_naive.yaml"
 
 sidecar_dir = generate_run_id()
-sidecar_uri=f"gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_weekly/{sidecar_dir}/"
+sidecar_uri = f"gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_weekly/{sidecar_dir}/"
 
 cfg = merge_configs(base_cfg_path, model_cfg_path)
 
@@ -61,26 +63,101 @@ cal_df = pd.read_parquet(cfg.aggregation.calendar_source)
 
 
 # %%
-ts_df.info()
-ts_df.head()
+def compute_mtd_actuals(
+    train_df: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    target_fiscal_months: list,
+    time_col: str = "ds",
+    period_col: str = "fiscal_year_month",
+    id_col: str = "unique_id",
+    target_col: str = "y",
+) -> pd.DataFrame:
+    """Sum observed weekly actuals within target fiscal months per (id_col, period_col).
 
-# %%
-cal_df.info()
-cal_df.head()
+    Args:
+        train_df: Per-fold observed data (weeks up to the fold origin).
+        calendar_df: Maps time_col (ds) to period_col (fiscal_year_month).
+        target_fiscal_months: Fiscal months covered by the forecast horizon.
+        time_col: Join key between train_df and calendar_df. Default "ds".
+        period_col: Fiscal period column. Default "fiscal_year_month".
+        id_col: Series identifier column. Default "unique_id".
+        target_col: Target value column to sum. Default "y".
 
-# %%
-#def compute_mtd_actuals(fiscal_week_startdate, ts_df, cal_df):
+    Returns:
+        DataFrame with columns (id_col, period_col, "mtd_actuals").
+        Empty when no target-month weeks have been observed yet (e.g. fold_0).
+    """
     
 
-# %%
-#target_fiscal_months = 201801	
-#temp = ts_df.merge(cal_df, how= 'left', on='ds')
+    target_cal = (
+        calendar_df
+        .loc[calendar_df[period_col].isin(target_fiscal_months),[time_col, period_col]]
+        .drop_duplicates()
+    )
+
+    return (
+        train_df 
+        .merge(target_cal, on=time_col, how='inner')
+        .groupby([id_col, period_col])[target_col]
+        .sum()
+        .reset_index()
+        .rename(columns={target_col:"mtd_actuals"})
+    )
+
 
 # %%
-#temp.head()
+def combine_monthly_forecast(
+    mtd_actuals_df : pd.DataFrame,
+    predicted_remaining_df : pd.DataFrame,
+    period_col: str = "fiscal_year_month",
+    forecast_col: str = "ypred",
+    mtd_actuals_col: str = "mtd_actuals",
+    id_col: str = "unique_id"
+) -> pd.DataFrame::
+    """Add MTD actuals and predicted remaining to produce a total monthly forecast.
+
+    Args:
+        mtd_actuals_df: Output of compute_mtd_actuals; columns 
+            (id_col, period_col, mtd_actuals_col).
+        predicted_remaining_df: Aggregated fold forecasts; columns 
+            (id_col, period_col, forecast_col).
+        period_col: Fiscal period column. Default "fiscal_year_month".
+        forecast_col: Predicted remaining column in predicted_remaining_df. Default
+            "ypred".
+        mtd_actuals_col: MTD actuals column in mtd_actuals_df. Default "mtd_actuals".
+        id_col: Series identifier column. Default "unique_id".
+
+    Returns:
+        DataFrame with columns (id_col, period_col, "monthly_forecast").
+        Outer join with fillna(0) handles forecast origins where MTD actuals are zero.
+    """
+
+    merged_df =(
+        mtd_actuals_df[[id_col, period_col, mtd_actuals_col]]
+        .merge(
+            predicted_remaining_df[[id_col, period_col, forecast_col]], 
+            on=[id_col, period_col], 
+            how="outer"
+        )
+        .fillna(0)
+    )
+    
+    merged_df = merged_df.assign(
+        monthly_forecast=merged_df[mtd_actuals_col] + merged_df[forecast_col]
+    )
+    
+    return merged_df[[id_col, period_col, "monthly_forecast"]]
+
 
 # %%
-#temp.groupby(['unique_id', 'fiscal_year_month'])
+actual_monthly_df = (
+    ts_df
+    .merge(cal_df[["ds", "fiscal_year_month"]].drop_duplicates(), on="ds", how='left')
+    .groupby(["fiscal_year_month", "unique_id"])["y"]
+    .sum()
+    .reset_index()
+    .rename(columns={"y":"y_actual_month_total"})
+)
 
 # %%
 cv_folds, _ = generate_folds(
@@ -156,100 +233,6 @@ backtest_results = build_backtest_results(
 )
 
 # %%
-metrics
-
-# %%
-# look at a forecast and it's training data as a basic check
-fold_id = "fold_1"
-train = cv_folds[fold_id]["train"]
-forecast = per_fold_forecasts[fold_id]
-
-sample_uid = train["unique_id"].iloc[0]
-print(f"unique_id={sample_uid}, fold={fold_id}")
-
-train_sample = train[train["unique_id"] == sample_uid].sort_values("ds")
-forecast_sample = forecast[forecast["unique_id"] == sample_uid].sort_values("ds")
-
-
-# %%
-def compute_mtd_actuals(
-    train_df: pd.DataFrame,
-    calendar_df: pd.DataFrame,
-    target_fiscal_months: list,
-    time_col: str = "ds",
-    period_col: str = "fiscal_year_month",
-    id_col: str = "unique_id",
-    target_col: str = "y",
-) -> pd.DataFrame:
-    target_cal = (
-        calendar_df
-        .loc[calendar_df[period_col].isin(target_fiscal_months),[time_col, period_col]]
-        .drop_duplicates()
-    )
-
-    return (
-        train_df 
-        .merge(target_cal, on=time_col, how='inner')
-        .groupby([id_col, period_col])[target_col]
-        .sum()
-        .reset_index()
-        .rename(columns={target_col:"mtd_actuals"})
-    )
-
-
-# %%
-fold_id = "fold_1"
-#
-fcst_cal = (
-    per_fold_forecasts[fold_id]
-    .merge(cal_df, how='left', on='ds')
-    .loc[:,'fiscal_year_month']
-    .unique()
-)
-train = cv_folds[fold_id]["train"]
-train_cal_df = train.merge(cal_df, how='left', on='ds')
-mtd_df = (
-    train_cal_df 
-    .loc[train_cal_df['fiscal_year_month'].isin(fcst_months), :]
-    .groupby(['unique_id', 'fiscal_year_month'])['y']
-    .sum()
-    .reset_index(drop=False)
-)
-
-
-# %%
-def combine_monthly_forecast(
-    mtd_actuals_df : pd.DataFrame,
-    predicted_remaining_df : pd.DataFrame,
-    period_col: str = "fiscal_year_month",
-    forecast_col: str = "ypred",
-    mtd_actuals_col: str = "mtd_actuals",
-    id_col: str = "unique_id"
-):
-    merged_df =(
-        mtd_actuals_df[[id_col, period_col, mtd_actuals_col]]
-        .merge(
-            predicted_remaining_df[[id_col, period_col, forecast_col]], 
-            on=[id_col, period_col], 
-            how="outer"
-        )
-        .fillna(0)
-    )
-    
-    merged_df = merged_df.assign(
-        monthly_forecast=merged_df[mtd_actuals_col] + merged_df[forecast_col]
-    )
-    
-    return merge_df[[id_col, period_col, "monthly_forecast"]]
-
-
-# %%
-train_sample.tail(10)
-
-# %%
-forecast_sample
-
-# %%
 aggregated_results = aggregate_backtest(
     results=backtest_results,
     aggregation_config= cfg.aggregation,
@@ -258,11 +241,45 @@ aggregated_results = aggregate_backtest(
 )
 
 # %%
-agg_fold_0 = aggregated_results.cv_forecasts["fold_0"]
-agg_fold_0
+monthly_metrics = []
+metric_name = cfg.evaluation.aggregated.metrics.definitions[0].name
 
-# %%
-agg_fold_0[agg_fold_0["unique_id"]==4].sort_values(by="fiscal_year_month")
+for fold_id, predicted_remaining_df in aggregated_results.cv_forecasts.items():
+
+    target_fiscal_months = predicted_remaining_df["fiscal_year_month"].unique().tolist()
+
+    mtd_actuals_df = compute_mtd_actuals(
+        train_df = cv_folds[fold_id]["train"],
+        calendar_df = cal_df,
+        target_fiscal_months = target_fiscal_months,
+    )
+
+    monthly_forecast_total_df = combine_monthly_forecast(
+        mtd_actuals_df = mtd_actuals_df,
+        predicted_remaining_df = predicted_remaining_df
+    )
+
+    monthly_eval_df = (
+        monthly_forecast_total_df
+        .merge(actual_monthly_df, 
+               on = ["unique_id", "fiscal_year_month"],
+               how = "inner"
+               )
+    )
+    fold_metric = mae(
+            y_true = monthly_eval_df["y_actual_month_total"],
+            y_pred = monthly_eval_df["monthly_forecast"]
+        )
+
+    monthly_metrics.append(
+        {
+            "fold_id": fold_id, 
+            "metric_name": metric_name, 
+            "metric_value": fold_metric
+        }
+    )
+
+monthly_metrics_df = pd.DataFrame(monthly_metrics)
 
 # %%
 # create sidecar contents for this run
@@ -283,5 +300,6 @@ aggregated_results.cv_metrics.to_parquet(
     f"{sidecar_uri}aggregated_metrics.parquet", 
     index=False
 )
+monthly_metrics_df.to_parquet(f"{sidecar_uri}monthly_metrics.parquet", index=False)
 
 print(f"Sidecar written: {sidecar_uri}")
