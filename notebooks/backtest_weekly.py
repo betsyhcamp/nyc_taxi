@@ -47,7 +47,7 @@ project_root = get_project_root_dir()
 sys.path.insert(0, str(project_root))
 
 base_cfg_path = project_root / "notebooks" / "backtest_configs"/ "base_config.yaml"
-model_cfg_path = project_root / "notebooks" / "backtest_configs"/ "model_naive.yaml"
+model_cfg_path = project_root / "notebooks" / "backtest_configs"/ "model_weekly_naive.yaml"
 
 sidecar_dir = generate_run_id()
 sidecar_uri = f"gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_weekly/{sidecar_dir}/"
@@ -113,7 +113,7 @@ def combine_monthly_forecast(
     forecast_col: str = "ypred",
     mtd_actuals_col: str = "mtd_actuals",
     id_col: str = "unique_id"
-) -> pd.DataFrame::
+) -> pd.DataFrame:
     """Add MTD actuals and predicted remaining to produce a total monthly forecast.
 
     Args:
