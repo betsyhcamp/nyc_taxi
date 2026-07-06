@@ -1,0 +1,49 @@
+data:
+  freq: W-SUN # fiscal weeks start Sunday; W-SUN means week anchored on Sunday
+  id_col: unique_id
+  date_col: ds
+  target_col: y
+
+cross_validation:
+  mode: explicit
+  forecast_origins: # fiscal week start dates of origin, horizon in weeks
+    - origin: "2025-04-20"
+      horizon: 9
+    - origin: "2025-04-27"
+      horizon: 8
+    - origin: "2025-05-04"
+      horizon: 7
+    - origin: "2025-05-11"
+      horizon: 6
+    - origin: "2025-05-18"
+      horizon: 5
+    - origin: "2025-05-25"
+      horizon: 4
+    - origin: "2025-06-01"
+      horizon: 3
+    - origin: "2025-06-08"
+      horizon: 2
+    - origin: "2025-06-15"
+      horizon: 1
+
+# model will be overridden at runtime via merge_config
+
+evaluation:
+  native: 
+    metrics:
+      definitions:
+        - name: mae
+          callable: tsbricks.blocks.metrics.mae
+          type: simple
+  aggregated:
+    metrics:
+      definitions:
+        - name: mae
+          callable: tsbricks.blocks.metrics.mae
+          type: simple 
+    
+aggregation:
+  calendar_source: gs://nyc-taxi-ehc--modeling/dev/backtests/data/fiscal_calendar.parquet
+  timestamp_col: ds
+  period_col: fiscal_year_month
+  agg_func: sum

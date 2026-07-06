@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -35,7 +35,7 @@ def find_root_project_dir(
         if any(check) and path_candidate.is_dir():
             return path_candidate
     raise RuntimeError(
-        "Count not locate project root directory using marker files:"
+        "Could not locate project root directory using marker files:"
         f"{root_markers_list}"
     )
 
@@ -71,4 +71,4 @@ def generate_run_id() -> str:
 
     Interim implementation pending the architecture lineage/run_id decision.
     """
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
