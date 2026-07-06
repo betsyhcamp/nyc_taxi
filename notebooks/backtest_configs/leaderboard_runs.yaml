@@ -1,6 +1,6 @@
 default_base_uri: gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_weekly/
 runs:
   - model: naive
-    sidecar_id: 20260702T042620935963Z
+    sidecar_id: 20260705T231545061665Z
   - model: auto_ets
     sidecar_id: 20260705T012257966189Z
