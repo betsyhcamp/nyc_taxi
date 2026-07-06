@@ -1,0 +1,11 @@
+project:
+  gcs_bucket: gs://nyc-taxi-ehc--modeling
+  time_series_uri: dev/backtests/data/time_series.parquet
+  fiscal_calendar_uri: dev/backtests/data/fiscal_calendar.parquet
+  gcp_project: nyc-taxi-ehc
+
+configs:
+  backtest_config: backtest_configs/backtest_config.yaml
+  model: backtest_configs/model_weekly_naive.yaml
+
+optuna: null   # populated when running Optuna tuning; null for fixed-hyperparameter runs

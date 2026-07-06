@@ -1,0 +1,37 @@
+data:
+  freq: W-SUN  # W-SAT tried and caused a bug; W-SUN is correct for this project
+  id_col: unique_id
+  date_col: ds
+  target_col: y
+
+cross_validation:
+  mode: explicit
+  # forecast_origins are NOT hardcoded here.
+  # Generated at runtime from evaluation_periods below via generate_origins_for_periods()
+  # in fcstnyctaxi/lib/period_utils.py and injected via merge_configs.
+
+evaluation:
+  native:
+    metrics:
+      definitions:
+        - name: mae
+          callable: tsbricks.blocks.metrics.mae
+          type: simple
+  aggregated:
+    metrics:
+      definitions:
+        - name: mae
+          callable: tsbricks.blocks.metrics.mae
+          type: simple
+
+aggregation:
+  calendar_source: null    # injected at runtime via three-way merge_configs
+  timestamp_col: ds
+  period_col: fiscal_year_month
+  agg_func: sum
+
+evaluation_periods:
+  start_months:             # clipped to 2 months for debugging; expand to 202501-202506 for full run
+    - 202505
+    - 202506
+  forecast_horizon_months: 2   # 2 for Framings A and C; 1 for Framing B
