@@ -29,6 +29,8 @@ def generate_origins_for_periods(
     start_months: list[int],
     forecast_horizon_months: int,
     calendar_df: pd.DataFrame,
+    calendar_time_col: str = "ds",
+    calendar_period_id: str = "fiscal_year_month",
 ) -> list[str]:
     """
         Return deduplicated list of fiscal_week_start_date strings to use as forecast
@@ -39,26 +41,32 @@ def generate_origins_for_periods(
             evaluation period starting at that fiscal month.
         forecast_horizon_months: 2 for weekly_to_monthly / direct_monthly;
             1 for remaining_month.
-        calendar_df: fiscal calendar with columns fiscal_year_month (int YYYYMM)
-            and fiscal_week_start_date (date).
+        calendar_df: fiscal calendar DataFrame. Must contain a date column
+            (calendar_time_col) and an integer period column (calendar_period_id).
+        calendar_time_col: column name in calendar_df holding fiscal week start dates.
+            Default "ds".
+        calendar_period_id: column name in calendar_df holding YYYYMM period integers.
+            Values are coerced to int if stored as strings or floats. Default
+            "fiscal_year_month".
 
     Returns:
         Sorted, deduplicated list of ISO date strings (Sundays) representing
         forecast origins. Each date appears exactly once across all periods.
     """
-
-    cal_dates = pd.to_datetime(calendar_df["fiscal_week_start_date"])
+    cal_dates = pd.to_datetime(calendar_df[calendar_time_col])
+    period_as_int = calendar_df[calendar_period_id].astype(int)
+    cal_months = sorted(period_as_int.unique().tolist())
 
     def get_weeks_list(month_val):
-        return sorted(
-            cal_dates[calendar_df["fiscal_year_month"] == month_val]
-            .dt.date.unique()
-            .tolist()
-        )
+        return sorted(cal_dates[period_as_int == month_val].dt.date.unique().tolist())
 
     fiscal_week_start_set = set()
-    cal_months = sorted(calendar_df["fiscal_year_month"].unique().tolist())
     for month in start_months:
+        if month not in cal_months:
+            raise ValueError(
+                f"start_month {month} not found in calendar — "
+                f"available months: {cal_months[0]}–{cal_months[-1]}"
+            )
         month_idx = cal_months.index(month)
         if month_idx == 0:
             raise ValueError(
@@ -112,12 +120,13 @@ def assign_tiers(
         target_col: Revenue column. Default "y".
         num_tiers: Number of quantile bins. Default 5.
         tier_labels: Tier label names ordered lowest to highest. Must match num_tiers.
-            Default ("very_low", "low", "middle", "high", "very_high").
+            tier_labels[0] is assigned to series with no positive revenue in the
+            trailing window. Default ("very_low", "low", "middle", "high", "very_high").
 
     Returns:
         DataFrame with columns (id_col, "tier").
-        Tier labels: very_high, high, middle, low, very_low (Q5 → Q1).
-        Series with no positive revenue weeks in the trailing window → very_low.
+        Tier labels assigned lowest (tier_labels[0]) to highest (tier_labels[-1]).
+        Series with no positive revenue weeks in the trailing window → tier_labels[0].
     """
     trailing_dates = _get_trailing_dates(
         calendar_df, origin_date, trailing_weeks, calendar_time_col
@@ -130,7 +139,7 @@ def assign_tiers(
         .mean()
     )
     if mean_pos.empty:
-        return pd.DataFrame({id_col: train_df[id_col].unique(), "tier": "very_low"})
+        return pd.DataFrame({id_col: train_df[id_col].unique(), "tier": tier_labels[0]})
 
     effective_tiers = min(num_tiers, mean_pos.nunique())
     effective_labels = tier_labels[:effective_tiers]
@@ -139,7 +148,7 @@ def assign_tiers(
         pd.qcut(mean_pos, q=effective_tiers, labels=effective_labels, duplicates="drop")
         .rename("tier")
         .reindex(train_df[id_col].unique())
-        .fillna("very_low")
+        .fillna(tier_labels[0])
         .reset_index(drop=False)
     )
 

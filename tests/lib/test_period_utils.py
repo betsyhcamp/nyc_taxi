@@ -116,6 +116,64 @@ def test_generate_origins_raises_when_horizon_exceeds_calendar(
         )
 
 
+def test_generate_origins_raises_when_start_month_not_in_calendar(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """start_month absent from calendar raises ValueError with helpful message."""
+    with pytest.raises(ValueError, match="not found in calendar"):
+        generate_origins_for_periods(
+            start_months=[202512],
+            forecast_horizon_months=1,
+            calendar_df=calendar_df,
+        )
+
+
+def test_generate_origins_string_period_column_coerced_to_int(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """Period column stored as strings coerced to int and produces correct results."""
+    str_calendar = calendar_df.assign(
+        fiscal_year_month=calendar_df["fiscal_year_month"].astype(str)
+    )
+    result = generate_origins_for_periods(
+        start_months=[202502],
+        forecast_horizon_months=1,
+        calendar_df=str_calendar,
+    )
+    assert result == ["2025-01-26", "2025-02-02", "2025-02-09", "2025-02-16"]
+
+
+def test_generate_origins_string_period_column_does_not_mutate_calendar_df(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """calendar_df is not modified when period column requires int coercion."""
+    str_calendar = calendar_df.assign(
+        fiscal_year_month=calendar_df["fiscal_year_month"].astype(str)
+    )
+    original_dtype = str_calendar["fiscal_year_month"].dtype
+    generate_origins_for_periods(
+        start_months=[202502],
+        forecast_horizon_months=1,
+        calendar_df=str_calendar,
+    )
+    assert str_calendar["fiscal_year_month"].dtype == original_dtype
+
+
+def test_generate_origins_custom_column_names(calendar_df: pd.DataFrame) -> None:
+    """calendar_time_col and calendar_period_id are respected."""
+    renamed = calendar_df.rename(
+        columns={"ds": "week_start", "fiscal_year_month": "period_id"}
+    )
+    result = generate_origins_for_periods(
+        start_months=[202502],
+        forecast_horizon_months=1,
+        calendar_df=renamed,
+        calendar_time_col="week_start",
+        calendar_period_id="period_id",
+    )
+    assert result == ["2025-01-26", "2025-02-02", "2025-02-09", "2025-02-16"]
+
+
 # ================================================
 # assign_tiers
 # ================================================
@@ -152,6 +210,31 @@ def test_assign_tiers_higher_revenue_gets_higher_tier(
     order = ["low", "middle", "high"]
     assert order.index(tier_map["high"]) > order.index(tier_map["mid"])
     assert order.index(tier_map["mid"]) > order.index(tier_map["low"])
+
+
+def test_assign_tiers_no_revenue_series_gets_tier_labels_0_with_custom_labels(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """No-revenue series falls back to tier_labels[0], not hardcoded 'very_low'."""
+    dates = pd.date_range("2025-01-05", periods=8, freq="W-SUN")
+    df = pd.DataFrame(
+        {
+            "unique_id": ["zero"] * 8 + ["pos"] * 8,
+            "ds": list(dates) * 2,
+            "y": [0.0] * 8 + [5.0] * 8,
+        }
+    )
+    result = assign_tiers(
+        df,
+        date(2025, 2, 23),
+        calendar_df,
+        trailing_weeks=8,
+        tier_labels=("bottom", "mid", "top"),  # custom tiers different than default
+        num_tiers=3,
+    )
+    tier_map = result.set_index("unique_id")["tier"].astype(str).to_dict()
+    assert tier_map["zero"] == "bottom"
+    assert tier_map["zero"] != "very_low"
 
 
 def test_assign_tiers_series_with_no_positive_revenue_gets_very_low(
