@@ -71,15 +71,21 @@ def test_get_trailing_dates_truncates_when_calendar_is_short(
 
 
 def test_generate_origins_single_start_month(calendar_df: pd.DataFrame) -> None:
-    """Happy path: one start_month, horizon=1 → correct origin window."""
+    """Happy path: one start_month, horizon=1 → correct origin window and horizons."""
     # month_before=202501 → first_origin=2025-01-26 (last of 202501)
     # month_end=202502   → last_origin=2025-02-16 (second-to-last of 202502)
+    # last_week=2025-02-23 → horizons: 4, 3, 2, 1
     result = generate_origins_for_periods(
         start_months=[202502],
         forecast_horizon_months=1,
         calendar_df=calendar_df,
     )
-    assert result == ["2025-01-26", "2025-02-02", "2025-02-09", "2025-02-16"]
+    assert result == [
+        {"origin": "2025-01-26", "horizon": 4},
+        {"origin": "2025-02-02", "horizon": 3},
+        {"origin": "2025-02-09", "horizon": 2},
+        {"origin": "2025-02-16", "horizon": 1},
+    ]
 
 
 def test_generate_origins_result_is_sorted_with_no_duplicates(
@@ -91,7 +97,8 @@ def test_generate_origins_result_is_sorted_with_no_duplicates(
         forecast_horizon_months=2,
         calendar_df=calendar_df,
     )
-    assert result == sorted(set(result))
+    origins = [r["origin"] for r in result]
+    assert origins == sorted(set(origins))
 
 
 def test_generate_origins_raises_when_start_month_is_first_in_calendar(
@@ -140,7 +147,12 @@ def test_generate_origins_string_period_column_coerced_to_int(
         forecast_horizon_months=1,
         calendar_df=str_calendar,
     )
-    assert result == ["2025-01-26", "2025-02-02", "2025-02-09", "2025-02-16"]
+    assert result == [
+        {"origin": "2025-01-26", "horizon": 4},
+        {"origin": "2025-02-02", "horizon": 3},
+        {"origin": "2025-02-09", "horizon": 2},
+        {"origin": "2025-02-16", "horizon": 1},
+    ]
 
 
 def test_generate_origins_string_period_column_does_not_mutate_calendar_df(
@@ -171,7 +183,12 @@ def test_generate_origins_custom_column_names(calendar_df: pd.DataFrame) -> None
         calendar_time_col="week_start",
         calendar_period_id="period_id",
     )
-    assert result == ["2025-01-26", "2025-02-02", "2025-02-09", "2025-02-16"]
+    assert result == [
+        {"origin": "2025-01-26", "horizon": 4},
+        {"origin": "2025-02-02", "horizon": 3},
+        {"origin": "2025-02-09", "horizon": 2},
+        {"origin": "2025-02-16", "horizon": 1},
+    ]
 
 
 # ================================================

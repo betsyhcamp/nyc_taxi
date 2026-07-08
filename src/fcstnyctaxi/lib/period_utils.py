@@ -31,10 +31,9 @@ def generate_origins_for_periods(
     calendar_df: pd.DataFrame,
     calendar_time_col: str = "ds",
     calendar_period_id: str = "fiscal_year_month",
-) -> list[str]:
+) -> list[dict]:
     """
-        Return deduplicated list of fiscal_week_start_date strings to use as forecast
-        origins.
+        Return deduplicated list of {origin, horizon} dicts to use as forecast origins.
 
     Args:
         start_months: YYYYMM integers, e.g. [202505, 202506]. Each defines one
@@ -50,8 +49,9 @@ def generate_origins_for_periods(
             "fiscal_year_month".
 
     Returns:
-        Sorted, deduplicated list of ISO date strings (Sundays) representing
-        forecast origins. Each date appears exactly once across all periods.
+        Sorted, deduplicated list of dicts with keys "origin" (ISO date string) and
+        "horizon" (int weeks). Each origin date appears exactly once; when the same
+        origin belongs to overlapping periods the maximum horizon is kept.
     """
     cal_dates = pd.to_datetime(calendar_df[calendar_time_col])
     period_as_int = calendar_df[calendar_period_id].astype(int)
@@ -60,7 +60,7 @@ def generate_origins_for_periods(
     def get_weeks_list(month_val):
         return sorted(cal_dates[period_as_int == month_val].dt.date.unique().tolist())
 
-    fiscal_week_start_set = set()
+    origin_horizon_map: dict[date, int] = {}
     for month in start_months:
         if month not in cal_months:
             raise ValueError(
@@ -85,14 +85,21 @@ def generate_origins_for_periods(
             )
 
         month_end_val = cal_months[month_end_idx]
+        last_week = get_weeks_list(month_end_val)[-1]
 
         first_origin = get_weeks_list(month_before_val)[-1]
         last_origin = get_weeks_list(month_end_val)[-2]
 
         mask = (cal_dates.dt.date >= first_origin) & (cal_dates.dt.date <= last_origin)
         all_origins = cal_dates[mask].dt.date.unique().tolist()
-        fiscal_week_start_set.update(all_origins)
-    return sorted(str(o) for o in fiscal_week_start_set)
+
+        for origin in all_origins:
+            horizon = (last_week - origin).days // 7
+            origin_horizon_map[origin] = max(origin_horizon_map.get(origin, 0), horizon)
+
+    return [
+        {"origin": str(o), "horizon": h} for o, h in sorted(origin_horizon_map.items())
+    ]
 
 
 def assign_tiers(
