@@ -103,8 +103,8 @@ cfg = merge_configs(backtest_cfg_path, model_cfg_path, runtime_overrides)
 # %%
 actual_monthly_df = (
     ts_df
-    .merge(calendar_df[["ds", "fiscal_year_month"]].drop_duplicates(), on="ds", how='left')
-    .groupby(["fiscal_year_month", "unique_id"])["y"]
+    .merge(calendar_df[["ds", cfg.aggregation.period_col]].drop_duplicates(), on="ds", how='left')
+    .groupby([cfg.aggregation.period_col, "unique_id"])["y"]
     .sum()
     .reset_index()
     .rename(columns={"y":"actual_monthly_total"})
@@ -119,8 +119,8 @@ def compute_mtd_actuals(
     train_df: pd.DataFrame,
     calendar_df: pd.DataFrame,
     target_fiscal_months: list,
-    time_col: str = "ds",
     period_col: str = "fiscal_year_month",
+    time_col: str = "ds",
     id_col: str = "unique_id",
     target_col: str = "y",
 ) -> pd.DataFrame:
@@ -130,8 +130,8 @@ def compute_mtd_actuals(
         train_df: Per-fold observed data (weeks up to the fold origin).
         calendar_df: Maps time_col (ds) to period_col (fiscal_year_month).
         target_fiscal_months: Fiscal months covered by the forecast horizon.
+        period_col: Fiscal period column. Default fiscal_year_month.
         time_col: Join key between train_df and calendar_df. Default "ds".
-        period_col: Fiscal period column. Default "fiscal_year_month".
         id_col: Series identifier column. Default "unique_id".
         target_col: Target value column to sum. Default "y".
 
@@ -213,7 +213,7 @@ def evaluate_model(
     Optuna-compatible: data loaded once outside; cfg varies per trial.
 
     Returns dict with keys:
-        cv_results, backtest_results,
+        backtest_results,
         monthly_series_df  # columns: "forecast_origin_date", 
                            # "predicted_fiscal_year_month","unique_id", "tier", 
                            # "monthly_forecast",
@@ -265,33 +265,39 @@ def evaluate_model(
         predicted_remaining_df = (
             forecast_original_scale
             .merge(
-                calendar_df[["ds", "fiscal_year_month"]].drop_duplicates(),
+                calendar_df[["ds", cfg.aggregation.period_col]].drop_duplicates(),
                 on="ds",
                 how="left"
                 )
-            .groupby(["unique_id", "fiscal_year_month"])["ypred"].sum()
+            .groupby(["unique_id", cfg.aggregation.period_col])["ypred"].sum()
             .reset_index()
         )
         
         target_fiscal_months = (
-            predicted_remaining_df["fiscal_year_month"].unique().tolist()
+            predicted_remaining_df[cfg.aggregation.period_col].unique().tolist()
         )
 
         # MTD + combine + merge produces full artifact rows for this fold
-        mtd_actuals_df = compute_mtd_actuals(train, calendar_df, target_fiscal_months)
+        mtd_actuals_df = compute_mtd_actuals(
+            train,
+            calendar_df,
+            target_fiscal_months,
+            period_col=cfg.aggregation.period_col
+            )
         monthly_forecast_total_df = combine_monthly_forecast(
             mtd_actuals_df,
-            predicted_remaining_df
+            predicted_remaining_df,
+            period_col=cfg.aggregation.period_col
         )
         
         fold_rows = (
             monthly_forecast_total_df
-            .merge(actual_monthly_df, on=["unique_id", "fiscal_year_month"])
+            .merge(actual_monthly_df, on=["unique_id", cfg.aggregation.period_col])
             .merge(tier_df,   on="unique_id")
             .merge(weight_df, on="unique_id")
             .assign(forecast_origin_date=fold_origin)
             .rename(columns={
-                "fiscal_year_month": "predicted_fiscal_year_month",
+                cfg.aggregation.period_col: "predicted_fiscal_year_month",
             })
             [["forecast_origin_date", "predicted_fiscal_year_month",
               "unique_id", "tier", "monthly_forecast",
@@ -330,7 +336,6 @@ def evaluate_model(
 
 
     return {
-        "cv_results": cv_results,
         "backtest_results": backtest_results,
         "monthly_series_df": monthly_series_df,
     }
@@ -341,7 +346,16 @@ backtest_results   = result["backtest_results"]
 monthly_series_df  = result["monthly_series_df"]
 
 # %%
-# -- create sidecar contents for this run -------------
+# extract the raw forecasts generated during cross-validation
+cv_forecasts_df = pd.concat(
+    [df.assign(fold_id=fold_id)
+     for fold_id, df in backtest_results.cv.forecasts_per_fold.items()],
+    ignore_index=True
+)
+
+# %%
+# -- create sidecar contents for this run -------------------
+
 # write composed config
 save_config(cfg, f"{sidecar_uri}composed_config.yaml")
 
@@ -349,13 +363,17 @@ save_config(cfg, f"{sidecar_uri}composed_config.yaml")
 run_metadata = {
     "git_hash": backtest_results.git_hash,
     "uv_lock_info": backtest_results.uv_lock_info,
-    "ts_data_uri": timeseries_uri
+    "ts_data_uri": timeseries_uri,
 }
 write_text_to_gcs(json.dumps(run_metadata, indent=2), f"{sidecar_uri}run_metadata.json")
 
-# write results data to sidecar in GCS
+# input data snapshots for self-contained debugging 
+calendar_df.to_parquet(f"{sidecar_uri}fiscal_calendar.parquet", index=False)
+ts_df.to_parquet(f"{sidecar_uri}time_series_snapshot.parquet", index=False)
+
+# write output results data to sidecar in GCS
+cv_forecasts_df.to_parquet(f"{sidecar_uri}raw_cv_forecasts.parquet", index=False)
 backtest_results.cv.metrics.to_parquet(f"{sidecar_uri}metrics.parquet", index=False)
-monthly_metrics_df.to_parquet(f"{sidecar_uri}monthly_metrics.parquet", index=False)
 monthly_series_df.to_parquet(f"{sidecar_uri}monthly_series.parquet", index=False)
 
 print(f"Sidecar written: {sidecar_uri}")
