@@ -27,7 +27,6 @@ def resolve_sidecar_uri(entry, default_base_uri) -> str:
     return f"{default_base_uri}{entry['sidecar_id']}/"
 
 
-
 # %%
 runs = []
 for entry in leaderboard_runs["runs"]:
@@ -43,47 +42,108 @@ for entry in leaderboard_runs["runs"]:
 
     runs.append({
         "model": entry["model"],
+        "framing": entry["framing"],
         "model_section": composed_cfg["model"],
         "metrics_df": pd.read_parquet(f"{uri}metrics.parquet"),
-        "agg_metrics_df": pd.read_parquet(f"{uri}aggregated_metrics.parquet"),
-        "monthly_metrics_df": pd.read_parquet(f"{uri}monthly_metrics.parquet"),
+        "monthly_series_df": pd.read_parquet(f"{uri}monthly_series.parquet"),
+        "calendar_df": pd.read_parquet(f"{uri}fiscal_calendar.parquet")[["ds", "fiscal_year_month"]].drop_duplicates(),
     })
 
 print(f"Loaded {len(runs)} runs: {[r['model'] for r in runs]}")
 
 # %%
-# monthly_metrics_df uses "metric_value"/"fold_id" — normalize when metric PR updates backtest_weekly
+all_monthly_series = pd.concat(
+    [run["monthly_series_df"].assign(model=run["model"]) for run in runs],
+    ignore_index=True
+)
 
-summary_rows = []
-for run in runs:
-    row = {}
-    row["model"] = run["model"]
-    row["callable"] = run["model_section"]["callable"]
-    row["hyperparameters"] = run["model_section"].get("hyperparameters", {})
-    row["weekly_error"] = run["metrics_df"]["value"].mean()
-    row["pred_remaining_error"]=run["agg_metrics_df"]["value"].mean()
-    row["monthly_error"] = run["monthly_metrics_df"]["metric_value"].mean()
-    row["metric_name"] =run["metrics_df"]['metric_name'].unique()[0]
-    summary_rows.append(row)
-
-summary_df = pd.DataFrame(summary_rows)
-display(summary_df)
+all_monthly_series["abs_error"] = (
+    all_monthly_series["monthly_forecast"]
+    - all_monthly_series["actual_monthly_total"]
+).abs()
 
 # %%
-fold_rows = []
-for run in runs:
-    weekly_per_fold = run["metrics_df"].groupby("fold")["value"].mean()
-    agg_per_fold = run["agg_metrics_df"].groupby("fold")["value"].mean()
-    monthly_per_fold = run["monthly_metrics_df"].set_index("fold_id")["metric_value"]
+all_monthly_series.head()
 
-    for fold in weekly_per_fold.index:
-        fold_rows.append({
-            "model": run["model"],
-            "fold": fold,
-            "weekly_error": weekly_per_fold[fold],
-            "pred_remaining_error": agg_per_fold[fold],
-            "monthly_error": monthly_per_fold[fold],
-        })
+# %%
+calendar_df = runs[0]["calendar_df"]
+calendar_df = calendar_df.rename(
+    columns={"ds": "forecast_origin_date", "fiscal_year_month": "origin_fiscal_month"}
+)
 
-fold_df = pd.DataFrame(fold_rows).sort_values(["model", "fold"]).reset_index(drop=True)
-display(fold_df)
+# %%
+calendar_df["forecast_origin_date"] = pd.to_datetime(
+    calendar_df["forecast_origin_date"]
+)
+all_monthly_series["forecast_origin_date"] = pd.to_datetime(
+    all_monthly_series["forecast_origin_date"]
+)
+
+# %%
+all_monthly_series =all_monthly_series.merge(
+    calendar_df,
+    on="forecast_origin_date",
+    how="left"
+)
+
+# %%
+end = all_monthly_series["predicted_fiscal_year_month"]
+start = all_monthly_series["origin_fiscal_month"]
+all_monthly_series["target"] = (
+    (end // 100 - start // 100) * 12 + (end % 100 - start % 100)
+)
+
+
+# %%
+all_monthly_series.head()
+
+# %%
+period_breakdown = (
+    all_monthly_series
+    .groupby(["model", "predicted_fiscal_year_month", "target", "tier"], observed=True)["abs_error"]
+    .mean()
+    .reset_index()
+    .rename(columns={"abs_error": "mae"})
+    .sort_values(["model", "predicted_fiscal_year_month", "target", "tier"])
+)
+period_breakdown
+
+# %%
+fold_breakdown = (
+    all_monthly_series
+    .groupby(["model", "forecast_origin_date", "predicted_fiscal_year_month", "target", "tier"], observed=True)["abs_error"]
+    .mean()
+    .reset_index()
+    .rename(columns={"abs_error": "mae"})
+    .sort_values(["model", "forecast_origin_date", "predicted_fiscal_year_month", "target", "tier"]))
+fold_breakdown
+
+# %%
+global_monthly_mae = (
+    all_monthly_series
+    .groupby("model")["abs_error"]
+    .mean()
+    .rename("global_monthly_mae")
+)
+
+# %%
+
+tier_monthly_mae = (
+    all_monthly_series.groupby(["model", "tier"], observed=True)["abs_error"]
+    .mean()
+    .unstack("tier")
+    .add_prefix("tier_monthly_mae_")
+)
+
+# %%
+global_avg_weekly_mae = pd.Series(
+    {run["model"]: run["metrics_df"]["value"].mean() for run in runs},
+    name="global_avg_weekly_mae",
+)
+global_avg_weekly_mae.index.name = "model"
+
+# %%
+summary_df = pd.concat(
+    [global_monthly_mae, tier_monthly_mae, global_avg_weekly_mae],
+    axis=1).reset_index()
+display(summary_df)
