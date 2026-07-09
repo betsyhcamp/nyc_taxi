@@ -6,6 +6,6 @@ project:
 
 configs:
   backtest_config: backtest_configs/backtest_config.yaml
-  model: backtest_configs/model_weekly_naive.yaml
+  model: backtest_configs/model_weekly_autoets.yaml
 
 optuna: null   # populated when running Optuna tuning; null for fixed-hyperparameter runs
