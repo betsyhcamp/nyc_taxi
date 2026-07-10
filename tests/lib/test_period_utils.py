@@ -284,7 +284,7 @@ def test_assign_tiers_sparse_series_not_in_trailing_window_gets_very_low(
             "y": [10.0] * 4 + [5.0] * 4,
         }
     )
-    # trailing_weeks=4 → window covers only 202502 (2025-02-02 to 2025-02-23)
+    # trailing_weeks=4 -> window covers only 202502 (2025-02-02 to 2025-02-23)
     # "sparse" has no data in that window
     result = assign_tiers(df, date(2025, 2, 23), calendar_df, trailing_weeks=4)
     tier_map = result.set_index("unique_id")["tier"].astype(str).to_dict()
@@ -335,16 +335,16 @@ def test_compute_series_weights_covers_all_series_exactly_once(
     assert len(result) == result["unique_id"].nunique()
 
 
-def test_compute_series_weights_applies_weight_fn(
+def test_compute_series_weights_applies_dampening_fn(
     train_df: pd.DataFrame, calendar_df: pd.DataFrame
 ) -> None:
-    """Weight equals weight_fn(sum of trailing revenue) for each series."""
+    """Weight equals dampening_fn(sum of trailing revenue) for each series."""
     result = compute_series_weights(
-        train_df, date(2025, 2, 23), calendar_df, trailing_weeks=8, weight_fn=np.sqrt
+        train_df, date(2025, 2, 23), calendar_df, trailing_weeks=8, dampening_fn=np.sqrt
     )
     weight_map = result.set_index("unique_id")["series_weight"].to_dict()
-    # "high": 8 weeks × 10.0 = 80.0 → sqrt(80)
-    # "mid":  8 weeks × 5.0  = 40.0 → sqrt(40)
+    # "high": 8 weeks × 10.0 = 80.0 -> sqrt(80)
+    # "mid":  8 weeks × 5.0  = 40.0 -> sqrt(40)
     assert weight_map["high"] == pytest.approx(np.sqrt(80.0))
     assert weight_map["mid"] == pytest.approx(np.sqrt(40.0))
 
@@ -352,7 +352,7 @@ def test_compute_series_weights_applies_weight_fn(
 def test_compute_series_weights_clips_negative_revenue_to_zero(
     calendar_df: pd.DataFrame,
 ) -> None:
-    """Series with only negative revenue gets weight_fn(0) = 0."""
+    """Series with only negative revenue gets dampening_fn(0) = 0."""
     dates = pd.date_range("2025-01-05", periods=8, freq="W-SUN")
     df = pd.DataFrame({"unique_id": ["neg"] * 8, "ds": list(dates), "y": [-5.0] * 8})
     result = compute_series_weights(

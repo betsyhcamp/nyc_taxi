@@ -169,7 +169,7 @@ def compute_series_weights(
     id_col: str = "unique_id",
     time_col: str = "ds",
     target_col: str = "y",
-    weight_fn: Callable[[float], float] = np.sqrt,
+    dampening_fn: Callable[[float], float] = np.cbrt,
 ) -> pd.DataFrame:
     """Compute dampened revenue weight for each series from trailing training data.
 
@@ -183,12 +183,12 @@ def compute_series_weights(
         id_col: Series identifier column. Default "unique_id".
         time_col: Date column. Default "ds".
         target_col: Revenue column. Default "y".
-        weight_fn: Dampening function applied to the clipped trailing revenue sum.
-            Default np.sqrt. Other candidates: np.cbrt (cube root), np.log1p (log(1+x)).
+        dampening_fn: Dampening function applied to the clipped trailing revenue sum.
+            Default np.cbrt (cube root). Other candidates: np.sqrt, np.log1p (log(1+x)).
 
     Returns:
         DataFrame with columns (id_col, "series_weight").
-        series_weight = weight_fn(max(trailing_revenue_sum, 0)).
+        series_weight = dampening_fn(max(trailing_revenue_sum, 0)).
     """
 
     trailing_dates = _get_trailing_dates(
@@ -204,7 +204,7 @@ def compute_series_weights(
 
     return (
         trailing_sum.clip(lower=0)
-        .apply(weight_fn)
+        .apply(dampening_fn)
         .rename("series_weight")
         .reset_index()
     )
