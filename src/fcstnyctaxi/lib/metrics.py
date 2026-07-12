@@ -16,17 +16,6 @@ def _check_1d_same_shape(*arrays: np.ndarray) -> None:
         raise ValueError(f"Array shapes must match; got {shapes}.")
 
 
-def _bad_numerator_inputs(y_true: np.ndarray, y_pred: np.ndarray) -> bool:
-    """Helper function that checks shape of input arrays for forecast error
-    for numerator of metrics. Also checks if contents of input arrays are finite.
-    """
-    if y_true.ndim != 1 or y_pred.ndim != 1 or (y_true.shape != y_pred.shape):
-        raise ValueError("y_true and y_pred must be 1D arrays of same shape.")
-
-    is_finite = np.all(np.isfinite(y_true)) and np.all(np.isfinite(y_pred))
-    return not is_finite or y_true.size == 0
-
-
 def _scale_is_invalid(scale: float) -> bool:
     return not np.isfinite(scale) or (scale <= _SMALL_NUM_BOUND)
 
@@ -48,6 +37,24 @@ def wrmae_pooled(
     benchmark_errors: np.ndarray,
     weights: np.ndarray,
 ) -> float:
+    """Pooled Weighted Relative MAE for a single fold.
+
+    Computes sum(w * |e_challenger|) / sum(w * |e_benchmark|). Applies abs() internally,
+    so signed residuals and pre-computed absolute errors are both valid inputs.
+
+    Args:
+        challenger_errors: Forecast errors for the challenger, shape (n,).
+        benchmark_errors: Forecast errors for the benchmark, shape (n,).
+        weights: Non-negative series weights, shape (n,).
+
+    Returns:
+        Ratio of weighted challenger error to weighted benchmark error,
+        or nan on empty input, non-finite values, or near-zero denominator.
+    """
+    # belt-and-suspenders: in case errors are signed, make into absolute value
+    challenger_errors = np.abs(challenger_errors)
+    benchmark_errors = np.abs(benchmark_errors)
+
     # shape guard: error if arrays mismatched
     _check_1d_same_shape(challenger_errors, benchmark_errors, weights)
 
@@ -76,6 +83,27 @@ def wrmae_per_series(
     benchmark_errors: np.ndarray,
     weights: np.ndarray,
 ) -> float:
+    """Per-series Weighted Relative MAE for a single fold.
+
+    Computes sum(w_norm_i * |e_c_i| / |e_b_i|), where w_norm renormalizes over
+    surviving series. Series with near-zero benchmark error are excluded
+    before computing per-series ratios. Applies abs() internally,
+    so signed residuals and pre-computed absolute errors are both valid inputs.
+
+    Args:
+        challenger_errors: Forecast errors for the challenger, shape (n,).
+        benchmark_errors: Forecast errors for the benchmark, shape (n,).
+            Near-zero entries are excluded from the computation.
+        weights: Non-negative series weights, shape (n,).
+
+    Returns:
+        Weighted mean of per-series error ratios, or nan on empty input,
+        non-finite values, or when all benchmark errors are near-zero.
+    """
+    # belt-and-suspenders: in case errors are signed, make into absolute value
+    challenger_errors = np.abs(challenger_errors)
+    benchmark_errors = np.abs(benchmark_errors)
+
     # shape guard: error if arrays mismatched
     _check_1d_same_shape(challenger_errors, benchmark_errors, weights)
 
@@ -123,6 +151,21 @@ def signed_bias_pooled(
     y_pred: np.ndarray,
     weights: np.ndarray,
 ) -> float:
+    """Pooled weighted signed relative bias for a single fold.
+
+    Computes sum(w * (y_pred - y_true)) / sum(w * |y_true|). Positive
+    values indicate systematic over-forecasting; negative values indicate
+    systematic under-forecasting.
+
+    Args:
+        y_true: Actual values, shape (n,).
+        y_pred: Predicted values, shape (n,).
+        weights: Non-negative series weights, shape (n,).
+
+    Returns:
+        Signed bias as a fraction of total weighted actual magnitude,
+        or nan on empty input, non-finite values, or near-zero denominator.
+    """
     # shape guard
     _check_1d_same_shape(y_true, y_pred, weights)
 
@@ -152,6 +195,22 @@ def signed_bias_per_series(
     y_pred: np.ndarray,
     weights: np.ndarray,
 ) -> float:
+    """Per-series weighted signed relative bias for a single fold.
+
+    Computes sum(w_norm_i * (y_pred_i - y_true_i) / |y_true_i|), where
+    w_norm renormalizes over remaining series. Series with near-zero
+    |y_true| are excluded before computing per-series bias.
+
+    Args:
+        y_true: Actual values, shape (n,). Near-zero entries are excluded.
+        y_pred: Predicted values, shape (n,).
+        weights: Non-negative series weights, shape (n,).
+
+    Returns:
+        Weighted mean of per-series signed relative bias. Positive values
+        indicate systematic over-forecasting. Returns nan on empty input,
+        non-finite values, or when all |y_true| values are near-zero.
+    """
     # shape guard
     _check_1d_same_shape(y_true, y_pred, weights)
 
@@ -174,7 +233,7 @@ def signed_bias_per_series(
 
     # Normalize weights over remaining series
     total_weight = np.sum(weights)
-    # IF _scale_is_invalid(total_weight): return nan
+
     if _scale_is_invalid(total_weight):
         return np.nan
 
