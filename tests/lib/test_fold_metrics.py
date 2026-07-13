@@ -5,6 +5,8 @@ import pandas as pd
 import pytest
 
 from fcstnyctaxi.lib.fold_metrics import (
+    _FOLD_KEYS,
+    _JOIN_KEYS,
     compute_hero_metric,
     compute_signed_bias_per_series,
     compute_signed_bias_pooled,
@@ -13,7 +15,13 @@ from fcstnyctaxi.lib.fold_metrics import (
     compute_wrmae_per_series,
     compute_wrmae_pooled,
 )
-from fcstnyctaxi.lib.metrics import _SMALL_NUM_BOUND
+from fcstnyctaxi.lib.metrics import (
+    _SMALL_NUM_BOUND,
+    signed_bias_per_series,
+    signed_bias_pooled,
+    wrmae_per_series,
+    wrmae_pooled,
+)
 
 # ================================================
 # Shared timestamps
@@ -412,3 +420,98 @@ def test_compute_hero_metric_dispatches_wape(base_dfs):
     direct = compute_wape(challenger)
     via_hero = compute_hero_metric(challenger, benchmark, "wape", "horizon_1")
     np.testing.assert_allclose(via_hero, direct, rtol=1e-7)
+
+
+# ================================================
+# Consistency tests: orchestration path vs. primitive path
+#
+# Each test runs two independent implementations on the same fixture:
+#   Path 1 (orchestration): vectorized groupby in fold_metrics.py
+#   Path 2 (primitive):     per-fold loop calling metrics.py scalar functions
+# Agreement within rtol=1e-7 guards against formula drift between the layers.
+# ================================================
+
+_CH_COLS = _JOIN_KEYS + ["monthly_forecast", "actual_monthly_total", "series_weight"]
+_BM_COLS = _JOIN_KEYS + ["monthly_forecast"]
+
+
+def test_wrmae_pooled_orchestration_agrees_with_primitive(tier_dfs):
+    """compute_wrmae_pooled fold average matches per fold wrmae_pooled primitive."""
+    challenger, benchmark = tier_dfs
+
+    orch = compute_wrmae_pooled(challenger, benchmark)
+
+    merged = challenger[_CH_COLS].merge(
+        benchmark[_BM_COLS], on=_JOIN_KEYS, suffixes=("_ch", "_bm"), how="inner"
+    )
+    fold_vals = []
+    for _, grp in merged.groupby(_FOLD_KEYS):
+        ch_err = (grp["monthly_forecast_ch"] - grp["actual_monthly_total"]).abs()
+        bm_err = (grp["monthly_forecast_bm"] - grp["actual_monthly_total"]).abs()
+        fold_vals.append(
+            wrmae_pooled(
+                ch_err.to_numpy(dtype=np.float64),
+                bm_err.to_numpy(dtype=np.float64),
+                grp["series_weight"].to_numpy(dtype=np.float64),
+            )
+        )
+    np.testing.assert_allclose(orch, np.nanmean(fold_vals), rtol=1e-7)
+
+
+def test_wrmae_per_series_orchestration_agrees_with_primitive(tier_dfs):
+    """compute_wrmae_per_series fold avg matches per fold wrmae_per_series primitive."""
+    challenger, benchmark = tier_dfs
+
+    orch = compute_wrmae_per_series(challenger, benchmark)
+
+    merged = challenger[_CH_COLS].merge(
+        benchmark[_BM_COLS], on=_JOIN_KEYS, suffixes=("_ch", "_bm"), how="inner"
+    )
+    fold_vals = []
+    for _, grp in merged.groupby(_FOLD_KEYS):
+        ch_err = (grp["monthly_forecast_ch"] - grp["actual_monthly_total"]).abs()
+        bm_err = (grp["monthly_forecast_bm"] - grp["actual_monthly_total"]).abs()
+        fold_vals.append(
+            wrmae_per_series(
+                ch_err.to_numpy(dtype=np.float64),
+                bm_err.to_numpy(dtype=np.float64),
+                grp["series_weight"].to_numpy(dtype=np.float64),
+            )
+        )
+    np.testing.assert_allclose(orch, np.nanmean(fold_vals), rtol=1e-7)
+
+
+def test_signed_bias_pooled_orchestration_agrees_with_primitive(tier_dfs):
+    """compute_signed_bias_pooled agrees with signed_bias_pooled primitive per fold."""
+    challenger, _ = tier_dfs
+
+    orch = compute_signed_bias_pooled(challenger)
+
+    fold_vals = []
+    for _, grp in challenger.groupby(_FOLD_KEYS):
+        fold_vals.append(
+            signed_bias_pooled(
+                grp["actual_monthly_total"].to_numpy(dtype=np.float64),
+                grp["monthly_forecast"].to_numpy(dtype=np.float64),
+                grp["series_weight"].to_numpy(dtype=np.float64),
+            )
+        )
+    np.testing.assert_allclose(orch, np.nanmean(fold_vals), rtol=1e-7)
+
+
+def test_signed_bias_per_series_orchestration_agrees_with_primitive(tier_dfs):
+    """compute_signed_bias_per_series agrees with signed_bias_per_series per fold."""
+    challenger, _ = tier_dfs
+
+    orch = compute_signed_bias_per_series(challenger)
+
+    fold_vals = []
+    for _, grp in challenger.groupby(_FOLD_KEYS):
+        fold_vals.append(
+            signed_bias_per_series(
+                grp["actual_monthly_total"].to_numpy(dtype=np.float64),
+                grp["monthly_forecast"].to_numpy(dtype=np.float64),
+                grp["series_weight"].to_numpy(dtype=np.float64),
+            )
+        )
+    np.testing.assert_allclose(orch, np.nanmean(fold_vals), rtol=1e-7)
