@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -233,3 +234,156 @@ def compute_signed_bias_per_series(
     fold_totals = df.groupby(_FOLD_KEYS)["weighted_bias"].sum()
 
     return np.nanmean(fold_totals.to_numpy(dtype=np.float64)).item()
+
+
+def compute_wape(
+    challenger_df: pd.DataFrame,
+    tier: str | None = None,
+) -> float:
+    """Fold-averaged WAPE. tier=None -> all series."""
+    if tier is not None:
+        challenger_df = challenger_df[challenger_df["tier"] == tier]
+
+    cols = _JOIN_KEYS + ["monthly_forecast", "actual_monthly_total"]
+    df = challenger_df[cols].copy()
+
+    if df.empty:
+        return np.nan
+
+    df["abs_error"] = (df["monthly_forecast"] - df["actual_monthly_total"]).abs()
+    df["abs_actual"] = df["actual_monthly_total"].abs()
+    fold_totals = df.groupby(_FOLD_KEYS)[["abs_error", "abs_actual"]].sum()
+
+    # compute the exclusion mask once, reuse for log and guard
+    excluded_mask = ~(fold_totals["abs_actual"] > _SMALL_NUM_BOUND)
+    if excluded_mask.any():
+        _log.warning(
+            "compute_wape: %d folds excluded near zero actuals (tier=%r):\n%s",
+            int(excluded_mask.sum()),
+            tier,
+            fold_totals[excluded_mask].to_string(),
+        )
+
+    # replace near-zero fold denominators before dividing to avoid inf propagation
+    safe_denom = fold_totals["abs_actual"].where(~excluded_mask)
+
+    per_fold_wape = fold_totals["abs_error"] / safe_denom
+
+    # catch-all: nan in ratio that isn't explained by the denominator or exclusion guard
+    unexpected_nan = per_fold_wape.isna() & ~excluded_mask
+    if unexpected_nan.any():
+        _log.warning(
+            "compute_wape: %d folds have unexpected nan in per fold wape (tier=%r): %s",
+            int(unexpected_nan.sum()),
+            tier,
+            per_fold_wape[unexpected_nan].index.tolist(),
+        )
+
+    return np.nanmean(per_fold_wape.to_numpy(dtype=np.float64)).item()
+
+
+def compute_weighted_signed_bias(
+    challenger_df: pd.DataFrame,
+    tier: str | None = None,
+) -> float:
+    """Fold-averaged WAPE-style signed bias. tier=None -> all series.
+
+    Positive values indicate systematic over-forecasting.
+    |Weighted Signed Bias| <= WAPE always holds.
+    """
+    if tier is not None:
+        challenger_df = challenger_df[challenger_df["tier"] == tier]
+
+    cols = _JOIN_KEYS + ["monthly_forecast", "actual_monthly_total"]
+    df = challenger_df[cols].copy()
+
+    if df.empty:
+        return np.nan
+
+    df["signed_error"] = df["monthly_forecast"] - df["actual_monthly_total"]
+    df["abs_actual"] = df["actual_monthly_total"].abs()
+    fold_totals = df.groupby(_FOLD_KEYS)[["signed_error", "abs_actual"]].sum()
+
+    # compute the exclusion mask once, reuse for log and guard
+    excluded_mask = ~(fold_totals["abs_actual"] > _SMALL_NUM_BOUND)
+    if excluded_mask.any():
+        _log.warning(
+            "compute_weighted_signed_bias: %d folds excluded near zero actuals "
+            "(tier=%r):\n%s",
+            int(excluded_mask.sum()),
+            tier,
+            fold_totals[excluded_mask].to_string(),
+        )
+
+    # replace near-zero fold denominators before dividing to avoid inf propagation
+    safe_denom = fold_totals["abs_actual"].where(~excluded_mask)
+
+    per_fold_wsb = fold_totals["signed_error"] / safe_denom
+
+    # catch-all: nan in ratio that isn't explained by the denominator or exclusion guard
+    unexpected_nan = per_fold_wsb.isna() & ~excluded_mask
+    if unexpected_nan.any():
+        _log.warning(
+            "compute_weighted_signed_bias: %d folds have unexpected nan in per fold "
+            "weighted signed bias (tier=%r): %s",
+            int(unexpected_nan.sum()),
+            tier,
+            per_fold_wsb[unexpected_nan].index.tolist(),
+        )
+
+    return np.nanmean(per_fold_wsb.to_numpy(dtype=np.float64)).item()
+
+
+def _wape_adapter(
+    challenger_df: pd.DataFrame,
+    benchmark_df: pd.DataFrame | None,
+    tier: str | None,
+) -> float:
+    """
+    Adapter needed since WAPE doesn't use a benchmark_df but needs a signature
+    consistent with WRMAE functions
+    """
+    return compute_wape(challenger_df, tier)
+
+
+_RELATIVE_METRICS: frozenset[str] = frozenset({"wrmae_pooled", "wrmae_per_series"})
+
+HERO_METRICS: dict[str, Callable[..., float]] = {
+    "wrmae_pooled": compute_wrmae_pooled,
+    "wrmae_per_series": compute_wrmae_per_series,
+    "wape": _wape_adapter,
+}
+
+
+def compute_hero_metric(
+    challenger_df: pd.DataFrame,
+    benchmark_df: pd.DataFrame | None,
+    metric_name: str,
+    target: str,
+) -> float:
+    """Filters to rows where horizon == target, then dispatches to
+    HERO_METRICS[metric_name].
+
+    target: 'horizon_1' | 'horizon_2' | ...
+    benchmark_df may be None when metric_name == 'wape'.
+    Raises ValueError for unknown metric_name or relative metric with benchmark_df=None.
+    """
+
+    if metric_name not in HERO_METRICS:
+        raise ValueError(
+            f"Called metric {metric_name} not in allowed hero metrics "
+            f"list. Allowed hero metrics are: {list(HERO_METRICS)}"
+        )
+
+    if metric_name in _RELATIVE_METRICS and benchmark_df is None:
+        raise ValueError(
+            f"Metric {metric_name} is listed as a relative metric "
+            f"but benchmark_df not provided. Relative metrics must have a "
+            f"benchmark_df provided."
+        )
+
+    challenger_df = challenger_df[challenger_df["horizon"] == target]
+    if benchmark_df is not None:
+        benchmark_df = benchmark_df[benchmark_df["horizon"] == target]
+
+    return HERO_METRICS[metric_name](challenger_df, benchmark_df, None)
