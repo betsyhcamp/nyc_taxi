@@ -14,6 +14,9 @@ from fcstnyctaxi.lib.fold_metrics import (
     compute_signed_bias_per_series,
 )
 
+pd.options.display.max_columns = 35
+pd.options.display.max_rows = 100
+
 # %%
 project_root = get_project_root_dir()
 sys.path.insert(0, str(project_root))
@@ -124,6 +127,9 @@ benchmark_monthly_series["horizon"] = "horizon_" + ((
 all_monthly_series.head()
 
 # %%
+all_monthly_series[["forecast_origin_date","origin_fiscal_month",	"predicted_fiscal_year_month", "horizon"]].drop_duplicates().sort_values(by=["forecast_origin_date","origin_fiscal_month",	"predicted_fiscal_year_month", "horizon"])
+
+# %%
 tiers = all_monthly_series["tier"].cat.categories
 
 # %%
@@ -156,8 +162,10 @@ for keys in summary_keys:
     rows.append(row)
 
 summary_df = pd.DataFrame(rows)
-display(summary_df)
 
+
+# %%
+display(summary_df)
 
 # %%
 period_keys = list(
@@ -207,6 +215,8 @@ for keys in period_keys:
     rows.append(row)
 
 period_breakdown_df = pd.DataFrame(rows)
+
+# %%
 display(period_breakdown_df)
 
 # %%
@@ -267,15 +277,9 @@ for keys in fold_keys:
     rows.append(row)
 
 fold_breakdown_df = pd.DataFrame(rows)
+
+# %%
 display(fold_breakdown_df)
-
-# %%
-all_monthly_series.head()
-
-
-
-# %%
-benchmark_monthly_series.head()
 
 # %%
 print(all_monthly_series.shape)
