@@ -3,6 +3,7 @@ runs:
   - model: naive
     framing: weekly_to_monthly
     sidecar_id: 20260708T215706918568Z
+    benchmark: true
   - model: autoets
     framing: weekly_to_monthly
     sidecar_id: 20260709T185025246178Z
