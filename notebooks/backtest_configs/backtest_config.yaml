@@ -32,6 +32,6 @@ aggregation:
 
 evaluation_periods:
   start_months:             # clipped to 2 months for debugging; expand to 202501-202506 for full run
+    - 202504
     - 202505
-    - 202506
   forecast_horizon_months: 2   # 2 for Framings A and C; 1 for Framing B

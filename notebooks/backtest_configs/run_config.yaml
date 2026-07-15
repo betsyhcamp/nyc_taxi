@@ -9,3 +9,10 @@ configs:
   model: backtest_configs/model_weekly_autoets.yaml
 
 optuna: null   # populated when running Optuna tuning; null for fixed-hyperparameter runs
+# optuna:
+#   hero_metric: wrmae_pooled          # wrmae_per_series | wape
+#   target: horizon_1                  # horizon_1 | horizon_2 | ...
+#   direction: minimize                # Here, hero metrics are lower-is-better type metrics
+#   benchmark_sidecar_uri: gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_weekly/20260708T215706918568Z/
+#   # benchmark_sidecar_uri: null when hero_metric: wape (no benchmark needed)
+#   # n_trials: 100                    # Populate when backtest_weekly_optuna.py is implemented
