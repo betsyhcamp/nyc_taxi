@@ -7,7 +7,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.17.2
 #   kernelspec:
-#     display_name: nyc_taxi (3.12.9)
+#     display_name: nyc_taxi (3.12.9.final.0)
 #     language: python
 #     name: python3
 # ---
@@ -218,6 +218,7 @@ def evaluate_model(
                            # "predicted_fiscal_year_month","unique_id", "tier", 
                            # "monthly_forecast",
                            # "actual_monthly_total", "series_weight"
+                           # "origin_month_fraction_elapsed"
     """
     # -- 1. generate folds --------------------
     cv_folds, _ = generate_folds(
@@ -235,6 +236,8 @@ def evaluate_model(
         )
     monthly_series_rows = []
     seen_origins = set() # dedup: forecast_origin_date
+
+    fraction_by_origin = calendar_df.set_index("ds")["origin_month_fraction_elapsed"]
 
     for fold_idx, (fold_id, splits) in enumerate(cv_folds.items()):
         fold_origin, fold_horizon = origin_horizon_pairs[fold_idx]
@@ -295,13 +298,16 @@ def evaluate_model(
             .merge(actual_monthly_df, on=["unique_id", cfg.aggregation.period_col])
             .merge(tier_df,   on="unique_id")
             .merge(weight_df, on="unique_id")
-            .assign(forecast_origin_date=fold_origin)
+            .assign(
+                forecast_origin_date=fold_origin,
+                origin_month_fraction_elapsed=fraction_by_origin[fold_origin],
+            )
             .rename(columns={
                 cfg.aggregation.period_col: "predicted_fiscal_year_month",
             })
             [["forecast_origin_date", "predicted_fiscal_year_month",
               "unique_id", "tier", "monthly_forecast",
-              "actual_monthly_total", "series_weight"]]
+              "actual_monthly_total", "series_weight", "origin_month_fraction_elapsed"]]
         )
         monthly_series_rows.append(fold_rows)
         

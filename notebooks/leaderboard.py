@@ -1,6 +1,7 @@
 # %%
 import sys
 import pandas as pd
+import numpy as np
 import yaml
 import fsspec
 
@@ -14,7 +15,7 @@ from fcstnyctaxi.lib.fold_metrics import (
     compute_signed_bias_per_series,
 )
 
-pd.options.display.max_columns = 35
+pd.options.display.max_columns = 40
 pd.options.display.max_rows = 100
 
 # %%
@@ -61,7 +62,6 @@ for entry in leaderboard_runs["runs"]:
         "calendar_df": pd.read_parquet(f"{uri}fiscal_calendar.parquet")[["ds", "fiscal_year_month"]].drop_duplicates(),
     })
 
-#print(f"Loaded {len(runs)} runs: {[r['model'] for r in runs]}")
 benchmark_run = next(r for r in runs if r["is_benchmark"])
 challenger_runs = [r for r in runs if not r["is_benchmark"]]
 print(f"Benchmark: {benchmark_run['model']}")
@@ -79,9 +79,11 @@ all_monthly_series = pd.concat(
 all_monthly_series.head()
 
 # %%
-calendar_df = runs[0]["calendar_df"]
+calendar_df = benchmark_run["calendar_df"] # benchmark, challenger all have the same cal
 calendar_df = calendar_df.rename(
-    columns={"ds": "forecast_origin_date", "fiscal_year_month": "origin_fiscal_month"}
+    columns={
+        "ds": "forecast_origin_date", "fiscal_year_month": "origin_fiscal_year_month"
+        }
 )
 
 # %%
@@ -109,25 +111,38 @@ benchmark_monthly_series =benchmark_monthly_series.merge(
     how="left"
 )
 
-# %%
-end = all_monthly_series["predicted_fiscal_year_month"]
-start = all_monthly_series["origin_fiscal_month"]
-all_monthly_series["horizon"] = "horizon_" + ((
-    (end // 100 - start // 100) * 12 + (end % 100 - start % 100)
-) + 1).astype(str)
 
-end = benchmark_monthly_series["predicted_fiscal_year_month"]
-start = benchmark_monthly_series["origin_fiscal_month"]
-benchmark_monthly_series["horizon"] = "horizon_" + ((
-    (end // 100 - start // 100) * 12 + (end % 100 - start % 100)
-) + 1).astype(str)
+# %%
+def _derive_horizon_label(df):
+    origin = df["origin_fiscal_year_month"]
+    frac = df["origin_month_fraction_elapsed"]
+    target = df["predicted_fiscal_year_month"]
+
+    year = origin // 100
+    month = origin % 100
+    prev_fiscal_year_month = pd.Series(
+        np.where(month == 1, (year - 1) * 100 + 12, origin - 1),
+        index=df.index,
+    )
+    last_completed = pd.Series(
+        np.where(frac == 1.0, origin, prev_fiscal_year_month),
+        index=df.index,
+    )
+    month_difference = (
+        (target // 100 - last_completed // 100) * 12 
+        + (target % 100 - last_completed % 100)
+    )
+    return "horizon_" + month_difference.astype(str)
+
+all_monthly_series["horizon"] = _derive_horizon_label(all_monthly_series)
+benchmark_monthly_series["horizon"] = _derive_horizon_label(benchmark_monthly_series)
 
 
 # %%
 all_monthly_series.head()
 
 # %%
-all_monthly_series[["forecast_origin_date","origin_fiscal_month",	"predicted_fiscal_year_month", "horizon"]].drop_duplicates().sort_values(by=["forecast_origin_date","origin_fiscal_month",	"predicted_fiscal_year_month", "horizon"])
+all_monthly_series[["forecast_origin_date","origin_fiscal_year_month",	"predicted_fiscal_year_month", "horizon"]].drop_duplicates().sort_values(by=["forecast_origin_date","origin_fiscal_year_month",	"predicted_fiscal_year_month", "horizon"])
 
 # %%
 tiers = all_monthly_series["tier"].cat.categories
@@ -285,7 +300,6 @@ display(fold_breakdown_df)
 print(all_monthly_series.shape)
 print(benchmark_monthly_series.shape)
 
-
 # %%
 ch_cols = [
     "forecast_origin_date", "predicted_fiscal_year_month", "unique_id",
@@ -317,11 +331,20 @@ per_series_df["signed_relative_bias"] = (
 )
 
 
-
 # %%
 per_series_df.shape
 
 # %%
-per_series_df.head()
+(per_series_df
+ .query("model == 'autoets' and horizon == 'horizon_2' "
+        "and predicted_fiscal_year_month == 202506 "
+        "and forecast_origin_date == '2025-04-27' "
+        "and tier == 'high'")
+ .sort_values("relative_mae", ascending=False)
+ [["unique_id", "series_weight", "relative_mae", "monthly_forecast_ch", "monthly_forecast_bm", "actual_monthly_total"]]
+)
+
+# %%
+(71514.121582-68641)/(68660.0 - 68641)
 
 # %%

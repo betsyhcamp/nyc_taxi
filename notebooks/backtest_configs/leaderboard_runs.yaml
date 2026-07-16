@@ -2,8 +2,8 @@ default_base_uri: gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_weekly/
 runs:
   - model: naive
     framing: weekly_to_monthly
-    sidecar_id: 20260715T025656976069Z
+    sidecar_id: 20260716T001143851156Z
     benchmark: true
   - model: autoets
     framing: weekly_to_monthly
-    sidecar_id: 20260715T030203847025Z
+    sidecar_id: 20260716T001736616391Z
