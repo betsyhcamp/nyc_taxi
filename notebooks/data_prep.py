@@ -7,7 +7,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.17.2
 #   kernelspec:
-#     display_name: nyc_taxi (3.12.9)
+#     display_name: nyc_taxi (3.12.9.final.0)
 #     language: python
 #     name: python3
 # ---
@@ -81,19 +81,23 @@ ts_df = (
     })
 )
 
+
+
 # %%
-# TODO: Move this calculation to SQL
+# TODO: Move these calculations to SQL
 df["weeks_in_month"] = (
     df
     .groupby("fiscal_year_month")["fiscal_week_of_month"]
     .transform("max")
 )
 
-# %%
-df.head()
+df["origin_month_fraction_elapsed"] = (
+    df["fiscal_week_of_month"]
+    / df["weeks_in_month"]
+)
 
 # %%
-df[["day_of_week_name", "is_weekend"]].drop_duplicates()
+df.head()
 
 # %%
 day_col = ["pickup_date",
@@ -105,6 +109,7 @@ cal_col = [
     "fiscal_year_week",
     "fiscal_week_of_month",
     "weeks_in_month",
+    "origin_month_fraction_elapsed"
 ]
 cal_df = df[day_col+cal_col].drop_duplicates().copy()
 
