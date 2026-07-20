@@ -28,7 +28,7 @@ extract = [
 forecasting = [
     "coreforecast>=0.0.16",
     "holidays>=0.86",
-    "mlforecast>=1.0.2",
+    "mlforecast==1.1.0",
     "scipy<1.16.0",
     "statsforecast>=2.0.1",
     "utilsforecast>=0.2.12",
