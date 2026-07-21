@@ -258,7 +258,7 @@ def evaluate_model(
         _ = apply_transforms(val, fitted_transforms) # here for consistency
         
         forecast_df, _fitted, _model_obj = invoke_model(
-            train_t, cfg.model, fold_horizon
+            train_t, cfg.model, fold_horizon, future_x_df=calendar_df
         )
 
         forecast_original_scale = inverse_transforms(forecast_df, fitted_transforms)

@@ -7,3 +7,6 @@ runs:
   - model: autoets
     framing: weekly_to_monthly
     sidecar_id: 20260716T001736616391Z
+  - model: lightgbm
+    framing: weekly_to_monthly
+    sidecar_id: 20260721T035220456048Z
