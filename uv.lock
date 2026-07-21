@@ -7,6 +7,9 @@ resolution-markers = [
     "python_full_version < '3.13'",
 ]
 
+[manifest]
+constraints = [{ name = "setuptools", specifier = "<81" }]
+
 [[package]]
 name = "accessible-pygments"
 version = "0.0.5"
