@@ -74,11 +74,12 @@ def lightgbm_weekly(
     n_estimators: int = 400,
     n_jobs: int = 1,
     **kwargs,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, pd.DataFrame, MLForecast]:
     """Produce a recursive LightGBM forecast via MLForecast, given historical
     data, horizon, freq. future_x_df=None skips the calendar merge and
     X_df-based prediction. **kwargs: Accepted for tsbricks compatibility;
     ignored.
+    Return forecast, fitted values, model
     """
     if lags is None:
         lags = [1, 52]
@@ -109,7 +110,7 @@ def lightgbm_weekly(
         lag_transforms={1: [RollingMean(window_size=rolling_mean_window)]},  # pyright: ignore[reportArgumentType]
     )
 
-    mlfcst.fit(train_df, static_features=[])
+    mlfcst.fit(train_df, static_features=[], fitted=True)
 
     if future_x_df is not None:
         future_calendar_df = _build_future_calendar_df(
@@ -127,4 +128,10 @@ def lightgbm_weekly(
     forecast_df = forecast_df.rename(columns={"LGBMRegressor": "ypred"})[  # type: ignore
         ["unique_id", "ds", "ypred"]
     ]
-    return forecast_df
+
+    fitted_df = mlfcst.forecast_fitted_values(h=1)
+    fitted_df = fitted_df.rename(columns={"LGBMRegressor": "ypred"})[  # type: ignore
+        ["unique_id", "ds", "ypred"]
+    ]
+
+    return forecast_df, fitted_df, mlfcst
