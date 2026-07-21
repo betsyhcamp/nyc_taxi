@@ -32,6 +32,8 @@ forecasting = [
     "scipy<1.16.0",
     "statsforecast>=2.0.1",
     "utilsforecast>=0.2.12",
+    "lightgbm>=4.7.0"
+
 ]
 
 dev = [
@@ -118,6 +120,9 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
 ]
+
+[tool.uv]
+default-groups = ["dev", "forecasting"]
 
 [tool.uv.sources]
 tsbricks = { git = "https://github.com/betsyhcamp/tsbricks.git", rev = "v0.3.0" }
