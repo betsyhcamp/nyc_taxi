@@ -7,6 +7,9 @@ resolution-markers = [
     "python_full_version < '3.13'",
 ]
 
+[manifest]
+constraints = [{ name = "setuptools", specifier = "<81" }]
+
 [[package]]
 name = "accessible-pygments"
 version = "0.0.5"
@@ -803,6 +806,7 @@ extract = [
 forecasting = [
     { name = "coreforecast" },
     { name = "holidays" },
+    { name = "lightgbm" },
     { name = "mlforecast" },
     { name = "scipy" },
     { name = "statsforecast" },
@@ -859,7 +863,8 @@ extract = [
 forecasting = [
     { name = "coreforecast", specifier = ">=0.0.16" },
     { name = "holidays", specifier = ">=0.86" },
-    { name = "mlforecast", specifier = ">=1.0.2" },
+    { name = "lightgbm", specifier = ">=4.7.0" },
+    { name = "mlforecast", specifier = "==1.1.0" },
     { name = "scipy", specifier = "<1.16.0" },
     { name = "statsforecast", specifier = ">=2.0.1" },
     { name = "utilsforecast", specifier = ">=0.2.12" },
@@ -1837,6 +1842,24 @@ wheels = [
 ]
 
 [[package]]
+name = "lightgbm"
+version = "4.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "narwhals" },
+    { name = "numpy" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/63/8e/4db5e29290d7e619c307fdb8dab0a0514090af2ce3ec483050e024ec6126/lightgbm-4.7.0.tar.gz", hash = "sha256:f8e20f682c9aabd000bcf4a7ed8aa6f473c1adfecccae34ec24e823d156f4af0", size = 1792896, upload-time = "2026-07-18T21:00:56.139Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cd/05/7213965863cba1ed0150ad045bceed6276a1afaaaedbaeff4699ec4f0ccb/lightgbm-4.7.0-py3-none-macosx_10_15_x86_64.whl", hash = "sha256:dfc1cfe8e760387be1e7ba7a214688be21fdff96e4ed9749188f83e1877c2477", size = 1877851, upload-time = "2026-07-18T21:00:35.225Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/86/f4fe714f2e0bf3941705a20d7f6849dc476276d71236e82ea6b0d6539b86/lightgbm-4.7.0-py3-none-macosx_12_0_arm64.whl", hash = "sha256:129535462686f274df179133643118c5c5c5667167fe6c3a28d955f0b3c8e868", size = 1498914, upload-time = "2026-07-18T21:00:36.549Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/a3/b29580948b92e8c2f84dea70118ac702ff067dc52ec4ffb5d73c953536a5/lightgbm-4.7.0-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:d4529acec5c6fefe4768302a529707d0ead90f6a6f42df694b856212e09695b8", size = 3349492, upload-time = "2026-07-18T21:00:37.943Z" },
+    { url = "https://files.pythonhosted.org/packages/15/eb/837ea3b40cc36e22eeebb9785c01e42b2c255d033eea1d2d9ee8e2540e55/lightgbm-4.7.0-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:d23e922acd891e77212e4d0fbcee9ba973c96dee479491341d05ba595357ebb7", size = 3476028, upload-time = "2026-07-18T21:00:39.331Z" },
+    { url = "https://files.pythonhosted.org/packages/d5/0b/c5c17d862b12ce292f24cd85d40f2f8f8981668fbdbd43fdc2625eccbc79/lightgbm-4.7.0-py3-none-win_amd64.whl", hash = "sha256:f42d1e5b32b6f170e606d7c689c6165671da98d7bf37f1addec2623efc8740c9", size = 1360833, upload-time = "2026-07-18T21:00:40.865Z" },
+]
+
+[[package]]
 name = "llvmlite"
 version = "0.44.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2063,20 +2086,21 @@ wheels = [
 
 [[package]]
 name = "mlforecast"
-version = "1.0.2"
+version = "1.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cloudpickle" },
     { name = "coreforecast" },
     { name = "fsspec" },
+    { name = "narwhals" },
     { name = "optuna" },
     { name = "pandas" },
     { name = "scikit-learn" },
     { name = "utilsforecast" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/00/2f/520a1428cf01ed0facb2358d8d5972812d2b03b84a9d87de8b7fd9b6b8b1/mlforecast-1.0.2.tar.gz", hash = "sha256:a24f8e04e3590aad7bd037908cdb7b2cfbf295781cd4c8ff087b332968155624", size = 72227, upload-time = "2025-02-18T18:28:57.187Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e5/b9/3cda3cc4801b2af842daf6c679b3899029e337ddef79a6f43d52ba5e4958/mlforecast-1.1.0.tar.gz", hash = "sha256:5f0baf178a4017785475db86d56d628a48cf267d5b8ea6ebef798d9ddf396bd8", size = 242838, upload-time = "2026-07-10T00:52:26.286Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bf/4e/3886fcd04d743ddc80819f50b05b4e0c6b21168a598ffe115c08d9c20466/mlforecast-1.0.2-py3-none-any.whl", hash = "sha256:158553b08a526abfe1b2feed175e0a228a555e576948c20260a36f8c7a1d0b7c", size = 72405, upload-time = "2025-02-18T18:28:54.507Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/9d/bf967c65a035d278302dff82ae739862a773fbd2a2344f258035d2df3136/mlforecast-1.1.0-py3-none-any.whl", hash = "sha256:0043190f540510979c7709bb69267caa9ac325a11fa49298cf3425307200e748", size = 261702, upload-time = "2026-07-10T00:52:25.071Z" },
 ]
 
 [[package]]

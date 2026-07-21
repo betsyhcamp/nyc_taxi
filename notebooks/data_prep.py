@@ -106,6 +106,8 @@ day_col = ["pickup_date",
 cal_col = [
     "fiscal_week_start_date",
     "fiscal_year_month",
+    "fiscal_year",
+    "fiscal_month",
     "fiscal_year_week",
     "fiscal_week_of_month",
     "weeks_in_month",

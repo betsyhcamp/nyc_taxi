@@ -258,7 +258,7 @@ def evaluate_model(
         _ = apply_transforms(val, fitted_transforms) # here for consistency
         
         forecast_df, _fitted, _model_obj = invoke_model(
-            train_t, cfg.model, fold_horizon
+            train_t, cfg.model, fold_horizon, future_x_df=calendar_df
         )
 
         forecast_original_scale = inverse_transforms(forecast_df, fitted_transforms)
@@ -383,3 +383,20 @@ backtest_results.cv.metrics.to_parquet(f"{sidecar_uri}metrics.parquet", index=Fa
 monthly_series_df.to_parquet(f"{sidecar_uri}monthly_series.parquet", index=False)
 
 print(f"Sidecar written: {sidecar_uri}")
+
+# %%
+#train_slice = ts_df[ts_df["ds"] <= "2025-04-27"]
+#forecast_df, fitted_df, mlfcst = invoke_model(
+#    train_slice, cfg.model, horizon=8, future_x_df=calendar_df
+#)
+#
+#booster = mlfcst.models_["LGBMRegressor"]
+#
+#importance_df = pd.DataFrame({
+#    "feature": booster.feature_name_,
+#    "importance": booster.feature_importances_,
+#}).sort_values("importance", ascending=False)
+
+
+# %%
+#importance_df

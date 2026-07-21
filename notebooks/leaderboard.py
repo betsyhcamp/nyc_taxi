@@ -343,8 +343,3 @@ per_series_df.shape
  .sort_values("relative_mae", ascending=False)
  [["unique_id", "series_weight", "relative_mae", "monthly_forecast_ch", "monthly_forecast_bm", "actual_monthly_total"]]
 )
-
-# %%
-(71514.121582-68641)/(68660.0 - 68641)
-
-# %%
