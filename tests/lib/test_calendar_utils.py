@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from models.lightgbm_weekly import _build_future_calendar_df
+from fcstnyctaxi.lib.calendar_utils import _build_future_calendar_df
 
 # ================================================
 # Fixtures
