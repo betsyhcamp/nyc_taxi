@@ -22,6 +22,10 @@ from fcstnyctaxi.lib.backtest_results import build_backtest_results, build_cv_re
 from fcstnyctaxi.lib.config_utils import merge_configs, save_config
 from fcstnyctaxi.lib.cross_validation_utils import sorted_origin_horizon_pairs
 from fcstnyctaxi.lib.io import write_text_to_gcs
+from fcstnyctaxi.lib.monthly_aggregation import (
+    build_monthly_forecast_vs_actual,
+    attach_tier_and_weight
+    )
 from fcstnyctaxi.lib.period_utils import (
     assign_tiers,
     compute_series_weights,
@@ -115,93 +119,6 @@ print(yaml.dump(cfg.model_dump(by_alias=True, exclude_none=True), default_flow_s
 
 
 # %%
-def compute_mtd_actuals(
-    train_df: pd.DataFrame,
-    calendar_df: pd.DataFrame,
-    target_fiscal_months: list,
-    period_col: str = "fiscal_year_month",
-    time_col: str = "ds",
-    id_col: str = "unique_id",
-    target_col: str = "y",
-) -> pd.DataFrame:
-    """Sum observed weekly actuals within target fiscal months per (id_col, period_col).
-
-    Args:
-        train_df: Per-fold observed data (weeks up to the fold origin).
-        calendar_df: Maps time_col (ds) to period_col (fiscal_year_month).
-        target_fiscal_months: Fiscal months covered by the forecast horizon.
-        period_col: Fiscal period column. Default fiscal_year_month.
-        time_col: Join key between train_df and calendar_df. Default "ds".
-        id_col: Series identifier column. Default "unique_id".
-        target_col: Target value column to sum. Default "y".
-
-    Returns:
-        DataFrame with columns (id_col, period_col, "mtd_actuals").
-        Empty when no target-month weeks have been observed yet (e.g. fold_0).
-    """
-    
-
-    target_cal = (
-        calendar_df
-        .loc[calendar_df[period_col].isin(target_fiscal_months),[time_col, period_col]]
-        .drop_duplicates()
-    )
-
-    return (
-        train_df 
-        .merge(target_cal, on=time_col, how='inner')
-        .groupby([id_col, period_col])[target_col]
-        .sum()
-        .reset_index()
-        .rename(columns={target_col:"mtd_actuals"})
-    )
-
-
-# %%
-def combine_monthly_forecast(
-    mtd_actuals_df : pd.DataFrame,
-    predicted_remaining_df : pd.DataFrame,
-    period_col: str = "fiscal_year_month",
-    forecast_col: str = "ypred",
-    mtd_actuals_col: str = "mtd_actuals",
-    id_col: str = "unique_id"
-) -> pd.DataFrame:
-    """Add MTD actuals and predicted remaining to produce a total monthly forecast.
-
-    Args:
-        mtd_actuals_df: Output of compute_mtd_actuals; columns 
-            (id_col, period_col, mtd_actuals_col).
-        predicted_remaining_df: Aggregated fold forecasts; columns 
-            (id_col, period_col, forecast_col).
-        period_col: Fiscal period column. Default "fiscal_year_month".
-        forecast_col: Predicted remaining column in predicted_remaining_df. Default
-            "ypred".
-        mtd_actuals_col: MTD actuals column in mtd_actuals_df. Default "mtd_actuals".
-        id_col: Series identifier column. Default "unique_id".
-
-    Returns:
-        DataFrame with columns (id_col, period_col, "monthly_forecast").
-        Outer join with fillna(0) handles forecast origins where MTD actuals are zero.
-    """
-
-    merged_df =(
-        mtd_actuals_df[[id_col, period_col, mtd_actuals_col]]
-        .merge(
-            predicted_remaining_df[[id_col, period_col, forecast_col]], 
-            on=[id_col, period_col], 
-            how="outer"
-        )
-        .fillna(0)
-    )
-    
-    merged_df = merged_df.assign(
-        monthly_forecast=merged_df[mtd_actuals_col] + merged_df[forecast_col]
-    )
-    
-    return merged_df[[id_col, period_col, "monthly_forecast"]]
-
-
-# %%
 def evaluate_model(
     cfg,                           # BacktestConfig — varies per Optuna trial
     ts_df: pd.DataFrame,
@@ -264,53 +181,29 @@ def evaluate_model(
         forecast_original_scale = inverse_transforms(forecast_df, fitted_transforms)
         per_fold_forecasts[fold_id] = forecast_original_scale
 
-        # predicted remaining per fiscal month which replaces aggregate_backtest output
-        predicted_remaining_df = (
-            forecast_original_scale
-            .merge(
-                calendar_df[["ds", cfg.aggregation.period_col]].drop_duplicates(),
-                on="ds",
-                how="left"
-                )
-            .groupby(["unique_id", cfg.aggregation.period_col])["ypred"].sum()
-            .reset_index()
+        monthly_rows_df = build_monthly_forecast_vs_actual(
+            forecast_df=forecast_original_scale,
+            train_df=train,
+            calendar_df=calendar_df,
+            actual_monthly_df=actual_monthly_df,
+            period_col=cfg.aggregation.period_col,
+            time_col= "ds",
+            id_col= "unique_id",
+            forecast_col= "ypred",
+            target_col= "y",
         )
-        
-        target_fiscal_months = (
-            predicted_remaining_df[cfg.aggregation.period_col].unique().tolist()
+        fold_rows = attach_tier_and_weight(
+            monthly_rows_df=monthly_rows_df,
+            tier_df=tier_df,
+            weight_df=weight_df,
+            fold_origin=fold_origin,
+            origin_month_fraction_elapsed=fraction_by_origin[fold_origin],
+            period_col=cfg.aggregation.period_col,
+            id_col = "unique_id",
         )
 
-        # MTD + combine + merge produces full artifact rows for this fold
-        mtd_actuals_df = compute_mtd_actuals(
-            train,
-            calendar_df,
-            target_fiscal_months,
-            period_col=cfg.aggregation.period_col
-            )
-        monthly_forecast_total_df = combine_monthly_forecast(
-            mtd_actuals_df,
-            predicted_remaining_df,
-            period_col=cfg.aggregation.period_col
-        )
-        
-        fold_rows = (
-            monthly_forecast_total_df
-            .merge(actual_monthly_df, on=["unique_id", cfg.aggregation.period_col])
-            .merge(tier_df,   on="unique_id")
-            .merge(weight_df, on="unique_id")
-            .assign(
-                forecast_origin_date=fold_origin,
-                origin_month_fraction_elapsed=fraction_by_origin[fold_origin],
-            )
-            .rename(columns={
-                cfg.aggregation.period_col: "predicted_fiscal_year_month",
-            })
-            [["forecast_origin_date", "predicted_fiscal_year_month",
-              "unique_id", "tier", "monthly_forecast",
-              "actual_monthly_total", "series_weight", "origin_month_fraction_elapsed"]]
-        )
         monthly_series_rows.append(fold_rows)
-        
+
         fold_metrics = evaluate_metrics(
             y_true=val,
             y_pred=forecast_original_scale,
