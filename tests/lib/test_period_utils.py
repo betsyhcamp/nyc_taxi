@@ -10,6 +10,7 @@ from fcstnyctaxi.lib.period_utils import (
     _get_trailing_dates,
     assign_tiers,
     compute_series_weights,
+    derive_horizon_label,
     generate_origins_for_periods,
 )
 
@@ -381,3 +382,60 @@ def test_compute_series_weights_sparse_series_gets_zero_weight(
     )
     weight_map = result.set_index("unique_id")["series_weight"].to_dict()
     assert weight_map["sparse"] == pytest.approx(0.0)
+
+
+# ================================================
+# derive_horizon_label
+# ================================================
+
+
+def test_derive_horizon_label_scalar_origin_mid_month() -> None:
+    """Origin mid-February (frac<1.0): last_completed=January, so February is
+    horizon_1 and March is horizon_2."""
+    result = derive_horizon_label(
+        predicted_fiscal_year_month=pd.Series([202502, 202503]),
+        origin_fiscal_year_month=202502,
+        origin_month_fraction_elapsed=0.4,
+    )
+    assert result.tolist() == ["horizon_1", "horizon_2"]
+
+
+def test_derive_horizon_label_january_rollover() -> None:
+    """Origin in January: prev_fiscal_year_month must roll back to December
+    of the prior fiscal year (202412), not month 00."""
+    result = derive_horizon_label(
+        predicted_fiscal_year_month=pd.Series([202501]),
+        origin_fiscal_year_month=202501,
+        origin_month_fraction_elapsed=0.4,
+    )
+    assert result.tolist() == ["horizon_1"]
+
+
+def test_derive_horizon_label_frac_equals_one_shifts_current_month() -> None:
+    """Origin sits exactly at month-end (frac=1.0): February now counts as
+    already completed, so February itself is horizon_0 and March becomes
+    horizon_1 -- one month earlier than the mid-month case above."""
+    result = derive_horizon_label(
+        predicted_fiscal_year_month=pd.Series([202502, 202503]),
+        origin_fiscal_year_month=202502,
+        origin_month_fraction_elapsed=1.0,
+    )
+    assert result.tolist() == ["horizon_0", "horizon_1"]
+
+
+def test_derive_horizon_label_series_inputs_multiple_origins() -> None:
+    """Three rows, one vectorized call, both np.where branches firing at once:
+    origin 202502 (frac=1.0, month-end) alongside origin 202503 (frac=0.25,
+    midmonth) reused across two different targets which proves the per row
+    branching in prev_fiscal_year_month/last_completed works across a real
+    multi origin Series, not just when exercised one origin at a time."""
+    predicted_fiscal_year_month = pd.Series([202503, 202503, 202504])
+    origin_fiscal_year_month = pd.Series([202502, 202503, 202503])
+    origin_month_fraction_elapsed = pd.Series([1.0, 0.25, 0.25])
+
+    result = derive_horizon_label(
+        predicted_fiscal_year_month=predicted_fiscal_year_month,
+        origin_fiscal_year_month=origin_fiscal_year_month,
+        origin_month_fraction_elapsed=origin_month_fraction_elapsed,
+    )
+    assert result.tolist() == ["horizon_1", "horizon_1", "horizon_2"]

@@ -1,11 +1,9 @@
 # %%
 import sys
 import pandas as pd
-import numpy as np
 import yaml
 import fsspec
 
-from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.lib.fold_metrics import (
     compute_wrmae_pooled,
     compute_wrmae_per_series,
@@ -14,6 +12,8 @@ from fcstnyctaxi.lib.fold_metrics import (
     compute_signed_bias_pooled,
     compute_signed_bias_per_series,
 )
+from fcstnyctaxi.lib.period_utils import derive_horizon_label
+from fcstnyctaxi.lib.utils import get_project_root_dir
 
 pd.options.display.max_columns = 40
 pd.options.display.max_rows = 100
@@ -111,31 +111,18 @@ benchmark_monthly_series =benchmark_monthly_series.merge(
     how="left"
 )
 
-
 # %%
-def _derive_horizon_label(df):
-    origin = df["origin_fiscal_year_month"]
-    frac = df["origin_month_fraction_elapsed"]
-    target = df["predicted_fiscal_year_month"]
+all_monthly_series["horizon"] = derive_horizon_label(
+    predicted_fiscal_year_month = all_monthly_series["predicted_fiscal_year_month"],
+    origin_fiscal_year_month = all_monthly_series["origin_fiscal_year_month"],
+    origin_month_fraction_elapsed = all_monthly_series["origin_month_fraction_elapsed"]
+)
 
-    year = origin // 100
-    month = origin % 100
-    prev_fiscal_year_month = pd.Series(
-        np.where(month == 1, (year - 1) * 100 + 12, origin - 1),
-        index=df.index,
-    )
-    last_completed = pd.Series(
-        np.where(frac == 1.0, origin, prev_fiscal_year_month),
-        index=df.index,
-    )
-    month_difference = (
-        (target // 100 - last_completed // 100) * 12 
-        + (target % 100 - last_completed % 100)
-    )
-    return "horizon_" + month_difference.astype(str)
-
-all_monthly_series["horizon"] = _derive_horizon_label(all_monthly_series)
-benchmark_monthly_series["horizon"] = _derive_horizon_label(benchmark_monthly_series)
+benchmark_monthly_series["horizon"] = derive_horizon_label(
+    predicted_fiscal_year_month = benchmark_monthly_series["predicted_fiscal_year_month"],
+    origin_fiscal_year_month = benchmark_monthly_series["origin_fiscal_year_month"],
+    origin_month_fraction_elapsed = benchmark_monthly_series["origin_month_fraction_elapsed"]
+)
 
 
 # %%
