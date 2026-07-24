@@ -1,3 +1,5 @@
+from typing import cast
+
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
@@ -63,15 +65,35 @@ def lightgbm_weekly(
         ],
         freq=freq,
         lags=lags,
-        lag_transforms={1: [RollingMean(window_size=rolling_mean_window)]},  # pyright: ignore[reportArgumentType]
+        lag_transforms={1: [RollingMean(window_size=rolling_mean_window)]},  # type: ignore
     )
 
     mlfcst.fit(train_df, static_features=[], fitted=True)
 
+    forecast_df = lightgbm_weekly_predict(
+        mlfcst=mlfcst, horizon=horizon, future_x_df=future_x_df
+    )
+
+    fitted_df = mlfcst.forecast_fitted_values(h=1)
+    fitted_df = fitted_df.rename(columns={"LGBMRegressor": "ypred"})[  # type: ignore
+        ["unique_id", "ds", "ypred"]
+    ]
+
+    return forecast_df, fitted_df, mlfcst
+
+
+def lightgbm_weekly_predict(
+    mlfcst: MLForecast, horizon: int, future_x_df: pd.DataFrame | None = None
+) -> pd.DataFrame:
+    """Predict from an already fitted MLForecast model, without refitting.
+    Derives unique_ids/last_ds from mlfcst.ts rather than a train_df
+    parameter, so this works identically whether mlfcst came from a fresh
+    .fit() (calibration, backtest) or MLForecast.load() (a production predict
+     only pipeline)."""
     if future_x_df is not None:
         future_calendar_df = _build_future_calendar_df(
-            unique_ids=np.asarray(train_df["unique_id"].unique()),
-            last_ds=train_df["ds"].max(),
+            unique_ids=np.asarray(mlfcst.ts.uids),
+            last_ds=cast(pd.Timestamp, mlfcst.ts.last_dates.max()),
             calendar_df=future_x_df,
             horizon=horizon,
             cal_cols=_CALENDAR_FEATURES,
@@ -80,14 +102,13 @@ def lightgbm_weekly(
         forecast_df = mlfcst.predict(h=horizon, X_df=future_calendar_df)
     else:
         forecast_df = mlfcst.predict(h=horizon)
-
-    forecast_df = forecast_df.rename(columns={"LGBMRegressor": "ypred"})[  # type: ignore
+    return forecast_df.rename(columns={"LGBMRegressor": "ypred"})[  # type: ignore
         ["unique_id", "ds", "ypred"]
     ]
 
-    fitted_df = mlfcst.forecast_fitted_values(h=1)
-    fitted_df = fitted_df.rename(columns={"LGBMRegressor": "ypred"})[  # type: ignore
-        ["unique_id", "ds", "ypred"]
-    ]
 
-    return forecast_df, fitted_df, mlfcst
+def _set_lightgbm_iteration(mlfcst: MLForecast, k: int) -> None:
+    """Truncate a fitted MLForecast's LightGBM model to k boosting rounds
+    for prediction, without retraining."""
+
+    mlfcst.models_["LGBMRegressor"].booster_.best_iteration = k  # type: ignore[union-attr]

@@ -7,6 +7,7 @@ from fcstnyctaxi.lib.monthly_aggregation import (
     attach_tier_and_weight,
     build_monthly_forecast_vs_actual,
     combine_monthly_forecast,
+    compute_actual_monthly_totals,
     compute_mtd_actuals,
     compute_predicted_remaining,
 )
@@ -311,3 +312,59 @@ def test_attach_tier_and_weight_known_value(
     assert row_10["forecast_origin_date"] == fold_origin
     assert row_10["origin_month_fraction_elapsed"] == 0.5
     assert row_10["predicted_fiscal_year_month"] == 202502
+
+
+# ================================================
+# compute_actual_monthly_totals
+# ================================================
+
+
+@pytest.fixture
+def full_ts_df(calendar_df: pd.DataFrame) -> pd.DataFrame:
+    """Full historical panel spanning both fiscal months completely —
+    unlike train_df (fixture above), which stops mid-202502.
+    compute_actual_monthly_totals() sums the whole panel, not a fold-scoped
+    subset, so every week of both months must be present here to exercise
+    that distinction from compute_mtd_actuals().
+
+    Known values, worked by hand:
+      id=10: 202501 (weeks 0-3) = 1+1+1+1 = 4; 202502 (weeks 4-7) = 10+20+30+40 = 100
+      id=20: 202501 (weeks 0-3) = 2+2+2+2 = 8; 202502 (weeks 4-7) = 5+10+15+20 = 50
+    """
+    weeks = calendar_df["ds"].tolist()
+    return pd.DataFrame(
+        {
+            "unique_id": [10] * 8 + [20] * 8,
+            "ds": weeks + weeks,
+            "y": [1, 1, 1, 1, 10, 20, 30, 40] + [2, 2, 2, 2, 5, 10, 15, 20],
+        }
+    )
+
+
+def test_compute_actual_monthly_totals_known_value(
+    full_ts_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """Sums y per (unique_id, fiscal_year_month) across the full panel."""
+    result = compute_actual_monthly_totals(full_ts_df, calendar_df)
+
+    row = result[(result["unique_id"] == 10) & (result["fiscal_year_month"] == 202502)]
+    assert row["actual_monthly_total"].item() == 100
+
+    row = result[(result["unique_id"] == 20) & (result["fiscal_year_month"] == 202502)]
+    assert row["actual_monthly_total"].item() == 50
+
+
+def test_compute_actual_monthly_totals_sums_all_months_not_just_one(
+    full_ts_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """Sums every fiscal month present in ts_df, not just one target month —
+    the key difference from compute_mtd_actuals()'s target_fiscal_months
+    filtering. All 2 ids x 2 months are present, and id=10's other month
+    (202501, not covered by the known-value test above) is spot-checked."""
+
+    result = compute_actual_monthly_totals(full_ts_df, calendar_df)
+
+    row = result[(result["unique_id"] == 10) & (result["fiscal_year_month"] == 202501)]
+    assert row["actual_monthly_total"].item() == 4
+
+    assert len(result) == 4

@@ -1,6 +1,46 @@
 import pandas as pd
 
 
+def compute_actual_monthly_totals(
+    ts_df: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    period_col: str = "fiscal_year_month",
+    time_col: str = "ds",
+    id_col: str = "unique_id",
+    target_col: str = "y",
+) -> pd.DataFrame:
+    """Sum realized weekly actuals across the full history per (id_col, period_col).
+
+    Unlike compute_mtd_actuals, which filters to specific target fiscal months
+    for one fold, this sums the entire ts_df which is the full realized monthly ground
+    truth, computed once and reused across every fold/origin as
+    actual_monthly_df.
+
+    Args:
+        ts_df: Full historical panel.
+        calendar_df: Maps time_col (ds) to period_col (fiscal_year_month).
+        period_col: Fiscal period column. Default "fiscal_year_month".
+        time_col: Join key between ts_df and calendar_df. Default "ds".
+        id_col: Series identifier column. Default "unique_id".
+        target_col: Target value column to sum. Default "y".
+
+    Returns:
+        DataFrame with columns (id_col, period_col, "actual_monthly_total").
+    """
+
+    return (
+        ts_df.merge(
+            calendar_df[[time_col, period_col]].drop_duplicates(),
+            on=time_col,
+            how="left",
+        )
+        .groupby([id_col, period_col])[target_col]
+        .sum()
+        .reset_index()
+        .rename(columns={target_col: "actual_monthly_total"})
+    )
+
+
 def compute_predicted_remaining(
     forecast_df: pd.DataFrame,
     calendar_df: pd.DataFrame,
