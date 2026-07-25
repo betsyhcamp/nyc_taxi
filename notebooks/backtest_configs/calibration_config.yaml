@@ -1,0 +1,13 @@
+model: notebooks/backtest_configs/model_weekly_lightgbm.yaml
+predict_callable: models.lightgbm_weekly.lightgbm_weekly_predict
+truncation_adapter: models.lightgbm_weekly._set_lightgbm_iteration
+
+calibration_origins:
+  months_before_backtest_window: 2
+  # resolved into an explicit (origin, horizon) list at notebook run time,
+  # via the same generate_folds()/sorted_origin_horizon_pairs() machinery
+  # backtest_weekly.py uses
+
+n_estimators_grid:
+  ceiling: 1200
+  step: 25

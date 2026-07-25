@@ -57,8 +57,8 @@ run_config_path = project_root / "notebooks" / "backtest_configs" / "run_config.
 run_cfg = yaml.safe_load(run_config_path.read_text())
 
 
-backtest_cfg_path = project_root / "notebooks" / run_cfg["configs"]["backtest_config"]
-model_cfg_path = project_root / "notebooks" / run_cfg["configs"]["model"]
+backtest_cfg_path = project_root / run_cfg["configs"]["backtest_config"]
+model_cfg_path = project_root / run_cfg["configs"]["model"]
 
 sidecar_dir = generate_run_id()
 sidecar_uri = (
