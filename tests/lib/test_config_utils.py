@@ -21,7 +21,7 @@ _MINIMAL_CONFIG: dict = {
         "mode": "explicit",
         "forecast_origins": [{"origin": "2025-04-20", "horizon": 3}],
     },
-    "model": {"callable": "models.naive.naive_weekly"},
+    "model": {"fit_predict_callable": "models.naive.naive_weekly"},
     "evaluation": {
         "native": {
             "metrics": {
@@ -86,14 +86,14 @@ def test_deep_merge_does_not_mutate_inputs() -> None:
     """_deep_merge must not modify either input dict in place."""
     base = {"data": {"freq": "W-SAT"}}
     override = {
-        "model": {"callable": "models.naive.naive_weekly"},
+        "model": {"fit_predict_callable": "models.naive.naive_weekly"},
     }
 
     result = _deep_merge(base, override)
 
     assert result.keys() == {"data", "model"}
     assert result["data"].keys() == {"freq"}
-    assert result["model"].keys() == {"callable"}
+    assert result["model"].keys() == {"fit_predict_callable"}
 
 
 # ================================================
@@ -104,10 +104,10 @@ def test_deep_merge_does_not_mutate_inputs() -> None:
 def test_merge_configs_two_dicts_returns_backtest_config() -> None:
     """Two dicts are deep-merged and validated into a BacktestConfig."""
     base = {k: v for k, v in _MINIMAL_CONFIG.items() if k != "model"}
-    model_spec = {"model": {"callable": "models.naive.naive_weekly"}}
+    model_spec = {"model": {"fit_predict_callable": "models.naive.naive_weekly"}}
     result = merge_configs(base, model_spec)
     assert isinstance(result, BacktestConfig)
-    assert result.model.callable == "models.naive.naive_weekly"
+    assert result.model.fit_predict_callable == "models.naive.naive_weekly"
 
 
 def test_merge_configs_yaml_path_loads_and_merges(minimal_config_yaml: Path) -> None:
@@ -125,7 +125,7 @@ def test_merge_configs_three_way_merge() -> None:
 
     result = merge_configs(base, model_spec, override)
     assert result.data.id_col == "unique_id"
-    assert result.model.callable == "models.naive.naive_weekly"
+    assert result.model.fit_predict_callable == "models.naive.naive_weekly"
     assert result.data.target_col == "y_new"
 
 
@@ -154,7 +154,7 @@ def test_save_config_dict_writes_to_local_path(tmp_path: Path) -> None:
     save_config(_MINIMAL_CONFIG, out_path)
     assert out_path.exists()
     loaded = yaml.safe_load(out_path.read_text())
-    assert loaded["model"]["callable"] == "models.naive.naive_weekly"
+    assert loaded["model"]["fit_predict_callable"] == "models.naive.naive_weekly"
 
 
 def test_save_config_backtest_config_writes_to_local_path(tmp_path: Path) -> None:
@@ -163,7 +163,7 @@ def test_save_config_backtest_config_writes_to_local_path(tmp_path: Path) -> Non
     out_path = tmp_path / "composed.yaml"
     save_config(cfg, out_path)
     loaded = yaml.safe_load(out_path.read_text())
-    assert loaded["model"]["callable"] == "models.naive.naive_weekly"
+    assert loaded["model"]["fit_predict_callable"] == "models.naive.naive_weekly"
 
 
 def test_save_config_routes_gcs_path_to_write_text_to_gcs(
