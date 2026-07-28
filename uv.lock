@@ -822,7 +822,7 @@ requires-dist = [
     { name = "kfp", specifier = ">=2.15.2" },
     { name = "pandas", specifier = ">=2.3.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
-    { name = "tsbricks", git = "https://github.com/betsyhcamp/tsbricks.git?rev=v0.3.0" },
+    { name = "tsbricks", git = "https://github.com/betsyhcamp/tsbricks.git?rev=v0.4.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -853,7 +853,7 @@ dev = [
     { name = "sqlfluff", specifier = ">=3.5.0" },
     { name = "statsmodels", specifier = ">=0.14.4" },
     { name = "streamlit", specifier = ">=1.52.1" },
-    { name = "tsbricks", extras = ["matplotlib"], git = "https://github.com/betsyhcamp/tsbricks.git?rev=v0.3.0" },
+    { name = "tsbricks", extras = ["matplotlib"], git = "https://github.com/betsyhcamp/tsbricks.git?rev=v0.4.0" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20260408" },
 ]
 extract = [
@@ -3974,8 +3974,8 @@ wheels = [
 
 [[package]]
 name = "tsbricks"
-version = "0.3.0"
-source = { git = "https://github.com/betsyhcamp/tsbricks.git?rev=v0.3.0#375675baf947fd295102fda177aad0433bac30f9" }
+version = "0.4.0"
+source = { git = "https://github.com/betsyhcamp/tsbricks.git?rev=v0.4.0#56daff0fa050a56c1f2bfb36ea3e14acf6e71ca6" }
 dependencies = [
     { name = "coreforecast" },
     { name = "gcsfs" },
