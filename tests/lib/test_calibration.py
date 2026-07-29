@@ -15,11 +15,11 @@ from fcstnyctaxi.lib.calibration import calibrate_n_estimators
 # horizon=2 — so the fold's target weeks (8-9) fall entirely in 202503,
 # giving exactly one horizon_label group ("horizon_1") to score per k.
 #
-# predict_fn/set_truncation_iteration are fakes (§7's whole point is that
-# calibrate_n_estimators() never needs a real fitted model) — the fake
-# model callable that invoke_model() resolves just tags which train_df it
-# was "fit" on, and the fake predict_fn returns a fixed weekly forecast
-# regardless of k, since truncation behavior itself is models/
+# The fakes exist because calibrate_n_estimators() never needs a real fitted
+# model: the fake fit callable that invoke_model() resolves just tags which
+# train_df it was "fit" on; the fake predict callable that invoke_predict()
+# resolves (via model_config.predict_callable) returns a fixed weekly forecast
+# regardless of k, since truncation's effect on the forecast is models/
 # lightgbm_weekly.py's concern, not this function's.
 # ================================================
 
@@ -71,24 +71,26 @@ def actual_monthly_df(calendar_df: pd.DataFrame) -> pd.DataFrame:
 @pytest.fixture
 def model_config() -> ModelConfig:
     return ModelConfig(
-        callable="test_calibration._fake_model_callable",
+        fit_predict_callable="test_calibration._fake_model_callable",
+        predict_callable="test_calibration._fake_predict_callable",
         hyperparameters={"freq": "W-SUN"},
     )
 
 
 def _fake_model_callable(train_df: pd.DataFrame, horizon: int, **kwargs):
-    """Stands in for a real model callable (e.g. lightgbm_weekly()) —
-    returns a trivial model_obj since predict_fn/set_truncation_iteration
+    """Stands in for a real fit callable (e.g. lightgbm_weekly()) — returns a
+    trivial model_obj since the fake predict callable / set_truncation_iteration
     below never need a real fitted model to do their job in this test."""
     empty = pd.DataFrame({"unique_id": [], "ds": [], "ypred": []})
     return empty, empty, {"fit_on_rows": len(train_df)}
 
 
-def _fake_predict_fn(
-    model_obj, horizon: int, future_x_df: pd.DataFrame | None
+def _fake_predict_callable(
+    model_obj, horizon: int, future_x_df: pd.DataFrame | None = None
 ) -> pd.DataFrame:
     """Fixed weekly forecast for the last `horizon` weeks of future_x_df,
-    regardless of k or model_obj — truncation's effect on the forecast is
+    regardless of k or model_obj — resolved by invoke_predict() from
+    model_config.predict_callable. Truncation's effect on the forecast is
     models/lightgbm_weekly.py's concern, not this function's."""
     assert future_x_df is not None
     future_weeks = future_x_df["ds"].sort_values().iloc[-horizon:].tolist()
@@ -124,7 +126,6 @@ def test_calibrate_n_estimators_returns_expected_shape(
         n_estimators_grid=n_estimators_grid,
         calibration_origins=[("2025-02-23", 2)],
         set_truncation_iteration=_fake_set_truncation_iteration,
-        predict_fn=_fake_predict_fn,
     )
 
     assert set(result.columns) == {"origin", "n_estimators", "horizon", "score"}
@@ -133,44 +134,47 @@ def test_calibrate_n_estimators_returns_expected_shape(
     assert (result["horizon"] == "horizon_1").all()
 
 
-# TODO(human): test that predict_fn and set_truncation_iteration are each
-# called exactly once per (origin, k) pair, not once per origin or once
-# overall. With one calibration origin and n_estimators_grid=[100, 200],
-# both should be called exactly twice.
-#
-# Guidance: write small wrapper functions around _fake_predict_fn and
-# _fake_set_truncation_iteration that increment a counter (a list with one
-# int works well as a mutable counter you can close over) each time
-# they're called, then pass those wrappers into calibrate_n_estimators()
-# instead of the originals. Assert both counters equal 2 afterward.
-def test_calibrate_n_estimators_calls_predict_fn_once_per_origin_and_k(
+def test_calibrate_n_estimators_calls_predict_and_truncation_once_per_origin_and_k(
     ts_df: pd.DataFrame,
     calendar_df: pd.DataFrame,
     actual_monthly_df: pd.DataFrame,
     model_config: ModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Predict (resolved from model_config.predict_callable) and
+    set_truncation_iteration are each invoked exactly once per (origin, k) pair
+    — here 1 origin x 2 candidates = 2 calls each, not once per origin or once
+    overall."""
     counter_pred = [0]
     counter_trunc = [0]
 
-    def _wrapper_fake_predict_fn(model_obj, horizon, future_x_df):
-        fcst = _fake_predict_fn(model_obj, horizon, future_x_df)
+    # Predict is resolved from config via dynamic_import, not injected, so count
+    # it by patching the module attribute the dotted path resolves to. Capture
+    # the original first: after the patch, the module-global name IS the wrapper,
+    # so calling it by that name inside the wrapper would recurse infinitely.
+    original_predict_callable = _fake_predict_callable
+
+    def _counting_predict_callable(model_obj, horizon, future_x_df=None):
         counter_pred[0] += 1
-        return fcst
+        return original_predict_callable(model_obj, horizon, future_x_df)
 
-    def _wrapper_fake_set_truncation_iteration(model_obj, k):
-        _fake_set_truncation_iteration(model_obj, k)
+    monkeypatch.setattr(
+        "test_calibration._fake_predict_callable", _counting_predict_callable
+    )
+
+    # Truncation is still an injected parameter, so wrap it directly.
+    def _counting_set_truncation_iteration(model_obj, k):
         counter_trunc[0] += 1
+        _fake_set_truncation_iteration(model_obj, k)
 
-    n_estimators_grid = [100, 200]
     _ = calibrate_n_estimators(
         ts_df=ts_df,
         calendar_df=calendar_df,
         actual_monthly_df=actual_monthly_df,
         model_config=model_config,
-        n_estimators_grid=n_estimators_grid,
+        n_estimators_grid=[100, 200],
         calibration_origins=[("2025-02-23", 2)],
-        set_truncation_iteration=_wrapper_fake_set_truncation_iteration,
-        predict_fn=_wrapper_fake_predict_fn,
+        set_truncation_iteration=_counting_set_truncation_iteration,
     )
     assert counter_pred[0] == 2
     assert counter_trunc[0] == 2
