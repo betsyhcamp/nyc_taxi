@@ -1,4 +1,4 @@
 model:
-  callable: models.auto_arima.auto_arima_weekly
+  fit_predict_callable: models.auto_arima.auto_arima_weekly
   hyperparameters:
     season_length: 52

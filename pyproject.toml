@@ -16,7 +16,7 @@ dependencies = [
     "kfp>=2.15.2",
     "pandas>=2.3.0",
     "pydantic>=2.12.5",
-    "tsbricks==0.3.0",
+    "tsbricks==0.4.0",
 ]
 
 [dependency-groups]
@@ -64,7 +64,7 @@ dev = [
     "docker>=7.1.0",
     "google-cloud-aiplatform>=1.130.0",
     "pandas-gbq>=0.31.0",
-    "tsbricks[matplotlib]==0.3.0",
+    "tsbricks[matplotlib]==0.4.0",
 ]
 
 [tool.ruff]
@@ -127,7 +127,7 @@ default-groups = ["dev", "forecasting"]
 constraint-dependencies = ["setuptools<81"]
 
 [tool.uv.sources]
-tsbricks = { git = "https://github.com/betsyhcamp/tsbricks.git", rev = "v0.3.0" }
+tsbricks = { git = "https://github.com/betsyhcamp/tsbricks.git", rev = "v0.4.0" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fcstnyctaxi"]
