@@ -1,5 +1,6 @@
 model:
   fit_predict_callable: models.lightgbm_weekly.lightgbm_weekly
+  predict_callable: models.lightgbm_weekly.lightgbm_weekly_predict
   hyperparameters:
     freq: W-SUN
     lags: [1, 52]

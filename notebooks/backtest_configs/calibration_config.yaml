@@ -1,5 +1,4 @@
 model: notebooks/backtest_configs/model_weekly_lightgbm.yaml
-predict_callable: models.lightgbm_weekly.lightgbm_weekly_predict
 truncation_adapter: models.lightgbm_weekly._set_lightgbm_iteration
 
 calibration_periods:

@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from tsbricks.backtesting import generate_folds
 from tsbricks.backtesting.schema import CrossValidationConfig, DataConfig
-from tsbricks.runner import invoke_model
+from tsbricks.runner import invoke_model, invoke_predict
 
 from fcstnyctaxi.lib.cross_validation_utils import sorted_origin_horizon_pairs
 from fcstnyctaxi.lib.metrics import weighted_mae
@@ -23,31 +23,31 @@ def calibrate_n_estimators(
         tuple[Any, int]
     ],  # (origin, horizon) pairs, disjoint from real backtest origins
     set_truncation_iteration: Callable[[Any, int], None],
-    predict_fn: Callable[[Any, int, pd.DataFrame | None], pd.DataFrame],
     scoring_fn: Callable[[np.ndarray, np.ndarray, np.ndarray], float] = weighted_mae,
 ) -> pd.DataFrame:
     """Calibrate a GBDT model's round count against held-out historical data.
 
     For each calibration origin, fits once via invoke_model() at max(n_estimators_grid),
-    then sweeps the grid by truncating predictions via set_truncation_iteration and
-    repredicting via predict_fn, rather than retraining. Scores each candidate at the
-    monthly aggregated, horizon split level using scoring_fn.
+    then sweeps the grid by truncating the fitted model via set_truncation_iteration and
+    re-predicting via invoke_predict(), rather than retraining. Scores each candidate at
+    the monthly aggregated, horizon split level using scoring_fn.
 
-    Both set_truncation_iteration and predict_fn are injected, model-specific
-    adapters keeping this function agnostic across model families.
+    Predict is config-driven: invoke_predict() resolves model_config.predict_callable,
+    keeping this function model-agnostic. Truncation is the one injected,
+    model-specific adapter (set_truncation_iteration).
 
     Args:
         ts_df: Full historical panel, used to generate calibration folds.
         calendar_df: Fiscal calendar; also passed through untouched as the
-            future exogenous table for both the ceiling fit and predict_fn.
+            future exogenous table for both the ceiling fit and each re-predict.
         actual_monthly_df: Realized monthly totals; precomputed once outside
             this function, parallel to evaluate_model()'s own parameter
             see fcstnyctaxi.lib.monthly_aggregation.compute_actual_monthly_totals.
+        model_config: Model config carrying fit_predict_callable (used for the
+            ceiling fit) and predict_callable (resolved by invoke_predict() for
+            each per-candidate re-predict).
         set_truncation_iteration: Mutates a fitted model_obj in place to
             truncate it to k boosting rounds for the next predict.
-        predict_fn: Predicts from an already-fitted model_obj without
-            refitting the model specific "predict-only" adapter,
-            e.g. models.lightgbm_weekly.lightgbm_weekly_predict.
 
     Returns:
         DataFrame with columns: origin, n_estimators, horizon, score.
@@ -92,8 +92,11 @@ def calibrate_n_estimators(
 
         for k in n_estimators_grid:
             set_truncation_iteration(mlfcst, k)
-            # predict_fn owns feature building internally so current script doesn't
-            truncated_estimators_fcst = predict_fn(mlfcst, horizon, calendar_df)
+            # invoke_predict resolves model_config.predict_callable, which owns
+            # future-feature building internally
+            truncated_estimators_fcst = invoke_predict(
+                mlfcst, ceiling_config, horizon, future_x_df=calendar_df
+            )
 
             monthly_rows = build_monthly_forecast_vs_actual(
                 forecast_df=truncated_estimators_fcst,
