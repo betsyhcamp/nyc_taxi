@@ -15,7 +15,6 @@
 # %%
 import sys
 import json
-import functools
 import yaml
 import fsspec
 import pandas as pd
@@ -24,15 +23,13 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from tsbricks.backtesting.schema import ModelConfig
-from tsbricks.runner._utils import dynamic_import # private tsbricks module; see tsbricks_improvements.md 
+from tsbricks.runner import dynamic_import
 
 from fcstnyctaxi.lib.calibration import calibrate_n_estimators
-from fcstnyctaxi.lib.model_invocation import invoke_predict
 from fcstnyctaxi.lib.monthly_aggregation import compute_actual_monthly_totals
 from fcstnyctaxi.lib.period_utils import generate_origins_for_periods
 from fcstnyctaxi.lib.io import write_text_to_gcs
 from fcstnyctaxi.lib.utils import get_project_root_dir, generate_run_id
-
 
 # %%
 project_root = get_project_root_dir()
@@ -107,16 +104,19 @@ if latest_calibration_target_month >= earliest_backtest_target_month:
 )
 
 # %%
-cal_cfg["n_estimators_grid"]
-
-
-# %%
+grid_cfg = cal_cfg["n_estimators_grid"]
 n_estimators_grid = list(
     range(
-        cal_cfg["n_estimators_grid"]["step"], 
-        cfg["n_estimators_grid"]["ceiling"]+1, 
-        cal_cfg["n_estimators_grid"]["step"]
+        grid_cfg["step"], # grid start
+        grid_cfg["ceiling"]+1, # grid end inclusive of ceiling
+        grid_cfg["step"] # grid step size
     )
 )
+
+set_truncation_iteration = dynamic_import(cal_cfg["truncation_adapter"])
+
+# %%
+
+predict_fn = functools.partial(invoke_predict, predict_callable=cal_cfg["predict_callable"])
 
 # %%
