@@ -4,7 +4,10 @@ import pandas as pd
 import pytest
 from tsbricks.backtesting.schema import ModelConfig
 
-from fcstnyctaxi.lib.calibration import calibrate_n_estimators
+from fcstnyctaxi.lib.calibration import (
+    calibrate_n_estimators,
+    most_parsimonious_n_estimators,
+)
 
 # ================================================
 # Fixtures
@@ -108,6 +111,63 @@ def _fake_set_truncation_iteration(model_obj, k: int) -> None:
     not truncation behavior itself (tested in test_lightgbm_weekly.py)."""
 
 
+# ================================================
+# calibrate_n_estimators()
+# ================================================
+
+
+def test_calibrate_n_estimators_raises_on_empty_grid(
+    ts_df: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    actual_monthly_df: pd.DataFrame,
+    model_config: ModelConfig,
+) -> None:
+    n_estimators_grid: list[int] = []
+
+    with pytest.raises(ValueError, match="grid is empty"):
+        calibrate_n_estimators(
+            ts_df=ts_df,
+            calendar_df=calendar_df,
+            actual_monthly_df=actual_monthly_df,
+            model_config=model_config,
+            n_estimators_grid=n_estimators_grid,
+            calibration_origins=[("2025-02-23", 2)],
+            set_truncation_iteration=_fake_set_truncation_iteration,
+        )
+
+
+def test_calibrate_n_estimators_raises_on_nan_series_weight(
+    ts_df: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    actual_monthly_df: pd.DataFrame,
+    model_config: ModelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If a forecast unique_id is missing from weight_df, the left-merge yields a
+    NaN series_weight, which would otherwise flow into scoring as a silent nan.
+    The guard must raise instead. Forced here by patching compute_series_weights
+    (in calibration's namespace) to return weights for only one of the two
+    series -- dropping unique_id 20 -- so the merge leaves 20's weight NaN."""
+
+    def _weights_missing_id_20(train_df, origin_date, calendar_df) -> pd.DataFrame:
+        return pd.DataFrame({"unique_id": [10], "series_weight": [1.0]})
+
+    monkeypatch.setattr(
+        "fcstnyctaxi.lib.calibration.compute_series_weights", _weights_missing_id_20
+    )
+
+    with pytest.raises(ValueError, match="series_weight NaN"):
+        calibrate_n_estimators(
+            ts_df=ts_df,
+            calendar_df=calendar_df,
+            actual_monthly_df=actual_monthly_df,
+            model_config=model_config,
+            n_estimators_grid=[100],
+            calibration_origins=[("2025-02-23", 2)],
+            set_truncation_iteration=_fake_set_truncation_iteration,
+        )
+
+
 def test_calibrate_n_estimators_returns_expected_shape(
     ts_df: pd.DataFrame,
     calendar_df: pd.DataFrame,
@@ -178,3 +238,51 @@ def test_calibrate_n_estimators_calls_predict_and_truncation_once_per_origin_and
     )
     assert counter_pred[0] == 2
     assert counter_trunc[0] == 2
+
+
+# ================================================
+# most_parsimonious_n_estimators()
+# # "k" / "k*" below is a value of n_estimators (the candidate boosting round count).
+# The function returns k* = the smallest n_estimators whose smoothed score is
+# within tolerance of the best.
+# ================================================
+
+
+def test_most_parsimonious_interior_plateau() -> None:
+    """A V-shaped curve with a clear interior minimum -> k* is that interior
+    value (well inside the grid, neither floor nor ceiling)."""
+    scores = pd.Series(
+        [10, 8, 6, 5, 6, 8, 10],
+        index=[25, 50, 75, 100, 125, 150, 175],
+    )
+    assert most_parsimonious_n_estimators(scores) == 100
+
+
+def test_most_parsimonious_still_improving_at_ceiling() -> None:
+    """A monotonically decreasing curve -> k* pins at the grid ceiling. This is
+    the 'still improving past the grid' case the inconclusive warning flags."""
+    scores = pd.Series(
+        [10, 9, 8, 7, 6, 5],
+        index=[25, 50, 75, 100, 125, 150],
+    )
+    assert most_parsimonious_n_estimators(scores) == 150
+
+
+def test_most_parsimonious_flat_curve_picks_floor() -> None:
+    """A flat curve -> every k is within tolerance, so parsimony picks the
+    smallest n_estimators (the floor)."""
+    scores = pd.Series([5, 5, 5, 5], index=[25, 50, 75, 100])
+    assert most_parsimonious_n_estimators(scores) == 25
+
+
+def test_most_parsimonious_tolerance_beats_raw_argmin() -> None:
+    """The distinguishing behavior: when a smaller k is within epsilon of the
+    best, k* is that smaller k which is NOT the raw argmin. A plain idxmin
+    implementation would fail this test; the tolerance/parsimony logic passes it.
+    """
+    scores = pd.Series(
+        [10, 8, 7.5, 7, 5.99, 5.98, 10],
+        index=[25, 50, 75, 100, 125, 150, 175],
+    )
+    assert most_parsimonious_n_estimators(scores, smoothing_window=1) == 125
+    assert scores.idxmin() == 150

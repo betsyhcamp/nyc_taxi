@@ -13,6 +13,38 @@ from fcstnyctaxi.lib.monthly_aggregation import build_monthly_forecast_vs_actual
 from fcstnyctaxi.lib.period_utils import compute_series_weights, derive_horizon_label
 
 
+def most_parsimonious_n_estimators(
+    scores_by_n_estimators: pd.Series,
+    smoothing_window: int = 3,
+    epsilon: float = 0.01,
+) -> int:
+    """Return the smallest n_estimators within tolerance of the smoothed best.
+
+    Rolling-mean-smooths one score-vs-n_estimators curve, then
+    returns the smallest n_estimators whose smoothed score is within a relative
+    ``epsilon`` of that curve's smoothed minimum. Both the selection guidance and
+    the inconclusive-calibration warning are built on this single value, so they stay
+    consistent by construction.
+
+    Args:
+        scores_by_n_estimators: score indexed by n_estimators.
+        smoothing_window: Width, in grid points, of the centered rolling-mean
+            smoother. Measured in grid points, so its effect in estimator units
+            scales with the grid's step. Defaults to 3.
+        epsilon: Relative tolerance, as a fraction of this curve's own
+            smoothed best. Defaults to 0.01 (1%).
+
+    Returns:
+        The smallest n_estimators whose smoothed score is within ``epsilon`` of
+        the curve's smoothed best.
+    """
+    smoothed = scores_by_n_estimators.rolling(
+        smoothing_window, center=True, min_periods=1
+    ).mean()
+    best = smoothed.min()
+    return int(smoothed[smoothed <= best * (1 + epsilon)].index.min())
+
+
 def calibrate_n_estimators(
     ts_df: pd.DataFrame,
     calendar_df: pd.DataFrame,
@@ -53,6 +85,9 @@ def calibrate_n_estimators(
         DataFrame with columns: origin, n_estimators, horizon, score.
         So scoring is per-origin, per-candidate; not pooled.
     """
+    if not n_estimators_grid:
+        raise ValueError("Provided n_estimators grid is empty.")
+
     calibration_cv_config = CrossValidationConfig(
         mode="explicit",
         forecast_origins=[{"origin": o, "horizon": h} for o, h in calibration_origins],
@@ -112,6 +147,13 @@ def calibrate_n_estimators(
                     fraction_by_origin[origin],
                 )
             ).merge(weight_df, on="unique_id", how="left")
+
+            mask_series_weight = monthly_rows["series_weight"].isna()
+            if mask_series_weight.any():
+                raise ValueError(
+                    "series_weight NaN unique_ids: "
+                    f"{monthly_rows.loc[mask_series_weight, 'unique_id'].unique()}"
+                )
 
             for horizon_label, group in monthly_rows.groupby("horizon_label"):
                 score = scoring_fn(
