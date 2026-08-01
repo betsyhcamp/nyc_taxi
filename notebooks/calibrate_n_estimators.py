@@ -25,7 +25,10 @@ from plotly.subplots import make_subplots
 from tsbricks.backtesting.schema import ModelConfig
 from tsbricks.runner import dynamic_import
 
-from fcstnyctaxi.lib.calibration import calibrate_n_estimators
+from fcstnyctaxi.lib.calibration import (
+    calibrate_n_estimators,
+    most_parsimonious_n_estimators
+)
 from fcstnyctaxi.lib.monthly_aggregation import compute_actual_monthly_totals
 from fcstnyctaxi.lib.period_utils import generate_origins_for_periods
 from fcstnyctaxi.lib.io import write_text_to_gcs
@@ -60,6 +63,9 @@ calendar_uri = (
     f"{run_cfg['project']['gcs_bucket']}/{run_cfg['project']['fiscal_calendar_uri']}"
 )
 calendar_df = pd.read_parquet(calendar_uri)
+
+# %%
+calendar_df.head()
 
 # %%
 # Expand monthly calibration_periods.start_months into the exact weekly
@@ -116,7 +122,105 @@ n_estimators_grid = list(
 set_truncation_iteration = dynamic_import(cal_cfg["truncation_adapter"])
 
 # %%
-
-predict_fn = functools.partial(invoke_predict, predict_callable=cal_cfg["predict_callable"])
+ts_df.head()
 
 # %%
+# actuals: ground-truth monthly totals, precomputed once (parallels evaluate_model)
+#actual_monthly_df = compute_actual_monthly_totals(ts_df, calendar_df)
+
+# SHAPE MISMATCH to fix: generate_origins_for_periods returned list-of-dicts
+# ({"origin":..., "horizon":...}), but calibrate_n_estimators wants
+# Sequence[tuple[origin, horizon]]. Convert:
+#calibration_origins = [(p["origin"], p["horizon"]) for p in calibration_origin_pairs]
+
+#scores_df = calibrate_n_estimators(
+#    ts_df=ts_df,
+#    calendar_df=calendar_df,
+#    actual_monthly_df=actual_monthly_df,
+#    model_config=model_cfg,
+#    n_estimators_grid=n_estimators_grid,
+#    calibration_origins=calibration_origins,
+#    set_truncation_iteration=set_truncation_iteration,
+#)
+#scores_df            # eyeball: columns origin, n_estimators, horizon, score
+#
+
+# %%
+data = backtest_cfg["data"]
+actual_monthly_df = compute_actual_monthly_totals(
+    ts_df = ts_df, 
+    calendar_df = calendar_df, 
+    period_col = "fiscal_year_month", 
+    time_col = data["date_col"], 
+    id_col = data["id_col"], 
+    target_col = data["target_col"]
+)
+
+# %%
+cal_cfg
+
+# %%
+calibration_origins = [
+    (pair["origin"], pair["horizon"]) for pair in calibration_origin_pairs
+]
+
+# %%
+scores_df = calibrate_n_estimators(
+    ts_df=ts_df,
+    calendar_df=calendar_df,
+    actual_monthly_df=actual_monthly_df,
+    model_config=model_cfg,
+    n_estimators_grid=n_estimators_grid,
+    calibration_origins=calibration_origins,
+    set_truncation_iteration=set_truncation_iteration,
+)
+
+# %%
+scores_df
+
+# %%
+scores_df.groupby("horizon")["score"].describe(),
+
+# %%
+one_origin = scores_df["origin"].iloc[0]          # or hand-pick a specific origin
+curve = (
+    scores_df[scores_df["origin"] == one_origin]
+    .pivot(index="n_estimators", columns="horizon", values="score")
+    .sort_index()
+)
+curve 
+
+# %%
+rows = []
+for (origin, horizon), grp in scores_df.groupby(["origin", "horizon"]):
+    curve = grp.set_index("n_estimators")["score"].sort_index()   # index = n_estimators
+    recommended_n_estimators = most_parsimonious_n_estimators(curve) # defaults: window=3, epsilon=0.01
+    rows.append(
+        {
+            "origin": origin,
+            "horizon": horizon,
+            "recommended_n_estimators": recommended_n_estimators
+        }
+    )
+recommended_n_estimators_df = pd.DataFrame(rows)
+
+
+# %%
+tail_fraction = 0.10
+grid = sorted(n_estimators_grid)
+tail_threshold = tail_threshold = grid[-1] - tail_fraction * (grid[-1] - grid[0])
+recommended_n_estimators_df["inconclusive"] = (
+    recommended_n_estimators_df["recommended_n_estimators"] >= tail_threshold
+)
+
+# %%
+report = (
+    recommended_n_estimators_df
+    .groupby("horizon")["inconclusive"]
+    .agg(n_flagged="sum", n_origins="count")
+)
+# print "horizon_2: 5/9 inconclusive -> widen grid and re-run" only where n_flagged > 0
+
+recommended_n_estimators_df.groupby("horizon")["recommended_n_estimators"].describe()
+# tight cluster -> trustworthy; wide -> origin-sensitive
+

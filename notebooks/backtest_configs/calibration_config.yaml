@@ -8,5 +8,5 @@ calibration_periods:
   forecast_horizon_months: 2   # mirrors the backtest's 2-month horizon (Framing A)
 
 n_estimators_grid:
-  ceiling: 1200
+  ceiling: 1600
   step: 25
