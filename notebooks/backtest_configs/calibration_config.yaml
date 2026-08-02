@@ -10,3 +10,10 @@ calibration_periods:
 n_estimators_grid:
   ceiling: 1600
   step: 25
+
+selection:
+  percentile: 75
+  max_inconclusive_fraction: 0.25    # refuse if too many the origins are ceiling-pinned
+  inconclusive_tail_fraction: 0.10
+  epsilon: 0.02              # relative plateau tolerance (FRACTION, not percent): 0.02 = 2%
+  smoothing_window: 3        # grid points in the rolling-mean smoother
