@@ -1,0 +1,19 @@
+model: notebooks/backtest_configs/model_weekly_lightgbm.yaml
+truncation_adapter: models.lightgbm_weekly._set_lightgbm_iteration
+
+calibration_periods:
+  start_months: # calibration-only fiscal months, entirely before the backtest window
+    - 202501
+    - 202502
+  forecast_horizon_months: 2   # mirrors the backtest's 2-month horizon (Framing A)
+
+n_estimators_grid:
+  ceiling: 1600
+  step: 25
+
+selection:
+  percentile: 75
+  max_inconclusive_fraction: 0.25    # refuse if too many the origins are ceiling-pinned
+  inconclusive_tail_fraction: 0.10
+  epsilon: 0.02              # relative plateau tolerance (FRACTION, not percent): 0.02 = 2%
+  smoothing_window: 3        # grid points in the rolling-mean smoother

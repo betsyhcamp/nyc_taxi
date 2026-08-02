@@ -9,6 +9,7 @@ from fcstnyctaxi.lib.metrics import (
     _sanitize_value,
     signed_bias_per_series,
     signed_bias_pooled,
+    weighted_mae,
     wrmae_per_series,
     wrmae_pooled,
 )
@@ -354,3 +355,49 @@ def test_signed_bias_per_series_shape_mismatch_raises(arr):
     """Mismatched array lengths raise ValueError."""
     with pytest.raises(ValueError, match="shapes must match"):
         signed_bias_per_series(arr([1.0, 2.0]), arr([1.0, 2.0]), arr([1.0]))
+
+
+# ================================================
+# weighted_mae
+# ================================================
+
+
+def test_weighted_mae_known_value_unequal_weights(arr):
+    """Unequal weights: higher-weight series' error dominates the weighted mean."""
+    # y_true=[10,20], y_pred=[13,18], w=[4,1] -> num=4*3+1*2=14, den=4+1=5 -> 2.8
+    y_true = [10.0, 20.0]
+    y_pred = [13.0, 18.0]
+    weights = [4.0, 1.0]
+    result = weighted_mae(arr(y_true), arr(y_pred), arr(weights))
+    np.testing.assert_allclose(result, 2.8, rtol=1e-7)
+
+
+def test_weighted_mae_perfect_forecast_returns_zero(arr):
+    """Perfect forecast -> weighted_abs_error is zero -> result is 0.0."""
+    result = weighted_mae(arr([10.0, 20.0]), arr([10.0, 20.0]), arr([1.0, 1.0]))
+    np.testing.assert_allclose(result, 0.0, rtol=1e-7, atol=1e-10)
+
+
+def test_weighted_mae_empty_returns_nan(arr):
+    """Empty arrays -> nan."""
+    assert np.isnan(weighted_mae(arr([]), arr([]), arr([])))
+
+
+def test_weighted_mae_nonfinite_input_returns_nan(arr):
+    """Non-finite value in y_true -> nan."""
+    result = weighted_mae(arr([np.nan, 10.0]), arr([1.0, 11.0]), arr([1.0, 1.0]))
+    assert np.isnan(result)
+
+
+def test_weighted_mae_near_zero_weight_returns_nan(arr, eps_tiny):
+    """Total weight below _SMALL_NUM_BOUND -> _scale_is_invalid fires -> nan."""
+    result = weighted_mae(
+        arr([10.0, 20.0]), arr([11.0, 21.0]), arr([eps_tiny, eps_tiny])
+    )
+    assert np.isnan(result)
+
+
+def test_weighted_mae_shape_mismatch_raises(arr):
+    """Mismatched array lengths raise ValueError."""
+    with pytest.raises(ValueError, match="shapes must match"):
+        weighted_mae(arr([1.0, 2.0]), arr([1.0, 2.0]), arr([1.0]))

@@ -32,6 +32,45 @@ def _sanitize_value(x: float) -> float:
     return np.nan
 
 
+def weighted_mae(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    weights: np.ndarray,
+) -> float:
+    """Cube-root-weighted mean absolute error (MAE) for a single scoring window.
+
+    Computes sum(w * |y_pred - y_true|) / sum(w). Scoring-only — never
+    touches the LightGBM training loss (still plain unweighted L1).
+
+    Args:
+        y_true: Actual values, shape (n,).
+        y_pred: Predicted values, shape (n,).
+        weights: Non-negative series weights, shape (n,).
+
+    Returns:
+        Weighted mean absolute error, or nan on empty input, non-finite
+        values, or near-zero total weight.
+    """
+    # shape guard: error if arrays mismatched
+    _check_1d_same_shape(y_true, y_pred, weights)
+
+    # empty guard for data edge case
+    if y_true.size == 0:
+        return np.nan
+
+    # non-finite guard
+    input_arrays = (y_true, y_pred, weights)
+    if not all(np.all(np.isfinite(arr)) for arr in input_arrays):
+        return np.nan
+
+    total_weight = np.sum(weights)
+    if _scale_is_invalid(total_weight):
+        return np.nan
+
+    weighted_abs_error = np.sum(weights * np.abs(y_pred - y_true))
+    return _sanitize_value(weighted_abs_error / total_weight)
+
+
 def wrmae_pooled(
     challenger_errors: np.ndarray,
     benchmark_errors: np.ndarray,

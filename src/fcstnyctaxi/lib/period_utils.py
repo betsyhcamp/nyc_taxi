@@ -25,6 +25,53 @@ def _get_trailing_dates(
     )
 
 
+def derive_horizon_label(
+    predicted_fiscal_year_month: pd.Series,
+    origin_fiscal_year_month: int | pd.Series,
+    origin_month_fraction_elapsed: float | pd.Series,
+) -> pd.Series:
+    """Label each target month by how many fiscal months it sits ahead of
+    the last fully-completed month as of the origin.
+
+    horizon_1 = the current fiscal month (or the next one, if the origin
+    sits exactly at month-end, since that month has already fully
+    completed); horizon_2 = the month after that. "Last fully completed
+    month" is the origin's own month when origin_month_fraction_elapsed
+    == 1.0, otherwise the month immediately before it.
+
+    Args:
+        predicted_fiscal_year_month: Target fiscal months being forecast,
+            one per row. Always the per-row-varying input.
+        origin_fiscal_year_month: The forecast origin's own fiscal month.
+            Accepts a scalar (single-origin callers, e.g.
+            calibrate_n_estimators()) or a Series aligned to
+            predicted_fiscal_year_month (multi-origin callers, e.g.
+            leaderboard.py, which labels many origins in one call).
+        origin_month_fraction_elapsed: Fraction of the origin's fiscal
+            month already elapsed as of the origin (1.0 = origin sits at
+            month-end). Same scalar-or-Series shape as
+            origin_fiscal_year_month.
+
+    Returns:
+        Series of "horizon_N" string labels, indexed like
+        predicted_fiscal_year_month.
+    """
+    origin = origin_fiscal_year_month
+    frac = origin_month_fraction_elapsed
+    target = predicted_fiscal_year_month
+
+    year = origin // 100
+    month = origin % 100
+    prev_fiscal_year_month = np.where(month == 1, (year - 1) * 100 + 12, origin - 1)
+
+    last_completed = np.where(frac == 1.0, origin, prev_fiscal_year_month)
+
+    month_difference = (target // 100 - last_completed // 100) * 12 + (
+        target % 100 - last_completed % 100
+    )
+    return "horizon_" + pd.Series(month_difference, index=target.index).astype(str)
+
+
 def generate_origins_for_periods(
     start_months: list[int],
     forecast_horizon_months: int,
