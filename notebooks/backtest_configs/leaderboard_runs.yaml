@@ -10,3 +10,6 @@ runs:
   - model: lightgbm
     framing: weekly_to_monthly
     sidecar_id: 20260721T035220456048Z
+  - model: lightgbm_calib
+    framing: weekly_to_monthly
+    sidecar_id: 20260802T015412644312Z
