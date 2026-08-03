@@ -27,6 +27,34 @@ SIDECAR_URI_2 = "gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_weekly/20260
 
 
 # %%
+def read_sidecar_part(uri: str) -> dict:
+    """Read needed artifacts from a single sidecar.
+
+    Notebook-local read helper; reused throughout notebook. Text via fsspec.open,
+    parquet via pd.read_parquet.
+
+    Args:
+        uri: Sidecar prefix with trailing slash, e.g.
+            "gs://.../backtest_weekly/<run_id>/".
+
+    Returns:
+        dict with keys "monthly_series", "metrics", "fiscal_calendar"
+        (DataFrames) and "composed_config", "run_metadata" (parsed dicts).
+    """
+    with fsspec.open(f"{uri}composed_config.yaml", "r") as f:
+        composed_config = yaml.safe_load(f)
+    with fsspec.open(f"{uri}run_metadata.json", "r") as f:
+        run_metadata = json.load(f)
+    return {
+        "monthly_series": pd.read_parquet(f"{uri}monthly_series.parquet"),
+        "metrics": pd.read_parquet(f"{uri}metrics.parquet"),
+        "fiscal_calendar": pd.read_parquet(f"{uri}fiscal_calendar.parquet"),
+        "composed_config": composed_config,
+        "run_metadata": run_metadata,
+    }
+
+
+# %%
 def compose_hyperparameters(hp1: dict, hp2: dict) -> dict:
     """Generic, model-agnostic diff of two parts' model.hyperparameters.
 
@@ -77,11 +105,18 @@ def concatenate_monthly_series(ms1: pd.DataFrame, ms2: pd.DataFrame) -> pd.DataF
         ordered Categorical dtype.
     """
     merged = pd.concat([ms1, ms2], ignore_index=True)
-    
-    assert isinstance(ms1["tier"].dtype, pd.CategoricalDtype)
-    assert isinstance(ms2["tier"].dtype, pd.CategoricalDtype)
-    assert all(ms1["tier"].cat.categories == ms2["tier"].cat.categories)
-    
+
+    assert isinstance(ms1["tier"].dtype, pd.CategoricalDtype), \
+        "part 1 tier column not categorical datatype"
+
+    assert isinstance(ms2["tier"].dtype, pd.CategoricalDtype), \
+        "part 2 tier column not categorical datatype"
+
+    # checks same categories + order 
+    assert ms1["tier"].dtype == ms2["tier"].dtype, \
+        "part 1 vs 2 differ in categories, order, or order flag (bool flag)"
+
+    # define custom type from input dataframe and apply to output dataframe tier column
     tier_dtype = pd.CategoricalDtype(
         categories=ms1["tier"].cat.categories,
         ordered=ms1["tier"].cat.ordered,
@@ -90,34 +125,6 @@ def concatenate_monthly_series(ms1: pd.DataFrame, ms2: pd.DataFrame) -> pd.DataF
     
     return merged
 
-
-
-# %%
-def read_sidecar_part(uri: str) -> dict:
-    """Read needed artifacts from a single sidecar.
-
-    Notebook-local read helper; reused throughout notebook. Text via fsspec.open,
-    parquet via pd.read_parquet.
-
-    Args:
-        uri: Sidecar prefix with trailing slash, e.g.
-            "gs://.../backtest_weekly/<run_id>/".
-
-    Returns:
-        dict with keys "monthly_series", "metrics", "fiscal_calendar"
-        (DataFrames) and "composed_config", "run_metadata" (parsed dicts).
-    """
-    with fsspec.open(f"{uri}composed_config.yaml", "r") as f:
-        composed_config = yaml.safe_load(f)
-    with fsspec.open(f"{uri}run_metadata.json", "r") as f:
-        run_metadata = json.load(f)
-    return {
-        "monthly_series": pd.read_parquet(f"{uri}monthly_series.parquet"),
-        "metrics": pd.read_parquet(f"{uri}metrics.parquet"),
-        "fiscal_calendar": pd.read_parquet(f"{uri}fiscal_calendar.parquet"),
-        "composed_config": composed_config,
-        "run_metadata": run_metadata,
-    }
 
 
 # %%
@@ -138,36 +145,3 @@ assert len(concatenated_monthly_series) == len(part1["monthly_series"]) + len(pa
 print("rows:", len(concatenated_monthly_series), "| tier dtype:", concatenated_monthly_series["tier"].dtype)
 concatenated_monthly_series.head()
 
-
-# %%
-# The fixed ordered tier scheme (what assign_tiers produces on real data)
-TIERS = pd.CategoricalDtype(
-    categories=["very_low", "low", "middle", "high", "very_high"], ordered=True
-)
-
-ms1 = pd.DataFrame({
-    "forecast_origin_date": pd.to_datetime(["2025-06-08", "2025-06-15"]),  # earlier half
-    "predicted_fiscal_year_month": [202506, 202506],
-    "unique_id": ["A", "B"],
-    "tier": pd.Series(["high", "low"], dtype=TIERS),
-    "monthly_forecast": [1000.0, 50.0],
-    "actual_monthly_total": [1100.0, 40.0],
-    "series_weight": [10.0, 3.0],
-    "origin_month_fraction_elapsed": [0.6, 0.8],
-})
-
-ms2 = pd.DataFrame({
-    "forecast_origin_date": pd.to_datetime(["2025-06-22", "2025-06-29"]),  # later half
-    "predicted_fiscal_year_month": [202507, 202507],
-    "unique_id": ["A", "B"],
-    "tier": pd.Series(["very_high", "middle"], dtype=TIERS),
-    "monthly_forecast": [1200.0, 300.0],
-    "actual_monthly_total": [1150.0, 320.0],
-    "series_weight": [11.0, 6.0],
-    "origin_month_fraction_elapsed": [0.2, 0.4],
-})
-
-
-# %%
-
-# %%
