@@ -78,17 +78,22 @@ calendar_df = pd.read_parquet(calendar_uri)
 
 # %%
 raw_backtest_cfg = yaml.safe_load(backtest_cfg_path.read_text())
-eval_periods = raw_backtest_cfg["evaluation_periods"]
+explicit_origins = (
+    raw_backtest_cfg.get("cross_validation") or {}
+    ).get("forecast_origins")
+if explicit_origins is not None:
+    origin_pairs = explicit_origins
+else:
+    eval_periods = raw_backtest_cfg["evaluation_periods"]
 
+    origin_pairs = generate_origins_for_periods(
+        start_months=eval_periods["start_months"],
+        forecast_horizon_months=eval_periods["forecast_horizon_months"],
+        calendar_df=calendar_df,
+        calendar_time_col="ds"
+    )
 
-# %%
-origin_pairs = generate_origins_for_periods(
-    start_months=eval_periods["start_months"],
-    forecast_horizon_months=eval_periods["forecast_horizon_months"],
-    calendar_df=calendar_df,
-    calendar_time_col="ds"
-)
-print(f"Generated {len(origin_pairs)} forecast origins")
+print(f"Forecast origins to use:\n {len(origin_pairs)}")
 
 # %%
 global_horizon = (raw_backtest_cfg.get("cross_validation") or {}).get("horizon")

@@ -5,10 +5,20 @@ data:
   target_col: y
 
 cross_validation:
-  mode: explicit
-  # forecast_origins are NOT hardcoded here.
-  # Generated at runtime from evaluation_periods below via generate_origins_for_periods()
-  # in fcstnyctaxi/lib/period_utils.py and injected via merge_configs.
+  mode: explicit          # the only supported mode
+  # forecast_origins has two cases:
+  #   1. omitted (as here) -> runner generates origins from evaluation_periods (below)
+  #      via generate_origins_for_periods() in fcstnyctaxi/lib/period_utils.py,
+  #      injected through merge_configs.
+  #   2. present here      -> runner uses them verbatim and skips generation. Add the
+  #      key directly under this block (must be non-empty; an empty list raises a
+  #      min_length=1 schema error rather than falling back to generation), e.g.:
+  #      cross_validation:
+  #        mode: explicit
+  #.       forecast_origins:
+  #          - origin: "2025-03-23"
+  #            horizon: 8
+  #          - ...
 
 evaluation:
   native:
@@ -30,6 +40,8 @@ aggregation:
   period_col: fiscal_year_month
   agg_func: sum
 
+# Read only in case #1 above (forecast_origins omitted). In case #2 this whole
+# block is ignored and may be deleted.
 evaluation_periods:
   # Ideal state: Clip to 2 months for debugging; expand to 202501-202506 for full run
   # Temporarily use ([202504,202505] + [202507,202508]); 202506 excluded on purpose so
