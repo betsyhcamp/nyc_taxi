@@ -1,15 +1,27 @@
 default_base_uri: gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_weekly/
 runs:
-  - model: naive
+#  - model: naive
+#    framing: weekly_to_monthly
+#    sidecar_id: 20260716T001143851156Z
+#    benchmark: true
+#  - model: autoets
+#    framing: weekly_to_monthly
+#    sidecar_id: 20260716T001736616391Z
+#  - model: lightgbm
+#    framing: weekly_to_monthly
+#    sidecar_id: 20260721T035220456048Z
+#  - model: lightgbm_calib
+#    framing: weekly_to_monthly
+#    sidecar_id: 20260802T015412644312Z
+  - model: naive_26week
     framing: weekly_to_monthly
-    sidecar_id: 20260716T001143851156Z
+    sidecar_id: 20260803T230103657210Z
     benchmark: true
-  - model: autoets
+  - model: autoets_26week
     framing: weekly_to_monthly
-    sidecar_id: 20260716T001736616391Z
-  - model: lightgbm
+    sidecar_id: 20260803T233315973078Z
+
+  # note use of sidecar_uri for a run that isn't located in default_base_uri
+  - model: lightgbm_2part
     framing: weekly_to_monthly
-    sidecar_id: 20260721T035220456048Z
-  - model: lightgbm_calib
-    framing: weekly_to_monthly
-    sidecar_id: 20260802T015412644312Z
+    sidecar_uri: gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_weekly_merged/20260803T203541854611Z/
