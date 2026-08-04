@@ -31,7 +31,12 @@ aggregation:
   agg_func: sum
 
 evaluation_periods:
-  start_months:             # clipped to 2 months for debugging; expand to 202501-202506 for full run
+  # Ideal state: Clip to 2 months for debugging; expand to 202501-202506 for full run
+  # Temporarily use ([202504,202505] + [202507,202508]); 202506 excluded on purpose so
+  # the benchmark's (origin,horizon) pairs match the disjoint lightgbm split.
+  start_months:
     - 202504
     - 202505
+    - 202507
+    - 202508
   forecast_horizon_months: 2   # 2 for Framings A and C; 1 for Framing B
