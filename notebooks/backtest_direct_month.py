@@ -197,7 +197,7 @@ def build_origin_target_table(panel, calendar_df, origin_spine, actual_monthly_d
     # actual_monthly_df has one row per (series, month) the series is active in, so an inner
     # join on target_month gives each origin only its active series AND attaches the target.
     final_month = actual_monthly_df.rename(
-        columns={"fiscal_year_month": "target_month", "actual_monthly_total": "final_month_revenue"})
+        columns={"fiscal_year_month": "target_month", "actual_monthly_total": "target_month_total_revenue"})
     table = origin_spine.merge(final_month, on="target_month", how="inner")
 
     table["number_workdays"] = table["target_month"].map(number_workdays_by_month)
@@ -219,7 +219,7 @@ def build_origin_target_table(panel, calendar_df, origin_spine, actual_monthly_d
     cols = ["unique_id", "forecast_origin_date", "target_month",
             "mtd_revenue", "workdays_elapsed", "workdays_remaining", "number_workdays",
             "weeks_actualized", "weeks_in_month",
-            "last_completed_month_revenue", "final_month_revenue"]
+            "last_completed_month_revenue", "target_month_total_revenue"]
     return table[cols].reset_index(drop=True)
 
 
@@ -227,21 +227,53 @@ def build_origin_target_table(panel, calendar_df, origin_spine, actual_monthly_d
 origin_spine = enumerate_origins(calendar_df)
 
 # %%
-ts_df.head()
+origin_spine.tail(30)
 
 # %%
-calendar_df.tail(2)
-
-# %%
-origin_spine.head(2)
-
-# %%
-temp_panel = ts_df[ts_df['unique_id']==4].reset_index(drop=True)
-
-# %%
-temp_target_table = build_origin_target_table(
-    temp_panel, 
+origin_target_table = build_origin_target_table(
+    ts_df, 
     calendar_df, 
     origin_spine, 
     actual_monthly_df
 )
+
+# %%
+# ============ MTD-identity gate (build-time, after build_origin_target_table) ============
+sample_pairs = [
+    (uid, M) 
+    for uid in [4, 12, 104] 
+    for M in [202505, 202506, 202507]
+]
+temp_panel_cal = ts_df.merge(
+    calendar_df[["ds", "fiscal_year_month", "fiscal_week_of_month"]],
+    on="ds", how="left")
+target_by_series_month = (
+    origin_target_table[["unique_id", "target_month", "target_month_total_revenue"]]
+    .drop_duplicates()
+    .set_index(["unique_id", "target_month"])["target_month_total_revenue"]
+)
+for (uid, M) in sample_pairs:
+    N = int(
+        calendar_df[['fiscal_year_month', 'weeks_in_month']].drop_duplicates()
+        .set_index('fiscal_year_month').loc[M, 'weeks_in_month']
+    )
+
+    y_week = (
+        temp_panel_cal[(temp_panel_cal["unique_id"] == uid) & (temp_panel_cal["fiscal_year_month"] == M)]
+        .set_index("fiscal_week_of_month")["y"]
+        .sort_index()
+    )
+    mtd = (
+        origin_target_table[(origin_target_table["unique_id"] == uid) & (origin_target_table["target_month"] == M)]
+        .set_index("weeks_actualized")["mtd_revenue"]
+        .sort_index()
+    )
+    target = target_by_series_month[(uid, M)]
+    assert mtd[0]==0
+    for k in range(1,N):
+        assert mtd[k]-mtd[k-1] == y_week[k]
+    assert target == mtd[N-1] + y_week[N] 
+
+# %%
+
+# %%
