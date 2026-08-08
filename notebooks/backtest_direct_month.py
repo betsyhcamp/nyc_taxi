@@ -76,6 +76,45 @@ sidecar_uri = f"{bucket}/dev/backtests/backtest_direct_month/{generate_run_id()}
 
 
 # %%
+# ============ Framing specific cleaning: Trim incomplete months ============
+# If target used in training is full month, need all months to have all weeks present
+# this cleaning makes sense to move into data_prep.py/SQL script if this direct month 
+# problem framing has better forecast error than weekly forecast then aggregate framing
+# Until make final determination on which problem framing is best, leave this 
+# framing-specific cleaning here.
+
+# Framing C completeness: trim incomplete (series, month) at the source.
+# (C's origins assume all N weeks of a target month exist; Framing A tolerates partial
+#  months — so this stays local to C for now, promote upstream only if C wins.)
+#labeled       = ts_df ⋈ calendar[ds, fiscal_year_month, fiscal_week_of_month, weeks_in_month]
+#weeks_present = labeled.groupby([unique_id, fiscal_year_month])[fiscal_week_of_month].transform("nunique")
+#keep_row      = weeks_present == labeled["weeks_in_month"]
+#ts_df         = labeled[keep_row][["unique_id", "ds", "y"]]     # back to the original schema
+
+#dropped = labeled[~keep_row]
+#print(dropped.groupby([unique_id, fiscal_year_month]).size())   # expect: (104,201805), (105,201801)
+# re-check nothing partial survives:
+#assert (ts_df ⋈ calendar).groupby([...]).nunique == weeks_in_month  everywhere
+
+labeled = ts_df.merge(
+    calendar_df[["ds", "fiscal_year_month", "fiscal_week_of_month", "weeks_in_month"]],
+    on="ds", how="left",
+)
+weeks_present = labeled.groupby(["unique_id", "fiscal_year_month"])["fiscal_week_of_month"].transform("nunique")
+keep_row = weeks_present == labeled["weeks_in_month"]
+ts_df = labeled.loc[keep_row, ["unique_id","ds","y"]]
+
+dropped = labeled[~keep_row]
+print(dropped.groupby(["unique_id", "fiscal_year_month"]).size())
+
+recheck = ts_df.merge(
+    calendar_df[["ds", "fiscal_year_month", "fiscal_week_of_month", "weeks_in_month"]],
+    on="ds", how="left",
+)
+weeks_present = recheck.groupby(["unique_id", "fiscal_year_month"])["fiscal_week_of_month"].transform("nunique")
+assert (weeks_present == recheck["weeks_in_month"]).all(), "trimmed panel still has a partial (series, month)"
+
+# %%
 actual_monthly_df = compute_actual_monthly_totals(
     ts_df=ts_df,
     calendar_df=calendar_df,
@@ -238,42 +277,60 @@ origin_target_table = build_origin_target_table(
 )
 
 # %%
-# ============ MTD-identity gate (build-time, after build_origin_target_table) ============
-sample_pairs = [
-    (uid, M) 
-    for uid in [4, 12, 104] 
-    for M in [202505, 202506, 202507]
-]
-temp_panel_cal = ts_df.merge(
-    calendar_df[["ds", "fiscal_year_month", "fiscal_week_of_month"]],
-    on="ds", how="left")
-target_by_series_month = (
-    origin_target_table[["unique_id", "target_month", "target_month_total_revenue"]]
-    .drop_duplicates()
-    .set_index(["unique_id", "target_month"])["target_month_total_revenue"]
+# ============ MTD-identity gate (vectorized, over ALL (unique_id, target_month)) ============
+# Ground truth: raw weekly y per (series, month, week-of-month), from panel
+weekly_y = (
+    ts_df.merge(
+        calendar_df[["ds", "fiscal_year_month", "fiscal_week_of_month"]],
+        on="ds", how="left",
+    )
+    .rename(columns={
+        "fiscal_year_month": "target_month",
+        "fiscal_week_of_month": "week_of_month",
+        "y": "week_y",
+    })
+    [["unique_id", "target_month", "week_of_month", "week_y"]]
 )
-for (uid, M) in sample_pairs:
-    N = int(
-        calendar_df[['fiscal_year_month', 'weeks_in_month']].drop_duplicates()
-        .set_index('fiscal_year_month').loc[M, 'weeks_in_month']
-    )
 
-    y_week = (
-        temp_panel_cal[(temp_panel_cal["unique_id"] == uid) & (temp_panel_cal["fiscal_year_month"] == M)]
-        .set_index("fiscal_week_of_month")["y"]
-        .sort_index()
-    )
-    mtd = (
-        origin_target_table[(origin_target_table["unique_id"] == uid) & (origin_target_table["target_month"] == M)]
-        .set_index("weeks_actualized")["mtd_revenue"]
-        .sort_index()
-    )
-    target = target_by_series_month[(uid, M)]
-    assert mtd[0]==0
-    for k in range(1,N):
-        assert mtd[k]-mtd[k-1] == y_week[k]
-    assert target == mtd[N-1] + y_week[N] 
+# ---- Gate 2: sign-safe MTD construction ----
+# mtd increments within each (series, month); sort first — diff() is order-dependent.
+ott = origin_target_table.sort_values(["unique_id", "target_month", "weeks_actualized"])
+ott = ott.assign(
+    mtd_increment=ott.groupby(["unique_id", "target_month"])["mtd_revenue"].diff()
+)
+# check: MTD=0 origin has zero month-to-date
+bad_mtd0 = ott[(ott["weeks_actualized"] == 0) & (ott["mtd_revenue"] != 0)]
+assert bad_mtd0.empty, f"MTD=0 origins with nonzero mtd:\n{bad_mtd0.head()}"
 
-# %%
+# check: each increment equals that week's raw y (weeks_actualized >= 1; may be negative)
+increments = ott[ott["weeks_actualized"] >= 1].merge(
+    weekly_y,
+    left_on=["unique_id", "target_month", "weeks_actualized"],
+    right_on=["unique_id", "target_month", "week_of_month"],
+    how="left",
+)
+gate2_fail = increments[increments["mtd_increment"] != increments["week_y"]]
+assert gate2_fail.empty, (
+    f"Gate 2 (increment != weekly y) failed for {len(gate2_fail)} rows:\n"
+    f"{gate2_fail[['unique_id','target_month','weeks_actualized','mtd_increment','week_y']].head()}"
+)
+
+# ---- Gate 1: reconciliation (target == mtd at last origin + final week's y) ----
+last_origin = origin_target_table[
+    origin_target_table["weeks_actualized"] == origin_target_table["weeks_in_month"] - 1
+]
+reconciliation = last_origin.merge(
+    weekly_y,
+    left_on=["unique_id", "target_month", "weeks_in_month"],
+    right_on=["unique_id", "target_month", "week_of_month"],
+    how="left",
+)
+reconstructed = reconciliation["mtd_revenue"] + reconciliation["week_y"]
+gate1_fail = reconciliation[reconstructed != reconciliation["target_month_total_revenue"]]
+assert gate1_fail.empty, (
+    f"Gate 1 (reconciliation) failed for {len(gate1_fail)} rows:\n"
+    f"{gate1_fail[['unique_id','target_month','mtd_revenue','week_y','target_month_total_revenue']].head()}"
+)
+
 
 # %%
