@@ -83,19 +83,6 @@ sidecar_uri = f"{bucket}/dev/backtests/backtest_direct_month/{generate_run_id()}
 # Until make final determination on which problem framing is best, leave this 
 # framing-specific cleaning here.
 
-# Framing C completeness: trim incomplete (series, month) at the source.
-# (C's origins assume all N weeks of a target month exist; Framing A tolerates partial
-#  months — so this stays local to C for now, promote upstream only if C wins.)
-#labeled       = ts_df ⋈ calendar[ds, fiscal_year_month, fiscal_week_of_month, weeks_in_month]
-#weeks_present = labeled.groupby([unique_id, fiscal_year_month])[fiscal_week_of_month].transform("nunique")
-#keep_row      = weeks_present == labeled["weeks_in_month"]
-#ts_df         = labeled[keep_row][["unique_id", "ds", "y"]]     # back to the original schema
-
-#dropped = labeled[~keep_row]
-#print(dropped.groupby([unique_id, fiscal_year_month]).size())   # expect: (104,201805), (105,201801)
-# re-check nothing partial survives:
-#assert (ts_df ⋈ calendar).groupby([...]).nunique == weeks_in_month  everywhere
-
 labeled = ts_df.merge(
     calendar_df[["ds", "fiscal_year_month", "fiscal_week_of_month", "weeks_in_month"]],
     on="ds", how="left",
@@ -227,14 +214,10 @@ def build_origin_target_table(panel, calendar_df, origin_spine, actual_monthly_d
     mtd_lookup = panel_cal.rename(
         columns={"fiscal_year_month":"target_month", "fiscal_week_of_month":"weeks_actualized"}
     )[["unique_id", "target_month", "weeks_actualized", "mtd_revenue"]]
-    
-    # previous fiscal month revenue
-    months_sorted = sorted(cal_df["fiscal_year_month"].unique())
-    prev_month = pd.Series(months_sorted, index=months_sorted).shift(1) # M-> M-1
-    
+
     # --- assemble: start from ACTIVE (series, target_month) pairs
     # actual_monthly_df has one row per (series, month) the series is active in, so an inner
-    # join on target_month gives each origin only its active series AND attaches the target.
+    # join on target_month gives each origin only its active series AND attaches target var
     final_month = actual_monthly_df.rename(
         columns={"fiscal_year_month": "target_month", "actual_monthly_total": "target_month_total_revenue"})
     table = origin_spine.merge(final_month, on="target_month", how="inner")
@@ -247,8 +230,9 @@ def build_origin_target_table(panel, calendar_df, origin_spine, actual_monthly_d
     table = table.merge(mtd_lookup, on=["unique_id", "target_month", "weeks_actualized"], how="left")
     table["mtd_revenue"] = table["mtd_revenue"].fillna(0)
 
-    # last-completed (M-1): NaN for a series' FIRST active month (no prior month) — a real signal, keep it
-    prev_month_lookup = pd.Series(months_sorted, index=months_sorted).shift(1)   # renamed to avoid shadowing
+    # last-completed (M-1): NaN for a series' FIRST active month (no prior month)
+    months_sorted = sorted(cal_df["fiscal_year_month"].unique())
+    prev_month_lookup = pd.Series(months_sorted, index=months_sorted).shift(1)
     table["prev_month"] = table["target_month"].map(prev_month_lookup).astype(int)
     table = table.merge(
         actual_monthly_df.rename(columns={"fiscal_year_month": "prev_month",
@@ -334,3 +318,106 @@ assert gate1_fail.empty, (
 
 
 # %%
+origin_target_table.head()
+
+
+# %%
+def build_modeling_table(origin_target_table, layer1):
+    L2 = origin_target_table.copy()
+    L2["feature_ds"] = L2["forecast_origin_date"] + pd.Timedelta(weeks=1)
+    modeling = L2.merge(layer1, on=['unique_id', 'feature_ds'],how='left')
+    modeling = modeling.drop(columns="y")
+    keep = (
+        ["unique_id", "forecast_origin_date", "target_month"]
+        + FEATURE_COLUMNS
+        + ["target_month_total_revenue"]
+        + ["weeks_actualized", "weeks_in_month", "feature_ds"]
+    )
+    return modeling[keep].reset_index(drop=True)
+
+
+# %%
+modeling_table = build_modeling_table(origin_target_table, layer1)
+
+# %%
+# ====== Gate: join integrity ===========
+L2 = origin_target_table.copy()
+
+L2["feature_ds"] = L2["forecast_origin_date"] + pd.Timedelta(weeks=1)
+
+assert modeling_table["unique_id"].dtype == layer1["unique_id"].dtype
+assert modeling_table["feature_ds"].dtype == layer1["feature_ds"].dtype
+
+antijoin = L2.merge(layer1[["unique_id", "feature_ds"]], 
+                    on = ["unique_id", "feature_ds"], how="left", indicator=True)
+assert (antijoin["_merge"] == "left_only").sum()==0
+
+assert len(modeling_table)==len(origin_target_table)
+assert list(modeling_table[FEATURE_COLUMNS].columns)==FEATURE_COLUMNS
+
+
+# %%
+modeling_table.head()
+
+# %%
+# ====== Gate: mtd identity checking lag ===========
+mt = modeling_table.sort_values(by=["unique_id", "target_month", "weeks_actualized"])
+mt = mt.assign(
+    mtd_increment=mt.groupby(["unique_id", "target_month"])["mtd_revenue"].diff()
+)
+interior = mt["weeks_actualized"] >=1
+assert (mt.loc[interior, "mtd_increment"] == mt.loc[interior, "lag1"]).all()
+
+panel_at_W = ts_df.rename(columns={"ds": "forecast_origin_date", "y": "y_at_W"})
+
+check = modeling_table.merge(
+    panel_at_W[["unique_id", "forecast_origin_date", "y_at_W"]],
+    on=["unique_id", "forecast_origin_date"],
+    how="left",
+)
+observed = check["y_at_W"].notna()
+assert (check.loc[observed, "lag1"]==check.loc[observed, "y_at_W"]).all()
+
+# %%
+# ====== Gate: check for leakage (perturbation gate) ===========
+DELTA = 10000.0  # divisible by 4 so DELTA/4 is exact for the rolling mean
+FEATS = ["lag1", "rolling_mean_lag1_window_size4", "mtd_revenue"]
+
+test_uid=4 
+test_month= 202506
+test_wa =2 # weeks_actualized
+row = modeling_table[
+    (modeling_table["unique_id"] == test_uid)
+    & (modeling_table["target_month"] == test_month)
+    & (modeling_table["weeks_actualized"] == test_wa)
+]
+assert len(row) == 1, f"expected exactly one origin, got {len(row)}"
+W = row["forecast_origin_date"].iloc[0]
+fds = row["feature_ds"].iloc[0]
+
+def rebuild_origin(panel):
+    feats = build_weekly_features(panel, FREQ, lags=MLF_LAGS, lag_transforms=MLF_LAG_TRANSFORMS)
+    ot = build_origin_target_table(panel, calendar_df, origin_spine, actual_monthly_df)
+    m = build_modeling_table(ot, feats)
+    r = m[(m["unique_id"] == test_uid) & (m["forecast_origin_date"] == W)]
+    assert len(r) == 1
+    return r[FEATS].iloc[0]
+
+base = rebuild_origin(ts_df)
+
+# perturbation 1: bump y at W  ->  all three move by the propagated amount
+panel_now = ts_df.copy()
+panel_now.loc[(panel_now["unique_id"] == test_uid) & (panel_now["ds"] == W), "y"] += DELTA
+moved = rebuild_origin(panel_now)
+assert moved["lag1"] == base["lag1"] + DELTA
+assert moved["mtd_revenue"] == base["mtd_revenue"] + DELTA
+assert moved["rolling_mean_lag1_window_size4"] == base["rolling_mean_lag1_window_size4"] + DELTA / 4
+
+# perturbation 2: bump y at feature_ds (W+1)  ->  nothing moves at this origin
+panel_future = ts_df.copy()
+panel_future.loc[(panel_future["unique_id"] == test_uid) & (panel_future["ds"] == fds), "y"] += DELTA
+frozen = rebuild_origin(panel_future)
+assert frozen["lag1"] == base["lag1"]
+assert frozen["mtd_revenue"] == base["mtd_revenue"]
+assert frozen["rolling_mean_lag1_window_size4"] == base["rolling_mean_lag1_window_size4"]
+
