@@ -17,6 +17,7 @@ import sys
 import pandas as pd
 import numpy as np
 
+from lightgbm import LGBMRegressor
 from mlforecast import MLForecast
 from mlforecast.lag_transforms import RollingMean
 
@@ -114,7 +115,7 @@ actual_monthly_df = compute_actual_monthly_totals(
 
 # %%
 def build_weekly_features(panel, freq, *, lags, lag_transforms):
-    """Layer 1 feature factory. Feature-defining args only (keyword-only).
+    """Weekly feature factory. Feature-defining args only (keyword-only).
     Native MLForecast feature names are kept.
     """
     mlf = MLForecast(models=[], freq=freq, lags=lags, lag_transforms=lag_transforms)
@@ -379,45 +380,74 @@ observed = check["y_at_W"].notna()
 assert (check.loc[observed, "lag1"]==check.loc[observed, "y_at_W"]).all()
 
 # %%
-# ====== Gate: check for leakage (perturbation gate) ===========
-DELTA = 10000.0  # divisible by 4 so DELTA/4 is exact for the rolling mean
-FEATS = ["lag1", "rolling_mean_lag1_window_size4", "mtd_revenue"]
+# ====== Gate: general leakage smoke test (future-scramble) ===========
+# Leak-free == an origin's features are invariant to any change in weeks > W.
+# Scramble all y after a cutoff, rebuild every y-derived input, and assert every
+# origin at/before the cutoff has identical FEATURES. The target is excluded since it
+# legitimately includes future weeks. Vectorized over all unique_ids.
 
-test_uid=4 
-test_month= 202506
-test_wa =2 # weeks_actualized
-row = modeling_table[
-    (modeling_table["unique_id"] == test_uid)
-    & (modeling_table["target_month"] == test_month)
-    & (modeling_table["weeks_actualized"] == test_wa)
-]
-assert len(row) == 1, f"expected exactly one origin, got {len(row)}"
-W = row["forecast_origin_date"].iloc[0]
-fds = row["feature_ds"].iloc[0]
+# early-in-month (weeks_actualized=1) in a 5-week month leaves several same-month weeks
+# in the scrambled region; wa=1 (not 0) keeps W inside the target month so mtd is exercised
+cutoff_W = pd.Timestamp("2025-05-25")
 
-def rebuild_origin(panel):
-    feats = build_weekly_features(panel, FREQ, lags=MLF_LAGS, lag_transforms=MLF_LAG_TRANSFORMS)
-    ot = build_origin_target_table(panel, calendar_df, origin_spine, actual_monthly_df)
-    m = build_modeling_table(ot, feats)
-    r = m[(m["unique_id"] == test_uid) & (m["forecast_origin_date"] == W)]
-    assert len(r) == 1
-    return r[FEATS].iloc[0]
+def rebuild_all(panel):
+    actual_monthly = compute_actual_monthly_totals(
+        ts_df=panel, calendar_df=calendar_df,
+        period_col="fiscal_year_month", time_col="ds",
+        id_col="unique_id", target_col="y",
+    )
+    features = build_weekly_features(
+        panel, FREQ, lags=MLF_LAGS, lag_transforms=MLF_LAG_TRANSFORMS
+    )
+    ot = build_origin_target_table(panel, calendar_df, origin_spine, actual_monthly)
+    return build_modeling_table(ot, features)
 
-base = rebuild_origin(ts_df)
+panel_scrambled = ts_df.copy()
+panel_scrambled["y"] = panel_scrambled["y"].astype(float)
+future = panel_scrambled["ds"] > cutoff_W
+panel_scrambled.loc[future, "y"] = np.random.default_rng(0).random(int(future.sum())) * 1e6
 
-# perturbation 1: bump y at W  ->  all three move by the propagated amount
-panel_now = ts_df.copy()
-panel_now.loc[(panel_now["unique_id"] == test_uid) & (panel_now["ds"] == W), "y"] += DELTA
-moved = rebuild_origin(panel_now)
-assert moved["lag1"] == base["lag1"] + DELTA
-assert moved["mtd_revenue"] == base["mtd_revenue"] + DELTA
-assert moved["rolling_mean_lag1_window_size4"] == base["rolling_mean_lag1_window_size4"] + DELTA / 4
+base = rebuild_all(ts_df)
+scrambled = rebuild_all(panel_scrambled)
 
-# perturbation 2: bump y at feature_ds (W+1)  ->  nothing moves at this origin
-panel_future = ts_df.copy()
-panel_future.loc[(panel_future["unique_id"] == test_uid) & (panel_future["ds"] == fds), "y"] += DELTA
-frozen = rebuild_origin(panel_future)
-assert frozen["lag1"] == base["lag1"]
-assert frozen["mtd_revenue"] == base["mtd_revenue"]
-assert frozen["rolling_mean_lag1_window_size4"] == base["rolling_mean_lag1_window_size4"]
+keys = ["unique_id", "forecast_origin_date"]
+past_base = base[base["forecast_origin_date"] <= cutoff_W].sort_values(keys)[FEATURE_COLUMNS].reset_index(drop=True)
+past_scr  = scrambled[scrambled["forecast_origin_date"] <= cutoff_W].sort_values(keys)[FEATURE_COLUMNS].reset_index(drop=True)
 
+same = (past_base == past_scr) | (past_base.isna() & past_scr.isna())
+assert same.all().all(), "LEAK: future y changed features of an origin at/before the cutoff"
+
+
+
+# %%
+def run_fold(modeling_table, val_month):
+    train = modeling_table[modeling_table["target_month"]< val_month]
+    val = modeling_table[modeling_table["target_month"]== val_month]
+
+    # train and val target months must not overlap
+    assert set(train["target_month"]).isdisjoint(set(val["target_month"]))
+
+    X_train = train[FEATURE_COLUMNS]
+    y_train = train["target_month_total_revenue"]
+    model = LGBMRegressor(**HYPERPARAMS).fit(X_train, y_train)
+
+    preds = model.predict(val[FEATURE_COLUMNS])
+
+    keys = ["unique_id", "forecast_origin_date", "target_month"]
+    month_progress_cols = ["weeks_actualized", "weeks_in_month"]
+    return val[keys+month_progress_cols+["target_month_total_revenue"]].assign(prediction=preds)
+
+
+# %%
+forecasts_df = pd.concat(
+    [run_fold(modeling_table, val_month) for val_month in TARGET_MONTHS],
+    ignore_index=True
+)
+
+# %%
+len(forecasts_df)
+
+# %%
+forecasts_df.head()
+
+# %%
