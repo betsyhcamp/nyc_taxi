@@ -123,7 +123,7 @@ def build_weekly_features(panel, freq, *, lags, lag_transforms):
 
 
 # %%
-layer1 =  build_weekly_features(
+weekly_features =  build_weekly_features(
     ts_df,
     FREQ,
     lags=MLF_LAGS,
@@ -131,19 +131,19 @@ layer1 =  build_weekly_features(
     )
 
 # drift-guard gate: preprocess must emit exactly the native names MLF_FEATURES declares
-emitted = [c for c in layer1.columns if c not in {"unique_id", "feature_ds", "y"}]
+emitted = [c for c in weekly_features.columns if c not in {"unique_id", "feature_ds", "y"}]
 assert set(emitted) == set(MLF_FEATURES), \
     f"drift: preprocess emitted {sorted(emitted)}, MLF_FEATURES declares {sorted(MLF_FEATURES)}"
 
 # %%
-# alignment sanity check, then display `layer1`
-layer1 = layer1.sort_values(by=["unique_id", "feature_ds"]).reset_index(drop=True)
-prior_week_y = layer1.groupby("unique_id")["y"].shift(1)
-check_rows = ~layer1["lag1"].isna()
-assert (layer1["lag1"]==prior_week_y).loc[check_rows].all()
+# alignment sanity check, then display `weekly_features`
+weekly_features = weekly_features.sort_values(by=["unique_id", "feature_ds"]).reset_index(drop=True)
+prior_week_y = weekly_features.groupby("unique_id")["y"].shift(1)
+check_rows = ~weekly_features["lag1"].isna()
+assert (weekly_features["lag1"]==prior_week_y).loc[check_rows].all()
 
 # %%
-layer1
+weekly_features
 
 
 # %%
@@ -322,10 +322,10 @@ origin_target_table.head()
 
 
 # %%
-def build_modeling_table(origin_target_table, layer1):
-    L2 = origin_target_table.copy()
-    L2["feature_ds"] = L2["forecast_origin_date"] + pd.Timedelta(weeks=1)
-    modeling = L2.merge(layer1, on=['unique_id', 'feature_ds'],how='left')
+def build_modeling_table(origin_target_table, weekly_features):
+    keyed_origins = origin_target_table.copy()
+    keyed_origins["feature_ds"] = keyed_origins["forecast_origin_date"] + pd.Timedelta(weeks=1)
+    modeling = keyed_origins.merge(weekly_features, on=['unique_id', 'feature_ds'],how='left')
     modeling = modeling.drop(columns="y")
     keep = (
         ["unique_id", "forecast_origin_date", "target_month"]
@@ -337,18 +337,18 @@ def build_modeling_table(origin_target_table, layer1):
 
 
 # %%
-modeling_table = build_modeling_table(origin_target_table, layer1)
+modeling_table = build_modeling_table(origin_target_table, weekly_features)
 
 # %%
 # ====== Gate: join integrity ===========
-L2 = origin_target_table.copy()
+keyed_origins = origin_target_table.copy()
 
-L2["feature_ds"] = L2["forecast_origin_date"] + pd.Timedelta(weeks=1)
+keyed_origins["feature_ds"] = keyed_origins["forecast_origin_date"] + pd.Timedelta(weeks=1)
 
-assert modeling_table["unique_id"].dtype == layer1["unique_id"].dtype
-assert modeling_table["feature_ds"].dtype == layer1["feature_ds"].dtype
+assert modeling_table["unique_id"].dtype == weekly_features["unique_id"].dtype
+assert modeling_table["feature_ds"].dtype == weekly_features["feature_ds"].dtype
 
-antijoin = L2.merge(layer1[["unique_id", "feature_ds"]], 
+antijoin = keyed_origins.merge(weekly_features[["unique_id", "feature_ds"]], 
                     on = ["unique_id", "feature_ds"], how="left", indicator=True)
 assert (antijoin["_merge"] == "left_only").sum()==0
 
