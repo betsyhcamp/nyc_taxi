@@ -25,6 +25,7 @@ from mlforecast.lag_transforms import RollingMean
 from tsbricks.blocks.metadata import get_git_hash, get_uv_lock_info
 
 from fcstnyctaxi.lib.config_utils import save_config
+from fcstnyctaxi.lib.fold_metrics import compute_wrmae_pooled
 from fcstnyctaxi.lib.io import write_text_to_gcs
 from fcstnyctaxi.lib.monthly_aggregation import (
     attach_tier_and_weight,
@@ -612,16 +613,9 @@ composed_cfg = {
 # Gates to check contents before writing sidecar
 # ===============================================
 
-
 # %%
 # Gate: Check `tier` is categorical datatype
 assert isinstance(monthly_series["tier"].dtype, pd.CategoricalDtype)
-
-# %%
-bench_monthly_series = pd.read_parquet(f"{BENCHMARK_SIDECAR_URI}monthly_series.parquet")
-
-# %%
-bench_monthly_series
 
 # %%
 # Setup for gate: load the benchmark monthly_series, label horizon, keep horizon_1 in TARGET_MONTHS
@@ -712,3 +706,49 @@ metrics.to_parquet(f"{sidecar_uri}metrics.parquet", index=False)
 per_series_mtd.to_parquet(f"{sidecar_uri}per_series_mtd.parquet", index=False)
 
 print(f"Sidecar written: {sidecar_uri}")
+
+# %%
+join_keys = ["forecast_origin_date", "predicted_fiscal_year_month"]
+ch = monthly_series.merge(origin_progress, on=join_keys)
+bm = benchmark_h1.merge(origin_progress, on=join_keys)
+
+rows = []
+for _, wim, wa in ch[["weeks_in_month", "weeks_actualized"]].drop_duplicates().itertuples():
+    ch_cohort = ch[(ch["weeks_in_month"] == wim) & (ch["weeks_actualized"] == wa)]
+    bm_cohort = bm[(bm["weeks_in_month"] == wim) & (bm["weeks_actualized"] == wa)]
+    rows.append({
+        "weeks_in_month": wim,
+        "weeks_actualized": wa,
+        "n_events": len(ch_cohort),
+        "wrmae_vs_benchmark": compute_wrmae_pooled(ch_cohort, bm_cohort),
+    })
+
+progress_skill = (
+    pd.DataFrame(rows)
+    .sort_values(["weeks_in_month", "weeks_actualized"])
+    .reset_index(drop=True)
+)
+progress_skill
+
+
+# %%
+# below-MTD: where does the model predict below already-booked MTD?
+pred_below_cols = [
+    "forecast_origin_date", "predicted_fiscal_year_month",
+    "weeks_actualized", "weeks_in_month",
+    "frac_pred_below_mtd", "mean_pred_below_mtd_violation", "max_pred_below_mtd_violation",
+]
+below_mtd_summary = metrics.loc[metrics["frac_pred_below_mtd"] > 0, pred_below_cols].reset_index(drop=True)
+
+print(
+    f"{(metrics['frac_pred_below_mtd'] > 0).sum()} of {len(metrics)} origins predict below MTD "
+    f"| worst violation = {metrics['max_pred_below_mtd_violation'].max():.0f} "
+    f"| actual-side base rate (max frac_actual_below_mtd) = {metrics['frac_actual_below_mtd'].max()}"
+)
+below_mtd_summary
+
+# %%
+metrics
+
+# %% [markdown]
+# Effective-sample caveat. This eval is 6 target months / 26 origins / 1,768 horizon_1 events — but not 1,768 independent observations. Within a target month, all origins share one fitted model and one final actual, and there are only 6 months, so the effective independent sample is small. Adequate for a plumbing smoke test, not high-confidence model selection — and because the feature set is deliberately minimal (§5.4), a loss to the benchmark here is weak evidence against Framing C, not a verdict. Read trends across cohorts, not any single thin cell.
