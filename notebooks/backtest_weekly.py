@@ -7,7 +7,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.17.2
 #   kernelspec:
-#     display_name: nyc_taxi (3.12.9.final.0)
+#     display_name: nyc_taxi (3.12.9)
 #     language: python
 #     name: python3
 # ---
@@ -24,8 +24,9 @@ from fcstnyctaxi.lib.cross_validation_utils import sorted_origin_horizon_pairs
 from fcstnyctaxi.lib.io import write_text_to_gcs
 from fcstnyctaxi.lib.monthly_aggregation import (
     build_monthly_forecast_vs_actual,
-    attach_tier_and_weight
-    )
+    attach_tier_and_weight,
+    compute_actual_monthly_totals,
+)
 from fcstnyctaxi.lib.period_utils import (
     assign_tiers,
     compute_series_weights,
@@ -110,13 +111,10 @@ runtime_overrides = {
 cfg = merge_configs(backtest_cfg_path, model_cfg_path, runtime_overrides)
 
 # %%
-actual_monthly_df = (
-    ts_df
-    .merge(calendar_df[["ds", cfg.aggregation.period_col]].drop_duplicates(), on="ds", how='left')
-    .groupby([cfg.aggregation.period_col, "unique_id"])["y"]
-    .sum()
-    .reset_index()
-    .rename(columns={"y":"actual_monthly_total"})
+actual_monthly_df = compute_actual_monthly_totals(
+    ts_df,
+    calendar_df,
+    period_col=cfg.aggregation.period_col
 )
 
 # %%

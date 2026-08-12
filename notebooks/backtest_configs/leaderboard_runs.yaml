@@ -25,3 +25,7 @@ runs:
   - model: lightgbm_2part
     framing: weekly_to_monthly
     sidecar_uri: gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_weekly_merged/20260803T203541854611Z/
+      # note use of sidecar_uri for a run that isn't located in default_base_uri
+  - model: lightgbm_direct_smoketest
+    framing: direct_month
+    sidecar_uri: gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_direct_month/20260812T041455920699Z/
