@@ -13,26 +13,29 @@
 # ---
 
 # %%
+import json
 import sys
-import pandas as pd
-import numpy as np
 
+import numpy as np
+import pandas as pd
+import yaml
 from lightgbm import LGBMRegressor
 from mlforecast import MLForecast
 from mlforecast.lag_transforms import RollingMean
+from tsbricks.blocks.metadata import get_git_hash, get_uv_lock_info
 
+from fcstnyctaxi.lib.config_utils import save_config
+from fcstnyctaxi.lib.io import write_text_to_gcs
 from fcstnyctaxi.lib.monthly_aggregation import (
     attach_tier_and_weight,
-    compute_actual_monthly_totals
+    compute_actual_monthly_totals,
 )
 from fcstnyctaxi.lib.period_utils import (
     assign_tiers,
     compute_series_weights,
-    derive_horizon_label
+    derive_horizon_label,
 )
-from fcstnyctaxi.lib.utils import get_project_root_dir, generate_run_id
-
-import yaml
+from fcstnyctaxi.lib.utils import generate_run_id, get_project_root_dir
 
 # %%
 project_root = get_project_root_dir()
@@ -447,6 +450,7 @@ def run_fold(modeling_table, val_month):
 
 
 # %%
+# produce backtest forecasts
 forecasts_df = pd.concat(
     [run_fold(modeling_table, val_month) for val_month in TARGET_MONTHS],
     ignore_index=True
@@ -459,6 +463,7 @@ len(forecasts_df)
 forecasts_df.head()
 
 # %%
+# assemble forecasts w/ tier, weight, added items needed later for scoring backtests
 fraction_by_origin = calendar_df.set_index("ds")["origin_month_fraction_elapsed"]
 
 monthly_rows_rename_dict = {
@@ -503,7 +508,7 @@ len(monthly_series)
 monthly_series.head()
 
 # %%
-# origin's fiscal month from base calendar dataframe
+# Setup for gate check: origin's fiscal month from base calendar dataframe
 origin_fiscal_month_by_ds = calendar_df.set_index("ds")["fiscal_year_month"]
 origin_fiscal_month =  monthly_series["forecast_origin_date"].map(
     origin_fiscal_month_by_ds
@@ -519,3 +524,191 @@ horizon = derive_horizon_label(
 assert (horizon == "horizon_1").all(), f"non-horizon_1 rows: {int((horizon != 'horizon_1').sum())}"
 
 # %%
+# prep sidecar: per_series_mtd file 
+val_months = modeling_table["target_month"].isin(TARGET_MONTHS)
+
+per_series_mtd = (
+    modeling_table.loc[val_months, ["unique_id", "forecast_origin_date", "target_month", "mtd_revenue"]]
+    .rename(columns={"target_month": "predicted_fiscal_year_month"})
+    .reset_index(drop=True)
+)
+
+
+# %%
+per_series_mtd.head(2)
+
+# %%
+monthly_series.head(2)
+
+# %%
+# prep sidecar: metrics file
+keys = ["forecast_origin_date", "predicted_fiscal_year_month", "unique_id"]
+per_series =  monthly_series.merge(per_series_mtd, on = keys)
+
+per_series["pred_below"] = per_series["monthly_forecast"] < per_series["mtd_revenue"]
+per_series["actual_below"] = per_series["actual_monthly_total"] < per_series["mtd_revenue"]
+per_series["pred_violation"] = (
+    per_series["mtd_revenue"] - per_series["monthly_forecast"]).where(per_series["pred_below"])
+per_series["actual_violation"] = (
+    per_series["mtd_revenue"] - per_series["actual_monthly_total"]).where(per_series["actual_below"])
+
+metrics = (
+    per_series
+    .groupby(["forecast_origin_date", "predicted_fiscal_year_month"], as_index=False)
+    .agg(
+        n_series = ("unique_id", "size"),
+        frac_pred_below_mtd = ("pred_below", "mean"), # mean of bool = fraction
+        mean_pred_below_mtd_violation = ("pred_violation", "mean"), # skips NaNs
+        max_pred_below_mtd_violation = ("pred_violation", "max"),
+        frac_actual_below_mtd = ("actual_below", "mean"),
+        mean_actual_below_mtd = ("actual_violation", "mean"),
+        max_actual_below_mtd = ("actual_violation", "max")
+    )
+)
+
+# %%
+progress_cols = [
+    "forecast_origin_date", "target_month", "weeks_actualized", "weeks_in_month"
+    ]
+origin_progress = (
+    forecasts_df[progress_cols]
+    .drop_duplicates()
+    .rename(columns={"target_month":"predicted_fiscal_year_month"})
+)
+metrics = metrics.merge(
+    origin_progress, 
+    on=["forecast_origin_date","predicted_fiscal_year_month"]
+)
+
+# %%
+# prep composed config for sidecar
+# TODO: When we refac to use an input config, this becomes unnecessary
+composed_cfg = {
+    "model": {
+        "estimator": "LGBMRegressor",
+        "label": "lightgbm_direct",
+        "framing": "direct_month",
+        "hyperparameters": HYPERPARAMS,
+        "features": FEATURE_COLUMNS,
+        "target": "target_month_total_revenue",
+        "target_handling": "C1 direct total: predict the full-month total on raw y, no clipping (vs C2 residual-to-baseline).",
+    },
+    "evaluation": {
+        "target_months": TARGET_MONTHS,
+        "fold_rule": "expanding month-block; split by target_month",
+        "benchmark_sidecar_uri": BENCHMARK_SIDECAR_URI,
+    },
+    "data": {
+        "freq": FREQ,
+        "period_col": "fiscal_year_month",
+        "id_col": "unique_id",
+        "target_col": "y",
+        "completeness_trim": "incomplete (series, month) pairs trimmed from the panel before feature-building (§5.0); the time_series_snapshot is the trimmed panel.",
+    },
+}
+
+# %%
+# ===============================================
+# Gates to check contents before writing sidecar
+# ===============================================
+
+
+# %%
+# Gate: Check `tier` is categorical datatype
+assert isinstance(monthly_series["tier"].dtype, pd.CategoricalDtype)
+
+# %%
+bench_monthly_series = pd.read_parquet(f"{BENCHMARK_SIDECAR_URI}monthly_series.parquet")
+
+# %%
+bench_monthly_series
+
+# %%
+# Setup for gate: load the benchmark monthly_series, label horizon, keep horizon_1 in TARGET_MONTHS
+bench_monthly_series = pd.read_parquet(f"{BENCHMARK_SIDECAR_URI}monthly_series.parquet")
+
+origin_fiscal_month_by_ds = calendar_df.set_index("ds")["fiscal_year_month"]
+bench_origin_fiscal_month =  bench_monthly_series["forecast_origin_date"].map(
+    origin_fiscal_month_by_ds
+)
+bench_horizon=derive_horizon_label(
+    predicted_fiscal_year_month = bench_monthly_series["predicted_fiscal_year_month"],
+    origin_fiscal_year_month = bench_origin_fiscal_month,
+    origin_month_fraction_elapsed = bench_monthly_series["origin_month_fraction_elapsed"]
+    )
+bench_monthly_series["horizon"] = bench_horizon
+
+mask = (
+    (bench_monthly_series["horizon"]=="horizon_1")
+    & (bench_monthly_series["predicted_fiscal_year_month"].isin(TARGET_MONTHS))
+)
+benchmark_h1 = bench_monthly_series[mask].reset_index(drop=True)
+
+# %%
+monthly_series_keys = set(
+    zip(
+        monthly_series["forecast_origin_date"], 
+        monthly_series["predicted_fiscal_year_month"], 
+        monthly_series["unique_id"]
+        )
+    )
+bench_keys = set(
+    zip(
+        benchmark_h1["forecast_origin_date"], 
+        benchmark_h1["predicted_fiscal_year_month"], 
+        benchmark_h1["unique_id"]
+        )
+    )
+assert monthly_series_keys == bench_keys, "Keys not the same " \
+    f"here {monthly_series_keys.symmetric_difference(bench_keys)}"
+
+print(
+    f"target months:{monthly_series['predicted_fiscal_year_month'].nunique()} (expect 6)\n"
+    f"origins: {monthly_series['forecast_origin_date'].nunique()} (expect 26)\n"
+    f"series: {monthly_series['unique_id'].nunique()} (expect 68)\n"
+    f"horizon_1 events: {len(monthly_series)} (expect 1768)"
+)
+
+# %%
+# Run gates to check benchmark:Current work parity
+rtol = 1e-9
+key_cols = ["forecast_origin_date", "predicted_fiscal_year_month", "unique_id"]
+
+parity = monthly_series.merge(benchmark_h1, on=key_cols, suffixes=("_c", "_bench"))
+assert np.allclose(
+    parity["actual_monthly_total_c"],
+    parity["actual_monthly_total_bench"],
+    rtol=rtol
+)
+assert np.allclose(parity["series_weight_c"], parity["series_weight_bench"], rtol=rtol)
+assert (parity["tier_c"] == parity["tier_bench"]).all()
+assert (
+    parity["origin_month_fraction_elapsed_c"] 
+    == parity["origin_month_fraction_elapsed_bench"]
+    ).all()
+
+# %%
+# Write the sidecar (only reached if every gate above passed)
+# composed config (hand-built dict -> YAML)
+save_config(composed_cfg, f"{sidecar_uri}composed_config.yaml")
+
+# lineage / run metadata w/ same helpers the benchmark uses
+run_metadata = {
+    "git_hash": get_git_hash(),
+    "uv_lock_info": get_uv_lock_info(),
+    "ts_data_uri": timeseries_uri,
+}
+write_text_to_gcs(json.dumps(run_metadata, indent=2), f"{sidecar_uri}run_metadata.json")
+
+# input snapshots (self-contained debugging)
+calendar_df.to_parquet(f"{sidecar_uri}fiscal_calendar.parquet", index=False)
+ts_df.to_parquet(f"{sidecar_uri}time_series_snapshot.parquet", index=False)
+
+# output tables
+# leaderboard reads monthly_series/metrics/composed_config/fiscal_calendar
+# per_series_mtd is unique to this script
+monthly_series.to_parquet(f"{sidecar_uri}monthly_series.parquet", index=False)
+metrics.to_parquet(f"{sidecar_uri}metrics.parquet", index=False)
+per_series_mtd.to_parquet(f"{sidecar_uri}per_series_mtd.parquet", index=False)
+
+print(f"Sidecar written: {sidecar_uri}")
