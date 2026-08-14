@@ -206,6 +206,56 @@ def test_combine_monthly_forecast_outer_join_fills_missing_side_with_zero() -> N
     assert by_id[20] == 70.0
 
 
+def test_combine_monthly_forecast_materializes_zero_mtd_when_input_empty(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """mtd_revenue is 0, not missing, when no target-month week is observed yet.
+
+    compute_mtd_actuals returns no rows at all for this population, so the
+    surfaced mtd_revenue is manufactured by the outer join's fillna(0) rather
+    than read off mtd_actuals_df. Sourcing it from mtd_actuals_df directly
+    would drop these rows entirely — and they are not an edge case: every
+    next-month (horizon_2) row of Framing A takes this path, since no week of
+    the next fiscal month is ever observed at the origin.
+
+    The empty frame is derived through compute_mtd_actuals rather than
+    hand-built so it carries the dtypes production actually emits (int64 keys),
+    not the float64/object columns an empty literal would produce.
+    """
+    weeks = calendar_df["ds"].iloc[:4].tolist()
+    pre_target_train_df = pd.DataFrame(
+        {
+            "unique_id": [10] * 4 + [20] * 4,
+            "ds": weeks + weeks,
+            "y": [1, 1, 1, 1, 2, 2, 2, 2],
+        }
+    )
+    empty_mtd_actuals_df = compute_mtd_actuals(
+        pre_target_train_df, calendar_df, target_fiscal_months=[202502]
+    )
+    assert empty_mtd_actuals_df.empty  # guards this test's premise
+
+    predicted_remaining_df = pd.DataFrame(
+        {
+            "unique_id": [10, 20],
+            "fiscal_year_month": [202502, 202502],
+            "ypred": [170.0, 70.0],
+        }
+    )
+
+    result = combine_monthly_forecast(empty_mtd_actuals_df, predicted_remaining_df)
+
+    # presence before value: a dropped row fails here rather than as a KeyError
+    assert set(result["unique_id"]) == {10, 20}
+
+    by_id = result.set_index("unique_id")
+    assert by_id["mtd_revenue"].notna().all()
+    assert by_id.loc[10, "mtd_revenue"] == 0
+    assert by_id.loc[20, "mtd_revenue"] == 0
+    assert by_id.loc[10, "monthly_forecast"] == 170.0
+    assert by_id.loc[20, "monthly_forecast"] == 70.0
+
+
 # ================================================
 # build_monthly_forecast_vs_actual
 # ================================================
@@ -264,9 +314,40 @@ def test_build_monthly_forecast_vs_actual_column_schema(
     assert set(result.columns) == {
         "unique_id",
         "fiscal_year_month",
+        "mtd_revenue",
+        "predicted_remaining",
         "monthly_forecast",
         "actual_monthly_total",
     }
+
+
+def test_build_monthly_forecast_vs_actual_surfaces_add_back_components(
+    forecast_df: pd.DataFrame,
+    train_df: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    actual_monthly_df: pd.DataFrame,
+) -> None:
+    """Both add-back components reach the caller, and monthly_forecast is their sum.
+
+    The sum assertion alone would pass if the two columns were swapped, so the
+    hand-worked values are pinned individually as well. This is the invariant
+    the sidecar's components file is checked against on read.
+    """
+    result = build_monthly_forecast_vs_actual(
+        forecast_df=forecast_df,
+        train_df=train_df,
+        calendar_df=calendar_df,
+        actual_monthly_df=actual_monthly_df,
+    )
+
+    by_id = result.set_index("unique_id")
+    assert by_id.loc[10, "mtd_revenue"] == 250
+    assert by_id.loc[10, "predicted_remaining"] == 170.0
+    assert by_id.loc[20, "mtd_revenue"] == 120
+    assert by_id.loc[20, "predicted_remaining"] == 70.0
+
+    reconstructed = result["mtd_revenue"] + result["predicted_remaining"]
+    assert (reconstructed == result["monthly_forecast"]).all()
 
 
 # ================================================

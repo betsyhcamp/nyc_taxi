@@ -135,8 +135,16 @@ def combine_monthly_forecast(
         id_col: Series identifier column. Default "unique_id".
 
     Returns:
-        DataFrame with columns (id_col, period_col, "monthly_forecast").
-        Outer join with fillna(0) handles forecast origins where MTD actuals are zero.
+        DataFrame with columns (id_col, period_col, "mtd_revenue",
+        "predicted_remaining", "monthly_forecast"). The add back components are renamed
+        from mtd_actuals_col/forecast_col to the canonical names shared across
+        framings; the inputs keep their own column names.
+
+        mtd_revenue is the post-fillna value, not mtd_actuals_df's. The outer
+        join with fillna(0) materializes 0 for any (series, period) with no
+        observed weeks yet — forecast origins sitting before the target month
+        begins, and every next-month row — which compute_mtd_actuals omits
+        entirely. Those rows must carry 0, not be absent.
     """
 
     merged_df = (
@@ -152,8 +160,12 @@ def combine_monthly_forecast(
     merged_df = merged_df.assign(
         monthly_forecast=merged_df[mtd_actuals_col] + merged_df[forecast_col]
     )
-
-    return merged_df[[id_col, period_col, "monthly_forecast"]]
+    merged_df = merged_df.rename(
+        columns={mtd_actuals_col: "mtd_revenue", forecast_col: "predicted_remaining"}
+    )
+    return merged_df[
+        [id_col, period_col, "mtd_revenue", "predicted_remaining", "monthly_forecast"]
+    ]
 
 
 def build_monthly_forecast_vs_actual(
@@ -191,8 +203,11 @@ def build_monthly_forecast_vs_actual(
         target_col: Observed actual value column in train_df. Default "y".
 
     Returns:
-        DataFrame with columns (id_col, period_col, "monthly_forecast",
-        "actual_monthly_total").
+        DataFrame with columns (id_col, period_col, "mtd_revenue",
+        "predicted_remaining", "monthly_forecast", "actual_monthly_total").
+        The two add back components pass through from combine_monthly_forecast so
+        callers can persist the decomposition alongside its sum; monthly_forecast is
+        mtd_revenue + predicted_remaining on every row.
     """
     predicted_remaining_df = compute_predicted_remaining(
         forecast_df=forecast_df,
@@ -247,8 +262,10 @@ def attach_tier_and_weight(
     scoring rather than reading it off this output.
 
     Args:
-        monthly_rows_df: Output of build_monthly_forecast_vs_actual; columns
-            (id_col, period_col, "monthly_forecast", "actual_monthly_total").
+        monthly_rows_df: Output of build_monthly_forecast_vs_actual. Requires
+            (id_col, period_col, "monthly_forecast", "actual_monthly_total");
+            its "mtd_revenue"/"predicted_remaining" columns are unused here and
+            are dropped by the final select.
         tier_df: Output of assign_tiers; columns (id_col, "tier").
         weight_df: Output of compute_series_weights; columns
             (id_col, "series_weight").
