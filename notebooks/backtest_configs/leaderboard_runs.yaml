@@ -15,11 +15,11 @@ runs:
 #    sidecar_id: 20260802T015412644312Z
   - model: naive_26week
     framing: weekly_to_monthly
-    sidecar_id: 20260803T230103657210Z
+    sidecar_id: 20260815T040931105059Z
     benchmark: true
   - model: autoets_26week
     framing: weekly_to_monthly
-    sidecar_id: 20260803T233315973078Z
+    sidecar_id: 20260815T042155415181Z
 
   # note use of sidecar_uri for a run that isn't located in default_base_uri
   - model: lightgbm_2part
