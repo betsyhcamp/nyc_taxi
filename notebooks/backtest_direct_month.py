@@ -20,7 +20,6 @@ import numpy as np
 import pandas as pd
 import yaml
 from lightgbm import LGBMRegressor
-from mlforecast import MLForecast
 from mlforecast.lag_transforms import RollingMean
 from tsbricks.blocks.metadata import get_git_hash, get_uv_lock_info
 
@@ -30,6 +29,10 @@ from fcstnyctaxi.lib.io import write_text_to_gcs
 from fcstnyctaxi.lib.monthly_aggregation import (
     attach_tier_and_weight,
     compute_actual_monthly_totals,
+)
+from fcstnyctaxi.lib.origin_modeling_table.builders import (
+    trim_incomplete_series_months,
+    build_weekly_features
 )
 from fcstnyctaxi.lib.period_utils import (
     assign_tiers,
@@ -96,23 +99,12 @@ sidecar_uri = f"{bucket}/dev/backtests/backtest_direct_month/{generate_run_id()}
 # Until make final determination on which problem framing is best, leave this 
 # framing-specific cleaning here.
 
-labeled = ts_df.merge(
-    calendar_df[["ds", "fiscal_year_month", "fiscal_week_of_month", "weeks_in_month"]],
-    on="ds", how="left",
+ts_df, dropped_pairs = trim_incomplete_series_months(
+    panel_df = ts_df,
+    calendar_df = calendar_df,
 )
-weeks_present = labeled.groupby(["unique_id", "fiscal_year_month"])["fiscal_week_of_month"].transform("nunique")
-keep_row = weeks_present == labeled["weeks_in_month"]
-ts_df = labeled.loc[keep_row, ["unique_id","ds","y"]]
-
-dropped = labeled[~keep_row]
-print(dropped.groupby(["unique_id", "fiscal_year_month"]).size())
-
-recheck = ts_df.merge(
-    calendar_df[["ds", "fiscal_year_month", "fiscal_week_of_month", "weeks_in_month"]],
-    on="ds", how="left",
-)
-weeks_present = recheck.groupby(["unique_id", "fiscal_year_month"])["fiscal_week_of_month"].transform("nunique")
-assert (weeks_present == recheck["weeks_in_month"]).all(), "trimmed panel still has a partial (series, month)"
+# %%
+dropped_pairs
 
 # %%
 actual_monthly_df = compute_actual_monthly_totals(
@@ -123,17 +115,6 @@ actual_monthly_df = compute_actual_monthly_totals(
     id_col= "unique_id",
     target_col= "y"
 )
-
-
-# %%
-def build_weekly_features(panel, freq, *, lags, lag_transforms):
-    """Weekly feature factory. Feature-defining args only (keyword-only).
-    Native MLForecast feature names are kept.
-    """
-    mlf = MLForecast(models=[], freq=freq, lags=lags, lag_transforms=lag_transforms)
-    feats = mlf.preprocess(panel, dropna=False) # unique_id, ds, y, + native feature names
-    return feats.rename(columns={"ds": "feature_ds"})
-
 
 # %%
 weekly_features =  build_weekly_features(
