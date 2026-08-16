@@ -1,5 +1,6 @@
 from typing import cast
 
+import numpy as np
 import pandas as pd
 from mlforecast import MLForecast
 
@@ -109,7 +110,7 @@ def build_weekly_features(
     assert_preprocess_feature_drift gates the agreement.
 
     Args:
-        panel: Weekly panel (requiresunique_id, ds, y); should be the trimmed panel
+        panel: Weekly panel (requires unique_id, ds, y); should be the trimmed panel
             from trim_incomplete_series_months.
         freq: Pandas offset alias for the series frequency, e.g. "W-SUN".
         lags: Lag periods to emit, in units of freq.
@@ -126,3 +127,147 @@ def build_weekly_features(
         pd.DataFrame, mlf.preprocess(panel, dropna=False)
     )  # unique_id, ds, y, + native feature names ; cast() to satisfy type checking
     return feats.rename(columns={"ds": "feature_ds"})
+
+
+def enumerate_origins(calendar_df: pd.DataFrame) -> pd.DataFrame:
+    """Build the origin spine: one row per forecast origin, at origin grain.
+
+    An origin is a fiscal week end, and it normally targets its own month. The
+    exception carries the subtlety: when origin_month_fraction_elapsed == 1 the
+    origin's own month has already completed, so it targets the NEXT month with
+    weeks_actualized = 0 which is the only value of weeks_actualized the calendar's
+    fiscal_week_of_month (which starts at 1) never contains.
+
+    Origins whose target would be the calendar's first month are dropped, since
+    no prior month exists to learn from, as is the final week, whose shifted
+    target month is NaN.
+
+    Args:
+        calendar_df: Fiscal calendar with columns (ds, fiscal_year_month,
+            fiscal_week_of_month, weeks_in_month, origin_month_fraction_elapsed).
+
+    Returns:
+        DataFrame with (target_month, forecast_origin_date, weeks_actualized,
+        weeks_in_month), one row per origin, unique on
+        (target_month, weeks_actualized).
+    """
+    _require_columns(
+        df=calendar_df,
+        required=[
+            "ds",
+            "fiscal_year_month",
+            "fiscal_week_of_month",
+            "weeks_in_month",
+            "origin_month_fraction_elapsed",
+        ],
+        frame_name="calendar_df",
+    )
+    cal_df = calendar_df.copy().sort_values(by="ds").reset_index(drop=True)
+    is_month_end = cal_df["origin_month_fraction_elapsed"] == 1
+
+    cal_df["target_month"] = np.where(
+        is_month_end, cal_df["fiscal_year_month"].shift(-1), cal_df["fiscal_year_month"]
+    )
+    cal_df["weeks_in_month"] = np.where(
+        is_month_end, cal_df["weeks_in_month"].shift(-1), cal_df["weeks_in_month"]
+    )
+    cal_df["weeks_actualized"] = np.where(
+        is_month_end, 0, cal_df["fiscal_week_of_month"]
+    )
+
+    cols_keep = [
+        "target_month",
+        "forecast_origin_date",
+        "weeks_actualized",
+        "weeks_in_month",
+    ]
+    first_month = cal_df["fiscal_year_month"].min()
+    return (
+        cal_df[
+            (cal_df["target_month"].notna()) & (cal_df["target_month"] != first_month)
+        ]
+        .rename(columns={"ds": "forecast_origin_date"})
+        .astype({"weeks_in_month": int, "target_month": int})[cols_keep]
+        .reset_index(drop=True)
+    )
+
+
+def attach_workday_progress(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Attach number_workdays, workdays_elapsed and workdays_remaining, at origin grain.
+
+    The workday lookup is a cumulative sum over fiscal_week_of_month, which starts
+    at 1 so month end origins (weeks_actualized = 0) have nothing to join to.
+    An explicit week-0 row per month supplies that value, since zero weeks elapsed
+    means zero workdays elapsed. When lookup is joined, a one-to-one validation plus a
+    null check bound protect agains fan-out either side of the join.
+
+    Args:
+        origin_spine: Output of enumerate_origins; requires (target_month,
+            weeks_actualized). Not modified.
+        calendar_df: Fiscal calendar with columns (fiscal_year_month,
+            fiscal_week_of_month, count_workdays).
+
+    Returns:
+        origin_spine's columns plus (number_workdays, workdays_elapsed,
+        workdays_remaining), preserving origin_spine's row order.
+
+    Raises:
+        ValueError: If either frame lacks a required column, or if any origin has
+            no workday match.
+    """
+    _require_columns(
+        df=calendar_df,
+        required=["fiscal_year_month", "count_workdays", "fiscal_week_of_month"],
+        frame_name="calendar_df",
+    )
+    _require_columns(
+        df=origin_spine,
+        required=["target_month", "weeks_actualized"],
+        frame_name="origin_spine",
+    )
+
+    cal_df = calendar_df.copy().sort_values(
+        by=["fiscal_year_month", "fiscal_week_of_month"]
+    )
+    origin_df = origin_spine.copy()
+    # workday lookups
+    number_workdays_by_month = cal_df.groupby("fiscal_year_month")[
+        "count_workdays"
+    ].sum()
+    workdays_elapsed_lookup = cal_df.assign(
+        workdays_elapsed=cal_df.groupby("fiscal_year_month")["count_workdays"].cumsum()
+    ).rename(
+        columns={
+            "fiscal_year_month": "target_month",
+            "fiscal_week_of_month": "weeks_actualized",
+        }
+    )[["target_month", "weeks_actualized", "workdays_elapsed"]]
+    week_zero = pd.DataFrame(
+        {"target_month": workdays_elapsed_lookup["target_month"].unique()}
+    ).assign(weeks_actualized=0, workdays_elapsed=0)
+
+    workdays_elapsed_lookup = pd.concat(
+        [week_zero, workdays_elapsed_lookup], ignore_index=True
+    )
+
+    # attach workdays and workday-related quantities
+    origin_df["number_workdays"] = origin_df["target_month"].map(
+        number_workdays_by_month
+    )
+    origin_df = origin_df.merge(
+        workdays_elapsed_lookup,
+        on=["target_month", "weeks_actualized"],
+        how="left",
+        validate="1:1",
+    )
+    if origin_df["workdays_elapsed"].isna().any():
+        raise ValueError("Error: 'workdays_elapsed' column has NaN rows")
+    if origin_df["number_workdays"].isna().any():
+        raise ValueError("Error: 'number_workdays' column has NaN rows")
+
+    origin_df["workdays_remaining"] = (
+        origin_df["number_workdays"] - origin_df["workdays_elapsed"]
+    )
+    return origin_df

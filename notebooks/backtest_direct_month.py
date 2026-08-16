@@ -31,8 +31,10 @@ from fcstnyctaxi.lib.monthly_aggregation import (
     compute_actual_monthly_totals,
 )
 from fcstnyctaxi.lib.origin_modeling_table.builders import (
+    attach_workday_progress,
+    build_weekly_features,
+    enumerate_origins,
     trim_incomplete_series_months,
-    build_weekly_features
 )
 from fcstnyctaxi.lib.period_utils import (
     assign_tiers,
@@ -139,65 +141,12 @@ assert (weekly_features["lag1"]==prior_week_y).loc[check_rows].all()
 # %%
 weekly_features
 
-
-# %%
-def enumerate_origins(calendar_df):
-    cal_df=calendar_df.copy().sort_values(by="ds").reset_index(drop=True)
-    is_month_end = cal_df["origin_month_fraction_elapsed"]==1
-    
-    cal_df["target_month"] = np.where(
-        is_month_end, 
-        cal_df["fiscal_year_month"].shift(-1),
-        cal_df["fiscal_year_month"]
-    )
-    cal_df["weeks_in_month"] = np.where(
-        is_month_end,
-        cal_df["weeks_in_month"].shift(-1),
-        cal_df["weeks_in_month"]
-    )
-    cal_df["weeks_actualized"] = np.where(
-        is_month_end,
-        0,
-        cal_df["fiscal_week_of_month"]
-    )
-
-    cols_keep = [
-        "target_month",
-        "forecast_origin_date",
-        "weeks_actualized",
-        "weeks_in_month"
-    ]
-    first_month = cal_df["fiscal_year_month"].min()
-    return (
-        cal_df[(cal_df["target_month"].notna()) & (cal_df["target_month"]!=first_month)]
-        .rename(columns={"ds":"forecast_origin_date"})
-        .astype({"weeks_in_month": int, "target_month": int})
-        [cols_keep]
-        .reset_index(drop=True)
-    )
-
-
-
 # %%
 def build_origin_target_table(panel, calendar_df, origin_spine, actual_monthly_df):
     cal_df = (
         calendar_df.copy().sort_values(by=["fiscal_year_month", "fiscal_week_of_month"])
     )
 
-    # workday lookups
-    number_workdays_by_month = (
-        cal_df.groupby("fiscal_year_month")["count_workdays"].sum()
-    )
-    workdays_elapsed_lookup = (
-        cal_df
-        .assign(workdays_elapsed=cal_df.groupby("fiscal_year_month")["count_workdays"].cumsum())
-        .rename(columns={
-            "fiscal_year_month":"target_month",
-            "fiscal_week_of_month": "weeks_actualized"
-            })
-        [["target_month", "weeks_actualized", "workdays_elapsed"]]
-    )
-    
     # per series MTD of y
     panel_cal = (
         panel
@@ -214,12 +163,9 @@ def build_origin_target_table(panel, calendar_df, origin_spine, actual_monthly_d
     # join on target_month gives each origin only its active series AND attaches target var
     final_month = actual_monthly_df.rename(
         columns={"fiscal_year_month": "target_month", "actual_monthly_total": "target_month_total_revenue"})
+    # origin_spine already carries number_workdays / workdays_elapsed /
+    # workdays_remaining from attach_workday_progress, computed at origin grain
     table = origin_spine.merge(final_month, on="target_month", how="inner")
-
-    table["number_workdays"] = table["target_month"].map(number_workdays_by_month)
-    table = table.merge(workdays_elapsed_lookup, on=["target_month", "weeks_actualized"], how="left")
-    table["workdays_elapsed"] = table["workdays_elapsed"].fillna(0)
-    table["workdays_remaining"] = table["number_workdays"] - table["workdays_elapsed"]
 
     table = table.merge(mtd_lookup, on=["unique_id", "target_month", "weeks_actualized"], how="left")
     table["mtd_revenue"] = table["mtd_revenue"].fillna(0)
@@ -242,7 +188,7 @@ def build_origin_target_table(panel, calendar_df, origin_spine, actual_monthly_d
 
 # %%
 origin_spine = enumerate_origins(calendar_df)
-
+origin_spine = attach_workday_progress(origin_spine, calendar_df)
 # %%
 origin_spine.tail(30)
 

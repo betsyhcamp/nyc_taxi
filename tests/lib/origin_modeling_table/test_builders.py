@@ -6,7 +6,9 @@ from mlforecast.lag_transforms import RollingMean
 
 from fcstnyctaxi.lib.origin_modeling_table.builders import (
     _require_columns,
+    attach_workday_progress,
     build_weekly_features,
+    enumerate_origins,
     trim_incomplete_series_months,
 )
 
@@ -31,12 +33,30 @@ WEEKS = pd.date_range("2025-01-05", periods=9, freq="W-SUN")
 
 @pytest.fixture
 def calendar_df() -> pd.DataFrame:
+    """202501 has 4 weeks / 17 workdays; 202502 has 5 weeks / 21 workdays.
+
+    count_workdays is deliberately non-uniform so an off-by-one in the cumulative
+    sum shows up as a wrong number rather than a coincidentally right one. Cumulative
+    workdays are 5, 9, 14, 17 for 202501 and 5, 10, 14, 19, 21 for 202502.
+    """
     return pd.DataFrame(
         {
             "ds": WEEKS,
             "fiscal_year_month": [202501] * 4 + [202502] * 5,
             "fiscal_week_of_month": [1, 2, 3, 4, 1, 2, 3, 4, 5],
             "weeks_in_month": [4] * 4 + [5] * 5,
+            "origin_month_fraction_elapsed": [
+                0.25,
+                0.5,
+                0.75,
+                1.0,
+                0.2,
+                0.4,
+                0.6,
+                0.8,
+                1.0,
+            ],
+            "count_workdays": [5, 4, 5, 3, 5, 5, 4, 5, 2],
         }
     )
 
@@ -326,3 +346,234 @@ def test_build_weekly_features_lag1_is_the_prior_week_within_each_series(
     observed = feats["lag1"].notna()
     assert (feats.loc[observed, "lag1"] == prior_y[observed]).all()
     assert feats.loc[~observed, "feature_ds"].tolist() == [WEEKS[0], WEEKS[0]]
+
+
+# ================================================
+# enumerate_origins
+#
+# Against the calendar fixture, only 202502 can have origins: origins targeting
+# 202501 are dropped (it is the first month, with no prior month to learn from)
+# and the final week is dropped (its shifted target month is NaN). So the spine is
+# 5 rows — weeks_actualized 0 through 4 — and every one carries weeks_in_month=5.
+# ================================================
+
+
+def test_enumerate_origins_returns_the_expected_spine(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """Pins the whole frame: 5 origins for 202502, weeks_actualized 0 through 4."""
+    expected = pd.DataFrame(
+        {
+            "target_month": [202502] * 5,
+            "forecast_origin_date": WEEKS[3:8],
+            "weeks_actualized": [0, 1, 2, 3, 4],
+            "weeks_in_month": [5] * 5,
+        }
+    )
+    pd.testing.assert_frame_equal(
+        enumerate_origins(calendar_df), expected, check_dtype=False
+    )
+
+
+def test_enumerate_origins_rolls_a_month_end_origin_forward(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """At fraction_elapsed == 1 the month is done, so the origin targets the next."""
+    spine = enumerate_origins(calendar_df)
+    month_end = spine[spine["forecast_origin_date"] == WEEKS[3]]
+
+    assert len(month_end) == 1
+    assert month_end["target_month"].item() == 202502
+    assert month_end["weeks_actualized"].item() == 0
+
+
+def test_enumerate_origins_takes_weeks_in_month_from_the_target_not_the_origin(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """The rolled-forward origin sits in 4-week 202501 but must carry 202502's 5."""
+    spine = enumerate_origins(calendar_df)
+    month_end = spine[spine["forecast_origin_date"] == WEEKS[3]]
+    assert month_end["weeks_in_month"].item() == 5
+
+
+def test_enumerate_origins_excludes_the_first_calendar_month(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """202501 has no prior month, so no origin may target it."""
+    assert 202501 not in set(enumerate_origins(calendar_df)["target_month"])
+
+
+def test_enumerate_origins_drops_the_final_week_with_no_next_month(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """The last week's shifted target month is NaN and cannot be an origin."""
+    assert WEEKS[8] not in set(enumerate_origins(calendar_df)["forecast_origin_date"])
+
+
+def test_enumerate_origins_is_unique_on_target_month_and_weeks_actualized(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """attach_workday_progress validates one_to_one, which relies on this."""
+    spine = enumerate_origins(calendar_df)
+    assert not spine.duplicated(["target_month", "weeks_actualized"]).any()
+
+
+def test_enumerate_origins_does_not_mutate_the_calendar(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """It writes target_month and weeks_actualized, but only to its own copy."""
+    before = calendar_df.copy()
+    enumerate_origins(calendar_df)
+    pd.testing.assert_frame_equal(calendar_df, before)
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "ds",
+        "fiscal_year_month",
+        "fiscal_week_of_month",
+        "weeks_in_month",
+        "origin_month_fraction_elapsed",
+    ],
+)
+def test_enumerate_origins_raises_when_the_calendar_lacks_a_required_column(
+    calendar_df: pd.DataFrame, missing: str
+) -> None:
+    """Each of the five is read by the body; none is optional."""
+    with pytest.raises(ValueError, match=r"calendar_df is missing required columns"):
+        enumerate_origins(calendar_df.drop(columns=[missing]))
+
+
+# ================================================
+# attach_workday_progress
+#
+# Expected for 202502 (21 workdays total), by weeks_actualized:
+#   0 -> elapsed 0,  remaining 21      3 -> elapsed 14, remaining 7
+#   1 -> elapsed 5,  remaining 16      4 -> elapsed 19, remaining 2
+#   2 -> elapsed 10, remaining 11
+# ================================================
+
+
+@pytest.fixture
+def origin_spine(calendar_df: pd.DataFrame) -> pd.DataFrame:
+    return enumerate_origins(calendar_df)
+
+
+def test_attach_workday_progress_manufactures_zero_at_the_month_end_origin(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """weeks_actualized=0 has no calendar week, so its 0 must be supplied, not NaN."""
+    progressed = attach_workday_progress(origin_spine, calendar_df)
+    zero = progressed[progressed["weeks_actualized"] == 0]
+
+    assert len(zero) == 1
+    assert zero["workdays_elapsed"].notna().all()
+    assert zero["workdays_elapsed"].item() == 0
+    assert zero["workdays_remaining"].item() == zero["number_workdays"].item()
+
+
+def test_attach_workday_progress_computes_the_expected_columns(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """Non-uniform workday counts, so an off-by-one in the cumsum is visible."""
+    progressed = attach_workday_progress(origin_spine, calendar_df)
+
+    assert progressed["workdays_elapsed"].tolist() == [0, 5, 10, 14, 19]
+    assert progressed["workdays_remaining"].tolist() == [21, 16, 11, 7, 2]
+
+
+def test_attach_workday_progress_uses_the_target_months_workday_total(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """The rolled-forward origin sits in 202501 (17) but must carry 202502's 21."""
+    progressed = attach_workday_progress(origin_spine, calendar_df)
+    month_end = progressed[progressed["forecast_origin_date"] == WEEKS[3]]
+
+    assert month_end["number_workdays"].item() == 21
+
+
+def test_attach_workday_progress_leaves_no_nulls(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """The week-zero row makes the join total, so no column may come back null."""
+    progressed = attach_workday_progress(origin_spine, calendar_df)
+    added = ["number_workdays", "workdays_elapsed", "workdays_remaining"]
+    assert not progressed[added].isna().any().any()
+
+
+def test_attach_workday_progress_preserves_spine_rows_and_order(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """A lookup must not reorder or drop the frame it is attached to."""
+    progressed = attach_workday_progress(origin_spine, calendar_df)
+    pd.testing.assert_frame_equal(
+        progressed[origin_spine.columns.tolist()], origin_spine
+    )
+
+
+def test_attach_workday_progress_does_not_mutate_the_spine(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """The caller's frame must not gain columns as a side effect."""
+    before = origin_spine.copy()
+    attach_workday_progress(origin_spine, calendar_df)
+    pd.testing.assert_frame_equal(origin_spine, before)
+
+
+def test_attach_workday_progress_raises_on_a_duplicated_calendar_week(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """A duplicate lookup key would silently fan origins out; one_to_one blocks it."""
+    duplicated = pd.concat([calendar_df, calendar_df.iloc[[5]]], ignore_index=True)
+    with pytest.raises(pd.errors.MergeError):
+        attach_workday_progress(origin_spine, duplicated)
+
+
+def test_attach_workday_progress_raises_on_a_duplicated_spine_origin(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """one_to_one guards the left side too, catching a malformed spine."""
+    duplicated = pd.concat([origin_spine, origin_spine.iloc[[2]]], ignore_index=True)
+    with pytest.raises(pd.errors.MergeError):
+        attach_workday_progress(duplicated, calendar_df)
+
+
+def test_attach_workday_progress_raises_when_a_target_month_is_absent(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """A month missing from the calendar must halt, not silently become zero."""
+    without_target = calendar_df[calendar_df["fiscal_year_month"] != 202502]
+    with pytest.raises(ValueError, match=r"NaN"):
+        attach_workday_progress(origin_spine, without_target)
+
+
+@pytest.mark.parametrize(
+    "missing", ["fiscal_year_month", "fiscal_week_of_month", "count_workdays"]
+)
+def test_attach_workday_progress_raises_when_the_calendar_lacks_a_column(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame, missing: str
+) -> None:
+    """The workday lookup needs all three; none is optional."""
+    with pytest.raises(ValueError, match=r"calendar_df is missing required columns"):
+        attach_workday_progress(origin_spine, calendar_df.drop(columns=[missing]))
+
+
+@pytest.mark.parametrize("missing", ["target_month", "weeks_actualized"])
+def test_attach_workday_progress_raises_when_the_spine_lacks_a_column(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame, missing: str
+) -> None:
+    """Both are merge keys; the other spine columns only pass through."""
+    with pytest.raises(ValueError, match=r"origin_spine is missing required columns"):
+        attach_workday_progress(origin_spine.drop(columns=[missing]), calendar_df)
+
+
+def test_attach_workday_progress_is_insensitive_to_calendar_row_order(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """cumsum is order-dependent, so the function must sort before accumulating."""
+    shuffled = calendar_df.sample(frac=1, random_state=0)
+    pd.testing.assert_frame_equal(
+        attach_workday_progress(origin_spine, calendar_df),
+        attach_workday_progress(origin_spine, shuffled),
+    )
