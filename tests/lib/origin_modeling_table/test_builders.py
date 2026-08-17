@@ -6,7 +6,9 @@ from mlforecast.lag_transforms import RollingMean
 
 from fcstnyctaxi.lib.origin_modeling_table.builders import (
     _require_columns,
+    attach_mtd_revenue,
     attach_workday_progress,
+    build_origin_series_grid,
     build_weekly_features,
     enumerate_origins,
     trim_incomplete_series_months,
@@ -577,3 +579,267 @@ def test_attach_workday_progress_is_insensitive_to_calendar_row_order(
         attach_workday_progress(origin_spine, calendar_df),
         attach_workday_progress(origin_spine, shuffled),
     )
+
+
+# ================================================
+# build_origin_series_grid / attach_mtd_revenue
+#
+# Only 202502 has origins (5 of them), so the grid is 5 x however many series are
+# active in 202502. actual_monthly_df matches complete_panel_df: 202501 totals are
+# 100 / 1000 and 202502 totals are 350 / 3500.
+#
+# complete_panel_df's 202502 weeks are y = 50,60,70,80,90 for id=10 and
+# 500,...,900 for id=20, so month-to-date runs 0, 50, 110, 180, 260 and
+# 0, 500, 1100, 1800, 2600 across weeks_actualized 0 through 4.
+# ================================================
+
+
+@pytest.fixture
+def actual_monthly_df() -> pd.DataFrame:
+    """Both series active in both months; totals match complete_panel_df."""
+    return pd.DataFrame(
+        {
+            "unique_id": [10, 10, 20, 20],
+            "fiscal_year_month": [202501, 202502, 202501, 202502],
+            "actual_monthly_total": [100.0, 350.0, 1000.0, 3500.0],
+        }
+    )
+
+
+@pytest.fixture
+def short_history_actual_monthly_df() -> pd.DataFrame:
+    """id=20 is active only in 202501, so it has no realized 202502 total."""
+    return pd.DataFrame(
+        {
+            "unique_id": [10, 10, 20],
+            "fiscal_year_month": [202501, 202502, 202501],
+            "actual_monthly_total": [100.0, 350.0, 1000.0],
+        }
+    )
+
+
+def test_grid_fans_each_origin_across_every_active_series(
+    origin_spine: pd.DataFrame, actual_monthly_df: pd.DataFrame
+) -> None:
+    """5 origins x 2 series active in 202502 = 10 rows."""
+    grid = build_origin_series_grid(origin_spine, actual_monthly_df)
+
+    assert len(grid) == 10
+    assert grid.groupby("forecast_origin_date").size().tolist() == [2] * 5
+
+
+def test_grid_omits_a_series_with_no_realized_total_for_the_target_month(
+    origin_spine: pd.DataFrame, short_history_actual_monthly_df: pd.DataFrame
+) -> None:
+    """The inner join builds from actuals, so no pre-history rows are manufactured."""
+    grid = build_origin_series_grid(origin_spine, short_history_actual_monthly_df)
+
+    assert len(grid) == 5
+    assert set(grid["unique_id"]) == {10}
+
+
+def test_grid_keeps_actual_monthly_total_under_its_own_name(
+    origin_spine: pd.DataFrame, actual_monthly_df: pd.DataFrame
+) -> None:
+    """A framing renames it if its own target differs; the builder does not."""
+    grid = build_origin_series_grid(origin_spine, actual_monthly_df)
+    assert "actual_monthly_total" in grid.columns
+
+
+def test_grid_preserves_every_spine_column(
+    origin_spine: pd.DataFrame, actual_monthly_df: pd.DataFrame
+) -> None:
+    """Workday progress attached upstream must survive the fan-out."""
+    grid = build_origin_series_grid(origin_spine, actual_monthly_df)
+    assert set(origin_spine.columns) <= set(grid.columns)
+
+
+def test_grid_does_not_mutate_its_inputs(
+    origin_spine: pd.DataFrame, actual_monthly_df: pd.DataFrame
+) -> None:
+    """Neither caller frame may gain or lose a column."""
+    spine_before, actuals_before = origin_spine.copy(), actual_monthly_df.copy()
+    build_origin_series_grid(origin_spine, actual_monthly_df)
+    pd.testing.assert_frame_equal(origin_spine, spine_before)
+    pd.testing.assert_frame_equal(actual_monthly_df, actuals_before)
+
+
+def test_grid_raises_on_a_duplicated_spine_origin(
+    origin_spine: pd.DataFrame, actual_monthly_df: pd.DataFrame
+) -> None:
+    """validate= cannot guard a deliberate fan-out, so the result is checked instead."""
+    duplicated = pd.concat([origin_spine, origin_spine.iloc[[1]]], ignore_index=True)
+    with pytest.raises(ValueError, match=r"duplicate rows"):
+        build_origin_series_grid(duplicated, actual_monthly_df)
+
+
+def test_grid_raises_on_a_duplicated_actuals_row(
+    origin_spine: pd.DataFrame, actual_monthly_df: pd.DataFrame
+) -> None:
+    """A repeated (series, month) would double every origin's row for that pair."""
+    duplicated = pd.concat(
+        [actual_monthly_df, actual_monthly_df.iloc[[1]]], ignore_index=True
+    )
+    with pytest.raises(ValueError, match=r"duplicate rows"):
+        build_origin_series_grid(origin_spine, duplicated)
+
+
+@pytest.mark.parametrize("missing", ["target_month", "forecast_origin_date"])
+def test_grid_raises_when_the_spine_lacks_a_column(
+    origin_spine: pd.DataFrame, actual_monthly_df: pd.DataFrame, missing: str
+) -> None:
+    """forecast_origin_date is required by the uniqueness check, not by the merge."""
+    with pytest.raises(ValueError, match=r"origin_spine is missing required columns"):
+        build_origin_series_grid(
+            origin_spine.drop(columns=[missing]), actual_monthly_df
+        )
+
+
+@pytest.mark.parametrize(
+    "missing", ["unique_id", "fiscal_year_month", "actual_monthly_total"]
+)
+def test_grid_raises_when_the_actuals_lack_a_column(
+    origin_spine: pd.DataFrame, actual_monthly_df: pd.DataFrame, missing: str
+) -> None:
+    """All three are needed: two to join and key, one to attach."""
+    with pytest.raises(ValueError, match=r"actual_monthly_df is missing required"):
+        build_origin_series_grid(
+            origin_spine, actual_monthly_df.drop(columns=[missing])
+        )
+
+
+@pytest.fixture
+def grid(origin_spine: pd.DataFrame, actual_monthly_df: pd.DataFrame) -> pd.DataFrame:
+    return build_origin_series_grid(origin_spine, actual_monthly_df)
+
+
+def test_attach_mtd_manufactures_zero_at_the_month_end_origin(
+    grid: pd.DataFrame, complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """weeks_actualized=0 has no calendar week, so its 0 must be supplied, not NaN."""
+    out = attach_mtd_revenue(grid, complete_panel_df, calendar_df)
+    zero = out[out["weeks_actualized"] == 0]
+
+    assert len(zero) == 2
+    assert zero["mtd_revenue"].notna().all()
+    assert zero["mtd_revenue"].tolist() == [0.0, 0.0]
+
+
+def test_attach_mtd_accumulates_within_the_target_month(
+    grid: pd.DataFrame, complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """id=10's 202502 weeks are 50,60,70,80,90, so MTD runs 0, 50, 110, 180, 260."""
+    out = attach_mtd_revenue(grid, complete_panel_df, calendar_df)
+    id_10 = out[out["unique_id"] == 10].sort_values("weeks_actualized")
+
+    assert id_10["mtd_revenue"].tolist() == [0.0, 50.0, 110.0, 180.0, 260.0]
+
+
+def test_attach_mtd_does_not_leak_the_prior_months_revenue(
+    grid: pd.DataFrame, complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """The cumsum restarts each month; 202501's 100 must not carry into 202502."""
+    out = attach_mtd_revenue(grid, complete_panel_df, calendar_df)
+    first_observed = out[(out["unique_id"] == 10) & (out["weeks_actualized"] == 1)]
+
+    assert first_observed["mtd_revenue"].item() == 50.0
+
+
+def test_attach_mtd_returns_float_even_though_y_is_integral(
+    grid: pd.DataFrame, complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """The cast makes the dtype independent of whether the target happens to be int."""
+    assert complete_panel_df["y"].dtype == "int64"
+    out = attach_mtd_revenue(grid, complete_panel_df, calendar_df)
+    assert out["mtd_revenue"].dtype == "float64"
+
+
+def test_attach_mtd_leaves_no_nulls(
+    grid: pd.DataFrame, complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """The week-zero row makes the join total, so every grid row must match."""
+    out = attach_mtd_revenue(grid, complete_panel_df, calendar_df)
+    assert not out["mtd_revenue"].isna().any()
+
+
+def test_attach_mtd_preserves_grid_rows_and_order(
+    grid: pd.DataFrame, complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """An attach adds a column; it must not reorder or drop rows."""
+    out = attach_mtd_revenue(grid, complete_panel_df, calendar_df)
+    pd.testing.assert_frame_equal(out[grid.columns.tolist()], grid)
+
+
+def test_attach_mtd_does_not_mutate_its_inputs(
+    grid: pd.DataFrame, complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """The caller's grid must not gain mtd_revenue as a side effect."""
+    grid_before, panel_before = grid.copy(), complete_panel_df.copy()
+    attach_mtd_revenue(grid, complete_panel_df, calendar_df)
+    pd.testing.assert_frame_equal(grid, grid_before)
+    pd.testing.assert_frame_equal(complete_panel_df, panel_before)
+
+
+def test_attach_mtd_raises_when_the_panel_lacks_a_week_the_grid_expects(
+    grid: pd.DataFrame, complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """A missing week must halt, not silently become a zero month-to-date."""
+    without_a_week = complete_panel_df[complete_panel_df["ds"] != WEEKS[5]]
+    with pytest.raises(ValueError, match=r"no MTD match"):
+        attach_mtd_revenue(grid, without_a_week, calendar_df)
+
+
+def test_attach_mtd_raises_on_a_duplicated_panel_week(
+    grid: pd.DataFrame, complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """one_to_one catches the same defect the trim's distinct-week count guards."""
+    duplicated = pd.concat(
+        [complete_panel_df, complete_panel_df.iloc[[5]]], ignore_index=True
+    )
+    with pytest.raises(pd.errors.MergeError):
+        attach_mtd_revenue(grid, duplicated, calendar_df)
+
+
+@pytest.mark.parametrize("missing", ["unique_id", "target_month", "weeks_actualized"])
+def test_attach_mtd_raises_when_the_grid_lacks_a_column(
+    grid: pd.DataFrame,
+    complete_panel_df: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    missing: str,
+) -> None:
+    """All three are merge keys."""
+    with pytest.raises(ValueError, match=r"grid_df is missing required columns"):
+        attach_mtd_revenue(grid.drop(columns=[missing]), complete_panel_df, calendar_df)
+
+
+@pytest.mark.parametrize("missing", ["unique_id", "ds", "y"])
+def test_attach_mtd_raises_when_the_panel_lacks_a_column(
+    grid: pd.DataFrame,
+    complete_panel_df: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    missing: str,
+) -> None:
+    """The cumulative sum needs all three."""
+    with pytest.raises(ValueError, match=r"panel_df is missing required columns"):
+        attach_mtd_revenue(grid, complete_panel_df.drop(columns=[missing]), calendar_df)
+
+
+def test_grid_is_empty_when_no_series_is_active_in_the_target_month(
+    origin_spine: pd.DataFrame,
+) -> None:
+    """A calendar running ahead of the data must yield no rows, not NaN-target rows."""
+    only_first_month = pd.DataFrame(
+        {
+            "unique_id": [10, 20],
+            "fiscal_year_month": [202501, 202501],
+            "actual_monthly_total": [100.0, 1000.0],
+        }
+    )
+    grid = build_origin_series_grid(origin_spine, only_first_month)
+
+    assert grid.empty
+    assert list(grid.columns) == [
+        *origin_spine.columns,
+        "unique_id",
+        "actual_monthly_total",
+    ]

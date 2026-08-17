@@ -271,3 +271,142 @@ def attach_workday_progress(
         origin_df["number_workdays"] - origin_df["workdays_elapsed"]
     )
     return origin_df
+
+
+def build_origin_series_grid(
+    origin_spine: pd.DataFrame, actual_monthly_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Build the (series x origin) grid and attach actual_monthly_total.
+
+    The inner join is foundational since the grid is built from realized actuals rather
+    than by cross joining every series against every month. As a result, a series
+    appears only from its first active month and no prehistory rows are manufactured.
+    A (series, month) absent here is legitimately absent downstream, which is why
+    coverage gates must be scoped to active pairs.
+
+    The merge is a deliberate fan out so every origin in a month meets every active
+    series in that month so validate= cannot constrain it; the result is checked
+    for uniqueness instead. The column actual_monthly_total keeps its name, and a
+    framing renames it if its own target is called something else.
+
+    Args:
+        origin_spine: Output of enumerate_origins, optionally with workday progress
+            attached; requires (target_month, forecast_origin_date).
+        actual_monthly_df: Output of compute_actual_monthly_totals; requires
+            (unique_id, fiscal_year_month, actual_monthly_total).
+
+    Returns:
+        origin_spine's columns plus (unique_id, actual_monthly_total), one row per
+        active (series, origin).
+
+    Raises:
+        ValueError: If either frame lacks a required column, or if the grid is not
+            unique on (unique_id, forecast_origin_date, target_month).
+    """
+    _require_columns(
+        df=origin_spine,
+        required=["target_month", "forecast_origin_date"],
+        frame_name="origin_spine",
+    )
+    _require_columns(
+        df=actual_monthly_df,
+        required=["unique_id", "fiscal_year_month", "actual_monthly_total"],
+        frame_name="actual_monthly_df",
+    )
+
+    # deliberate fan out so each unique_id get calendar attributes from origin_spine
+    grid = origin_spine.merge(
+        actual_monthly_df.rename(columns={"fiscal_year_month": "target_month"}),
+        on="target_month",
+        how="inner",
+    )
+
+    # check for duplicate rows in grid
+    grid_keys = ["unique_id", "forecast_origin_date", "target_month"]
+    duplicates = grid.duplicated(grid_keys)
+    if duplicates.any():
+        raise ValueError(
+            f"{int(duplicates.sum())} duplicate rows on {grid_keys}; "
+            "origin_spine or actual_monthly_df has repeated keys"
+        )
+    return grid
+
+
+def attach_mtd_revenue(
+    grid_df: pd.DataFrame, panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Attach per-series month-to-date revenue at each origin.
+
+    mtd_revenue is a cumulative sum of y within (unique_id, fiscal_year_month),
+    keyed to weeks_actualized. The lookup is built from fiscal_week_of_month, which
+    starts at 1, so month end origins (weeks_actualized = 0) have nothing to join
+    to. The explicit week zero row per active (series, month) supplies that value,
+    since no week observed means zero month-to-date. Sourced from the lookup, never
+    from the grid so that a (series, month) genuinely absent from the panel must stay
+    absent rather than acquire a manufactured zero.
+
+    Args:
+        grid_df: Output of build_origin_series_grid; requires (unique_id,
+            target_month, weeks_actualized).
+        panel_df: The same trimmed panel the grid was built from; requires
+            (unique_id, ds, y).
+        calendar_df: Fiscal calendar with columns (ds, fiscal_year_month,
+            fiscal_week_of_month).
+
+    Returns:
+        grid's columns plus mtd_revenue, in grid's row order.
+
+    Raises:
+        ValueError: If any frame lacks a required column, or if a grid row has no
+            MTD match.
+    """
+    _require_columns(
+        df=grid_df,
+        required=["unique_id", "target_month", "weeks_actualized"],
+        frame_name="grid_df",
+    )
+    _require_columns(
+        df=panel_df, required=["unique_id", "ds", "y"], frame_name="panel_df"
+    )
+    _require_columns(
+        df=calendar_df,
+        required=["ds", "fiscal_year_month", "fiscal_week_of_month"],
+        frame_name="calendar_df",
+    )
+
+    panel_cal = panel_df.merge(
+        calendar_df[["ds", "fiscal_year_month", "fiscal_week_of_month"]],
+        on="ds",
+        how="left",
+    ).sort_values(["unique_id", "fiscal_year_month", "fiscal_week_of_month"])
+
+    panel_cal["mtd_revenue"] = panel_cal.groupby(["unique_id", "fiscal_year_month"])[
+        "y"
+    ].cumsum()
+
+    mtd_lookup = panel_cal.rename(
+        columns={
+            "fiscal_year_month": "target_month",
+            "fiscal_week_of_month": "weeks_actualized",
+        }
+    )[["unique_id", "target_month", "weeks_actualized", "mtd_revenue"]]
+
+    week_zero = (
+        mtd_lookup[["unique_id", "target_month"]]
+        .drop_duplicates()
+        .assign(weeks_actualized=0, mtd_revenue=0)
+    )
+    mtd_lookup = pd.concat([week_zero, mtd_lookup], ignore_index=True)
+
+    grid_df = grid_df.merge(
+        mtd_lookup,
+        on=["unique_id", "target_month", "weeks_actualized"],
+        how="left",
+        validate="one_to_one",
+    )
+    unmatched = grid_df["mtd_revenue"].isna()
+    if unmatched.any():
+        raise ValueError(f"{int(unmatched.sum())} grid row(s) have no MTD match")
+
+    grid_df["mtd_revenue"] = grid_df["mtd_revenue"].astype(float)
+    return grid_df
