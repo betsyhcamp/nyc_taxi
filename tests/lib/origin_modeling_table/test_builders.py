@@ -7,6 +7,7 @@ from mlforecast.lag_transforms import RollingMean
 from fcstnyctaxi.lib.origin_modeling_table.builders import (
     _require_columns,
     attach_mtd_revenue,
+    attach_weekly_features,
     attach_workday_progress,
     build_origin_series_grid,
     build_weekly_features,
@@ -303,21 +304,21 @@ def test_trim_coverage_error_reports_distinct_dates_not_rows(
 # ================================================
 
 
-def test_build_weekly_features_renames_ds_to_feature_ds(
+def test_build_weekly_features_renames_ds_to_feature_row_ds(
     complete_panel_df: pd.DataFrame,
 ) -> None:
     """The rename happens at the source, so no caller sees a bare ds."""
     feats = build_weekly_features(
         complete_panel_df, "W-SUN", lags=[1], lag_transforms={}
     )
-    assert "feature_ds" in feats.columns
+    assert "feature_row_ds" in feats.columns
     assert "ds" not in feats.columns
 
 
 def test_build_weekly_features_keeps_every_panel_row(
     complete_panel_df: pd.DataFrame,
 ) -> None:
-    """dropna=False: early weeks with NaN lags must survive for Layer 3's join."""
+    """dropna=False: early weeks with NaN lags must survive attach_weekly_features."""
     feats = build_weekly_features(
         complete_panel_df, "W-SUN", lags=[1], lag_transforms={1: [RollingMean(4)]}
     )
@@ -332,7 +333,7 @@ def test_build_weekly_features_emits_native_mlforecast_names(
     feats = build_weekly_features(
         complete_panel_df, "W-SUN", lags=[1], lag_transforms={1: [RollingMean(4)]}
     )
-    emitted = set(feats.columns) - {"unique_id", "feature_ds", "y"}
+    emitted = set(feats.columns) - {"unique_id", "feature_row_ds", "y"}
     assert emitted == {"lag1", "rolling_mean_lag1_window_size4"}
 
 
@@ -342,12 +343,12 @@ def test_build_weekly_features_lag1_is_the_prior_week_within_each_series(
     """lag1 never crosses a series boundary; only each series' first week is NaN."""
     feats = build_weekly_features(
         complete_panel_df, "W-SUN", lags=[1], lag_transforms={}
-    ).sort_values(["unique_id", "feature_ds"])
+    ).sort_values(["unique_id", "feature_row_ds"])
 
     prior_y = feats.groupby("unique_id")["y"].shift(1)
     observed = feats["lag1"].notna()
     assert (feats.loc[observed, "lag1"] == prior_y[observed]).all()
-    assert feats.loc[~observed, "feature_ds"].tolist() == [WEEKS[0], WEEKS[0]]
+    assert feats.loc[~observed, "feature_row_ds"].tolist() == [WEEKS[0], WEEKS[0]]
 
 
 # ================================================
@@ -843,3 +844,156 @@ def test_grid_is_empty_when_no_series_is_active_in_the_target_month(
         "unique_id",
         "actual_monthly_total",
     ]
+
+
+# ================================================
+# attach_weekly_features
+#
+# The join key is the subtle part: forecast_origin_date = W is the last observed
+# week, but MLForecast names a feature row after the week it predicts, so the row
+# whose lag1 == y[W] is the one at W + 1 week.
+#
+# complete_panel_df's id=10 runs y = 10,20,...,90 across WEEKS[0..8], so an origin
+# at WEEKS[3] must see lag1 = 40 — the origin week's own value.
+# ================================================
+
+
+@pytest.fixture
+def origin_target_table() -> pd.DataFrame:
+    """Four origins for one series, at WEEKS[2] through WEEKS[5]."""
+    return pd.DataFrame(
+        {
+            "unique_id": 10,
+            "forecast_origin_date": WEEKS[2:6],
+            "target_month": [202501, 202501, 202502, 202502],
+        }
+    )
+
+
+@pytest.fixture
+def weekly_features_frame(complete_panel_df: pd.DataFrame) -> pd.DataFrame:
+    return build_weekly_features(
+        complete_panel_df, "W-SUN", lags=[1], lag_transforms={}
+    )
+
+
+def test_attach_weekly_features_keys_one_period_after_the_origin(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame
+) -> None:
+    """feature_row_ds = W + 1 week: the row MLForecast named for the following week."""
+    joined = attach_weekly_features(origin_target_table, weekly_features_frame)
+
+    expected = origin_target_table["forecast_origin_date"] + pd.Timedelta(weeks=1)
+    assert joined["feature_row_ds"].tolist() == expected.tolist()
+
+
+def test_attach_weekly_features_gives_each_origin_its_own_weeks_value_as_lag1(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame
+) -> None:
+    """The whole point of W+1: lag1 is y[W], not y[W-1]. Off by one and it is stale."""
+    joined = attach_weekly_features(origin_target_table, weekly_features_frame)
+
+    # id=10 has y = 10,20,...,90 across WEEKS[0..8]; origins are WEEKS[2..5]
+    assert joined["lag1"].tolist() == [30.0, 40.0, 50.0, 60.0]
+
+
+def test_attach_weekly_features_would_be_stale_if_keyed_at_the_origin_itself(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame
+) -> None:
+    """Pins the failure mode: joining at W gives y[W-1], one week out of date."""
+    at_origin = origin_target_table.merge(
+        weekly_features_frame.rename(
+            columns={"feature_row_ds": "forecast_origin_date"}
+        ),
+        on=["unique_id", "forecast_origin_date"],
+        how="left",
+    )
+    assert at_origin["lag1"].tolist() == [20.0, 30.0, 40.0, 50.0]  # each one week stale
+
+
+def test_attach_weekly_features_drops_the_future_valued_y(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame
+) -> None:
+    """y on the fetched row is y[W+1] — a week that has not happened at the origin."""
+    joined = attach_weekly_features(origin_target_table, weekly_features_frame)
+    assert "y" not in joined.columns
+
+
+def test_attach_weekly_features_returns_a_superset_and_selects_nothing(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame
+) -> None:
+    """Bounding the model matrix is ModelingTableSchema's job, not the builder's."""
+    joined = attach_weekly_features(origin_target_table, weekly_features_frame)
+    assert set(origin_target_table.columns) <= set(joined.columns)
+    assert {"feature_row_ds", "lag1"} <= set(joined.columns)
+
+
+def test_attach_weekly_features_preserves_origin_rows_and_order(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame
+) -> None:
+    """An attach adds columns; it must not reorder or drop origins."""
+    joined = attach_weekly_features(origin_target_table, weekly_features_frame)
+    pd.testing.assert_frame_equal(
+        joined[origin_target_table.columns.tolist()], origin_target_table
+    )
+
+
+def test_attach_weekly_features_does_not_mutate_its_inputs(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame
+) -> None:
+    """The caller's origin table must not gain feature_row_ds as a side effect."""
+    before = origin_target_table.copy()
+    attach_weekly_features(origin_target_table, weekly_features_frame)
+    pd.testing.assert_frame_equal(origin_target_table, before)
+
+
+def test_attach_weekly_features_raises_on_a_duplicated_feature_row(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame
+) -> None:
+    """one_to_one guards the right side: a repeated week would fan origins out."""
+    duplicated = pd.concat(
+        [weekly_features_frame, weekly_features_frame.iloc[[3]]], ignore_index=True
+    )
+    with pytest.raises(pd.errors.MergeError):
+        attach_weekly_features(origin_target_table, duplicated)
+
+
+def test_attach_weekly_features_raises_on_two_targets_sharing_one_origin(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame
+) -> None:
+    """one_to_one encodes a precondition: each origin targets exactly one month.
+
+    A multi-horizon framing would need many_to_one instead; this pins the current
+    assumption so the change is deliberate rather than discovered.
+    """
+    two_targets = pd.concat(
+        [
+            origin_target_table,
+            origin_target_table.iloc[[0]].assign(target_month=202502),
+        ],
+        ignore_index=True,
+    )
+    with pytest.raises(pd.errors.MergeError):
+        attach_weekly_features(two_targets, weekly_features_frame)
+
+
+@pytest.mark.parametrize("missing", ["unique_id", "forecast_origin_date"])
+def test_attach_weekly_features_raises_when_the_origin_table_lacks_a_column(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame, missing: str
+) -> None:
+    """Both are merge keys; a bare KeyError could not say which frame was at fault."""
+    with pytest.raises(ValueError, match=r"origin_target_table is missing required"):
+        attach_weekly_features(
+            origin_target_table.drop(columns=[missing]), weekly_features_frame
+        )
+
+
+@pytest.mark.parametrize("missing", ["unique_id", "feature_row_ds", "y"])
+def test_attach_weekly_features_raises_when_the_features_lack_a_column(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame, missing: str
+) -> None:
+    """y is required so its removal is provable, not merely assumed."""
+    with pytest.raises(ValueError, match=r"weekly_features is missing required"):
+        attach_weekly_features(
+            origin_target_table, weekly_features_frame.drop(columns=[missing])
+        )

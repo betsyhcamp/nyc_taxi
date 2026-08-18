@@ -32,12 +32,14 @@ from fcstnyctaxi.lib.monthly_aggregation import (
 )
 from fcstnyctaxi.lib.origin_modeling_table.builders import (
     attach_mtd_revenue,
+    attach_weekly_features,
     attach_workday_progress,
     build_origin_series_grid,
     build_weekly_features,
     enumerate_origins,
     trim_incomplete_series_months,
 )
+from fcstnyctaxi.lib.origin_modeling_table.column_roles import ModelingTableSchema
 from fcstnyctaxi.lib.period_utils import (
     assign_tiers,
     compute_series_weights,
@@ -85,6 +87,16 @@ MLF_FEATURES = ["lag1", "rolling_mean_lag1_window_size4"]
 G3_FEATURES = ["last_completed_month_revenue"]
 FEATURE_COLUMNS = G1_FEATURES + MLF_FEATURES + G3_FEATURES
 
+# Column roles for the modeling table. Declared here because which columns are
+# features is this framing's decision; the library only applies the declaration.
+MODELING_SCHEMA = ModelingTableSchema(
+    key_cols=("unique_id", "forecast_origin_date", "target_month"),
+    feature_cols=tuple(FEATURE_COLUMNS),
+    target_col="target_month_total_revenue",
+    passthrough_cols=("feature_row_ds",),
+    progress_cols=("weeks_actualized", "weeks_in_month"),
+)
+
 HYPERPARAMS = {
     "objective": "regression_l1",
     "n_estimators": 400,
@@ -131,7 +143,7 @@ weekly_features = build_weekly_features(
 
 # drift-guard gate: preprocess must emit exactly the native names MLF_FEATURES declares
 emitted = [
-    c for c in weekly_features.columns if c not in {"unique_id", "feature_ds", "y"}
+    c for c in weekly_features.columns if c not in {"unique_id", "feature_row_ds", "y"}
 ]
 assert set(emitted) == set(MLF_FEATURES), (
     f"drift: preprocess emitted {sorted(emitted)}, MLF_FEATURES declares {sorted(MLF_FEATURES)}"
@@ -140,7 +152,7 @@ assert set(emitted) == set(MLF_FEATURES), (
 # %%
 # alignment sanity check, then display `weekly_features`
 weekly_features = weekly_features.sort_values(
-    by=["unique_id", "feature_ds"]
+    by=["unique_id", "feature_row_ds"]
 ).reset_index(drop=True)
 prior_week_y = weekly_features.groupby("unique_id")["y"].shift(1)
 check_rows = ~weekly_features["lag1"].isna()
@@ -267,48 +279,30 @@ origin_target_table.head()
 
 
 # %%
-def build_modeling_table(origin_target_table, weekly_features):
-    keyed_origins = origin_target_table.copy()
-    keyed_origins["feature_ds"] = keyed_origins["forecast_origin_date"] + pd.Timedelta(
-        weeks=1
-    )
-    modeling = keyed_origins.merge(
-        weekly_features, on=["unique_id", "feature_ds"], how="left"
-    )
-    modeling = modeling.drop(columns="y")
-    keep = (
-        ["unique_id", "forecast_origin_date", "target_month"]
-        + FEATURE_COLUMNS
-        + ["target_month_total_revenue"]
-        + ["weeks_actualized", "weeks_in_month", "feature_ds"]
-    )
-    return modeling[keep].reset_index(drop=True)
-
-
-# %%
-modeling_table = build_modeling_table(origin_target_table, weekly_features)
+modeling_table = attach_weekly_features(origin_target_table, weekly_features)
+modeling_table = MODELING_SCHEMA.select(modeling_table)
+MODELING_SCHEMA.validate(modeling_table)
 
 # %%
 # ====== Gate: join integrity ===========
 keyed_origins = origin_target_table.copy()
 
-keyed_origins["feature_ds"] = keyed_origins["forecast_origin_date"] + pd.Timedelta(
+keyed_origins["feature_row_ds"] = keyed_origins["forecast_origin_date"] + pd.Timedelta(
     weeks=1
 )
 
 assert modeling_table["unique_id"].dtype == weekly_features["unique_id"].dtype
-assert modeling_table["feature_ds"].dtype == weekly_features["feature_ds"].dtype
+assert modeling_table["feature_row_ds"].dtype == weekly_features["feature_row_ds"].dtype
 
 antijoin = keyed_origins.merge(
-    weekly_features[["unique_id", "feature_ds"]],
-    on=["unique_id", "feature_ds"],
+    weekly_features[["unique_id", "feature_row_ds"]],
+    on=["unique_id", "feature_row_ds"],
     how="left",
     indicator=True,
 )
 assert (antijoin["_merge"] == "left_only").sum() == 0
 
 assert len(modeling_table) == len(origin_target_table)
-assert list(modeling_table[FEATURE_COLUMNS].columns) == FEATURE_COLUMNS
 
 
 # %%
@@ -358,7 +352,7 @@ def rebuild_all(panel):
         panel, FREQ, lags=MLF_LAGS, lag_transforms=MLF_LAG_TRANSFORMS
     )
     ot = build_origin_target_table(panel, calendar_df, origin_spine, actual_monthly)
-    return build_modeling_table(ot, features)
+    return MODELING_SCHEMA.select(attach_weekly_features(ot, features))
 
 
 panel_scrambled = ts_df.copy()
@@ -372,16 +366,12 @@ base = rebuild_all(ts_df)
 scrambled = rebuild_all(panel_scrambled)
 
 keys = ["unique_id", "forecast_origin_date"]
-past_base = (
-    base[base["forecast_origin_date"] <= cutoff_W]
-    .sort_values(keys)[FEATURE_COLUMNS]
-    .reset_index(drop=True)
-)
-past_scr = (
-    scrambled[scrambled["forecast_origin_date"] <= cutoff_W]
-    .sort_values(keys)[FEATURE_COLUMNS]
-    .reset_index(drop=True)
-)
+past_base = MODELING_SCHEMA.select_features(
+    base[base["forecast_origin_date"] <= cutoff_W].sort_values(keys)
+).reset_index(drop=True)
+past_scr = MODELING_SCHEMA.select_features(
+    scrambled[scrambled["forecast_origin_date"] <= cutoff_W].sort_values(keys)
+).reset_index(drop=True)
 
 same = (past_base == past_scr) | (past_base.isna() & past_scr.isna())
 assert same.all().all(), (
@@ -391,23 +381,26 @@ assert same.all().all(), (
 
 # %%
 def run_fold(modeling_table, val_month):
-    train = modeling_table[modeling_table["target_month"] < val_month]
-    val = modeling_table[modeling_table["target_month"] == val_month]
-
-    # train and val target months must not overlap
-    assert set(train["target_month"]).isdisjoint(set(val["target_month"]))
-
-    X_train = train[FEATURE_COLUMNS]
-    y_train = train["target_month_total_revenue"]
-    model = LGBMRegressor(**HYPERPARAMS).fit(X_train, y_train)
-
-    preds = model.predict(val[FEATURE_COLUMNS])
-
-    keys = ["unique_id", "forecast_origin_date", "target_month"]
-    month_progress_cols = ["weeks_actualized", "weeks_in_month"]
-    return val[keys + month_progress_cols + ["target_month_total_revenue"]].assign(
-        prediction=preds
+    is_train = modeling_table["target_month"] < val_month
+    is_val = modeling_table["target_month"] == val_month
+    assert set(modeling_table.loc[is_train, "target_month"]).isdisjoint(
+        set(modeling_table.loc[is_val, "target_month"])
     )
+
+    X = MODELING_SCHEMA.select_features(modeling_table)
+    y = modeling_table[MODELING_SCHEMA.target_col]
+    X_train, X_val = X[is_train], X[is_val]
+    y_train = y[is_train]
+
+    model = LGBMRegressor(**HYPERPARAMS).fit(X_train, y_train)
+    preds = model.predict(X_val)
+
+    return modeling_table.loc[
+        is_val,
+        list(MODELING_SCHEMA.key_cols)
+        + list(MODELING_SCHEMA.progress_cols)
+        + [MODELING_SCHEMA.target_col],
+    ].assign(prediction=preds)
 
 
 # %%
@@ -557,8 +550,8 @@ composed_cfg = {
         "label": "lightgbm_direct",
         "framing": "direct_month",
         "hyperparameters": HYPERPARAMS,
-        "features": FEATURE_COLUMNS,
-        "target": "target_month_total_revenue",
+        "features": list(MODELING_SCHEMA.feature_cols),
+        "target": MODELING_SCHEMA.target_col,
         "target_handling": "C1 direct total: predict the full-month total on raw y, no clipping (vs C2 residual-to-baseline).",
     },
     "evaluation": {

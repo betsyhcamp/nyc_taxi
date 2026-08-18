@@ -100,33 +100,32 @@ def build_weekly_features(
     lags: list[int],
     lag_transforms: dict[int, list],
 ) -> pd.DataFrame:
-    """Build Layer 1 of the modeling table: weekly lag features per series.
+    """Build the weekly lag features the modeling table is joined against.
 
-    A feature factory, not a model — MLForecast is built with models=[] and
-    only preprocess() is called. dropna=False is load-bearing: it keeps each
-    series' early weeks, where lags are still NaN, so Layer 3's left join
-    finds a row for every origin. Native MLForecast feature names are kept;
-    the framing declares the same names in MLF_FEATURES and
-    assert_preprocess_feature_drift gates the agreement.
+    Uses MLForecast as a feature factory, not a model: it is built with models=[] and
+    only preprocess() is called. dropna=False is load-bearing, since it keeps each
+    series' early weeks where the lags are still NaN, so attach_weekly_features finds
+    a row for every origin. Native MLForecast feature names are kept; the framing
+    declares the same names in MLF_FEATURES.
 
     Args:
-        panel: Weekly panel (requires unique_id, ds, y); should be the trimmed panel
-            from trim_incomplete_series_months.
+        panel: Weekly panel (requires unique_id, ds, y); should be the trimmed panel,
+            so every month a target is built from is complete.
         freq: Pandas offset alias for the series frequency, e.g. "W-SUN".
         lags: Lag periods to emit, in units of freq.
         lag_transforms: Lag period -> transforms applied at that lag, e.g.
             {1: [RollingMean(window_size=4)]}.
 
     Returns:
-        DataFrame with (unique_id, feature_ds, y, + one column per native
+        DataFrame with (unique_id, feature_row_ds, y, + one column per native
         MLForecast feature name), one row per panel row. ds is renamed
-        feature_ds, the join key Layer 3 uses.
+        feature_row_ds, as a join key for future use.
     """
     mlf = MLForecast(models=[], freq=freq, lags=lags, lag_transforms=lag_transforms)
     feats = cast(
         pd.DataFrame, mlf.preprocess(panel, dropna=False)
     )  # unique_id, ds, y, + native feature names ; cast() to satisfy type checking
-    return feats.rename(columns={"ds": "feature_ds"})
+    return feats.rename(columns={"ds": "feature_row_ds"})
 
 
 def enumerate_origins(calendar_df: pd.DataFrame) -> pd.DataFrame:
@@ -410,3 +409,63 @@ def attach_mtd_revenue(
 
     grid_df["mtd_revenue"] = grid_df["mtd_revenue"].astype(float)
     return grid_df
+
+
+def attach_weekly_features(
+    origin_target_table: pd.DataFrame, weekly_features: pd.DataFrame
+) -> pd.DataFrame:
+    """Join weekly lag features onto each (series, origin) row, keyed one week ahead.
+
+    The join key has a nuance. forecast_origin_date = W is the last week
+    actually observed, so an origin's features must reflect "observed through W" —
+    but MLForecast emits lag1 at ds as y[ds - 1 week], so the row where
+    lag1 == y[W] is the row at ds = W + 1 week. Hence feature_row_ds = W + 1.
+
+    Returns the full joined superset and selects nothing; bounding the model
+    matrix is ModelingTableSchema's job.
+
+    y is required so the drop below is reachable rather than a silent no-op: the
+    fetched row's y is y[W + 1], a week that has not happened at the origin, so it
+    is never a legitimate feature.
+
+    The one-to-one validation encodes a precondition: each origin targets exactly
+    one month. True for both current-month framings, false for a multi-horizon
+    one — two target rows would share a feature row, and the merge would need
+    many_to_one instead.
+
+    Args:
+        origin_target_table: One row per (series, origin); requires (unique_id,
+            forecast_origin_date). Not modified.
+        weekly_features: Output of build_weekly_features; requires (unique_id,
+            feature_row_ds, y).
+
+    Returns:
+        origin_target_table's columns plus feature_row_ds and every emitted feature
+        name, in origin_target_table's row order.
+
+    Raises:
+        ValueError: If either frame lacks a required column.
+        MergeError: If either frame repeats an (unique_id, feature_row_ds) key.
+    """
+    _require_columns(
+        df=origin_target_table,
+        required=["unique_id", "forecast_origin_date"],
+        frame_name="origin_target_table",
+    )
+    _require_columns(
+        df=weekly_features,
+        required=["unique_id", "feature_row_ds", "y"],
+        frame_name="weekly_features",
+    )
+    keyed_origins = origin_target_table.copy()
+    keyed_origins["feature_row_ds"] = keyed_origins[
+        "forecast_origin_date"
+    ] + pd.Timedelta(weeks=1)
+    modeling = keyed_origins.merge(
+        weekly_features,
+        on=["unique_id", "feature_row_ds"],
+        how="left",
+        validate="one_to_one",
+    )
+    modeling = modeling.drop(columns="y")
+    return modeling
