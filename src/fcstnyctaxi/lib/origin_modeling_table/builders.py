@@ -4,11 +4,7 @@ import numpy as np
 import pandas as pd
 from mlforecast import MLForecast
 
-
-def _require_columns(df: pd.DataFrame, required: list[str], frame_name: str) -> None:
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise ValueError(f"{frame_name} is missing required columns: {missing}")
+from fcstnyctaxi.lib.origin_modeling_table._checks import require_columns
 
 
 def trim_incomplete_series_months(
@@ -37,10 +33,10 @@ def trim_incomplete_series_months(
             be dropped silently and never appear in dropped_pairs; or if a
             partial pair survives the trim.
     """
-    _require_columns(
+    require_columns(
         df=panel_df, required=["unique_id", "ds", "y"], frame_name="panel_df"
     )
-    _require_columns(
+    require_columns(
         df=calendar_df,
         required=["ds", "fiscal_year_month", "fiscal_week_of_month", "weeks_in_month"],
         frame_name="calendar_df",
@@ -54,12 +50,20 @@ def trim_incomplete_series_months(
             f"first few: {sorted(uncovered)[:5]}"
         )
 
+    # validate="many_to_one" guards a fan-out, and only that. A repeated calendar ds
+    # would duplicate panel rows, and the completeness check below could not see it:
+    # transform("nunique") is blind to repeats, so weeks_present would still equal
+    # weeks_in_month and the duplicates would survive the trim. They then reach
+    # build_weekly_features, where MLForecast rejects duplicate timestamps — loud,
+    # but pointing at the panel rather than the calendar that caused it.
+    # It does NOT check that keys match; the coverage assert above does that.
     labeled = panel_df.merge(
         calendar_df[
             ["ds", "fiscal_year_month", "fiscal_week_of_month", "weeks_in_month"]
         ],
         on="ds",
         how="left",
+        validate="many_to_one",
     )
     weeks_present = labeled.groupby(["unique_id", "fiscal_year_month"])[
         "fiscal_week_of_month"
@@ -76,12 +80,15 @@ def trim_incomplete_series_months(
     )
 
     # check that we have correctly trimmed months that were incomplete
+    # Same guard as above, and it matters more here: a fan-out in the frame that
+    # verifies the trim would corrupt the verification itself.
     check = trimmed_panel_df.merge(
         calendar_df[
             ["ds", "fiscal_year_month", "fiscal_week_of_month", "weeks_in_month"]
         ],
         on="ds",
         how="left",
+        validate="many_to_one",
     )
     weeks_present = check.groupby(["unique_id", "fiscal_year_month"])[
         "fiscal_week_of_month"
@@ -150,7 +157,7 @@ def enumerate_origins(calendar_df: pd.DataFrame) -> pd.DataFrame:
         weeks_in_month), one row per origin, unique on
         (target_month, weeks_actualized).
     """
-    _require_columns(
+    require_columns(
         df=calendar_df,
         required=[
             "ds",
@@ -216,12 +223,12 @@ def attach_workday_progress(
         ValueError: If either frame lacks a required column, or if any origin has
             no workday match.
     """
-    _require_columns(
+    require_columns(
         df=calendar_df,
         required=["fiscal_year_month", "count_workdays", "fiscal_week_of_month"],
         frame_name="calendar_df",
     )
-    _require_columns(
+    require_columns(
         df=origin_spine,
         required=["target_month", "weeks_actualized"],
         frame_name="origin_spine",
@@ -302,12 +309,12 @@ def build_origin_series_grid(
         ValueError: If either frame lacks a required column, or if the grid is not
             unique on (unique_id, forecast_origin_date, target_month).
     """
-    _require_columns(
+    require_columns(
         df=origin_spine,
         required=["target_month", "forecast_origin_date"],
         frame_name="origin_spine",
     )
-    _require_columns(
+    require_columns(
         df=actual_monthly_df,
         required=["unique_id", "fiscal_year_month", "actual_monthly_total"],
         frame_name="actual_monthly_df",
@@ -359,24 +366,28 @@ def attach_mtd_revenue(
         ValueError: If any frame lacks a required column, or if a grid row has no
             MTD match.
     """
-    _require_columns(
+    require_columns(
         df=grid_df,
         required=["unique_id", "target_month", "weeks_actualized"],
         frame_name="grid_df",
     )
-    _require_columns(
+    require_columns(
         df=panel_df, required=["unique_id", "ds", "y"], frame_name="panel_df"
     )
-    _require_columns(
+    require_columns(
         df=calendar_df,
         required=["ds", "fiscal_year_month", "fiscal_week_of_month"],
         frame_name="calendar_df",
     )
 
+    # A fan-out here would double-count a week in the cumsum below. The mtd_lookup
+    # merge already raises on it, so this buys the message rather than the coverage:
+    # it names the calendar join instead of failing two steps later.
     panel_cal = panel_df.merge(
         calendar_df[["ds", "fiscal_year_month", "fiscal_week_of_month"]],
         on="ds",
         how="left",
+        validate="many_to_one",
     ).sort_values(["unique_id", "fiscal_year_month", "fiscal_week_of_month"])
 
     panel_cal["mtd_revenue"] = panel_cal.groupby(["unique_id", "fiscal_year_month"])[
@@ -447,12 +458,12 @@ def attach_weekly_features(
         ValueError: If either frame lacks a required column.
         MergeError: If either frame repeats an (unique_id, feature_row_ds) key.
     """
-    _require_columns(
+    require_columns(
         df=origin_target_table,
         required=["unique_id", "forecast_origin_date"],
         frame_name="origin_target_table",
     )
-    _require_columns(
+    require_columns(
         df=weekly_features,
         required=["unique_id", "feature_row_ds", "y"],
         frame_name="weekly_features",

@@ -12,6 +12,7 @@ from fcstnyctaxi.lib.period_utils import (
     compute_series_weights,
     derive_horizon_label,
     generate_origins_for_periods,
+    label_horizon,
 )
 
 # ================================================
@@ -439,3 +440,163 @@ def test_derive_horizon_label_series_inputs_multiple_origins() -> None:
         origin_month_fraction_elapsed=origin_month_fraction_elapsed,
     )
     assert result.tolist() == ["horizon_1", "horizon_1", "horizon_2"]
+
+
+# ================================================
+# label_horizon
+#
+# calendar_df runs 2025-01-05 + 16 W-SUN weeks, four per fiscal month:
+# 202501 ends 01-26, 202502 ends 02-23, 202503 ends 03-23, 202504 starts 03-30.
+# ================================================
+
+
+@pytest.fixture
+def monthly_series() -> pd.DataFrame:
+    """Three rows spanning both horizons and both month-end branches."""
+    return pd.DataFrame(
+        {
+            "forecast_origin_date": pd.to_datetime(
+                ["2025-01-26", "2025-01-26", "2025-02-23"]
+            ),
+            "predicted_fiscal_year_month": [202501, 202502, 202503],
+            "origin_month_fraction_elapsed": [0.75, 0.75, 1.0],
+        }
+    )
+
+
+def test_label_horizon_matches_the_inline_map_then_delegate_pattern(
+    monthly_series: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """Reproduces the two call sites it replaces, value for value."""
+    inline = derive_horizon_label(
+        predicted_fiscal_year_month=monthly_series["predicted_fiscal_year_month"],
+        origin_fiscal_year_month=monthly_series["forecast_origin_date"].map(
+            calendar_df.set_index("ds")["fiscal_year_month"]
+        ),
+        origin_month_fraction_elapsed=monthly_series["origin_month_fraction_elapsed"],
+    )
+    assert label_horizon(monthly_series, calendar_df).equals(inline)
+
+
+def test_label_horizon_labels_both_horizons(
+    monthly_series: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """A horizon_2 row is labeled as such rather than collapsing to horizon_1."""
+    result = label_horizon(monthly_series, calendar_df)
+    assert result.tolist() == ["horizon_1", "horizon_2", "horizon_1"]
+
+
+def test_label_horizon_returns_a_series_aligned_to_the_input_index(
+    monthly_series: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """Callers assign the result back onto a frame, so a reset index would misalign."""
+    reindexed = monthly_series.set_index(pd.Index([10, 20, 30], name="row"))
+    assert label_horizon(reindexed, calendar_df).index.equals(reindexed.index)
+
+
+def test_label_horizon_matches_an_origin_whose_unit_differs_from_the_calendar(
+    monthly_series: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """Registered sidecars carry ms origins against an ns calendar; both must label."""
+    ms_origins = monthly_series.assign(
+        forecast_origin_date=monthly_series["forecast_origin_date"].astype(
+            "datetime64[ms]"
+        )
+    )
+    assert calendar_df["ds"].dt.unit == "ns"
+    assert ms_origins["forecast_origin_date"].dt.unit == "ms"
+    assert (
+        label_horizon(ms_origins, calendar_df).tolist()
+        == label_horizon(monthly_series, calendar_df).tolist()
+    )
+
+
+def test_label_horizon_ignores_calendar_columns_it_does_not_need(
+    monthly_series: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """A full fiscal calendar carries many columns; only two are required."""
+    wide = calendar_df.assign(weeks_in_month=4, count_workdays=5)
+    assert (
+        label_horizon(monthly_series, wide).tolist()
+        == label_horizon(monthly_series, calendar_df).tolist()
+    )
+
+
+def test_label_horizon_collapses_repeated_identical_calendar_rows(
+    monthly_series: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """A ds repeated with the same fiscal month is benign, not a mapping conflict."""
+    doubled = pd.concat([calendar_df, calendar_df], ignore_index=True)
+    assert (
+        label_horizon(monthly_series, doubled).tolist()
+        == label_horizon(monthly_series, calendar_df).tolist()
+    )
+
+
+def test_label_horizon_raises_when_one_ds_carries_two_fiscal_months(
+    monthly_series: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """Conflicting labels are a real defect; Series.map would raise obscurely."""
+    conflicting = pd.concat(
+        [calendar_df, calendar_df.head(1).assign(fiscal_year_month=209912)],
+        ignore_index=True,
+    )
+    with pytest.raises(ValueError, match=r"more than one fiscal_year_month"):
+        label_horizon(monthly_series, conflicting)
+
+
+def test_label_horizon_raises_when_an_origin_is_absent_from_the_calendar(
+    monthly_series: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """The load-bearing check: a truncated calendar is what corrupts a label."""
+    orphaned = monthly_series.assign(
+        forecast_origin_date=pd.to_datetime(["2025-01-26", "2025-01-26", "2099-12-27"])
+    )
+    with pytest.raises(ValueError, match=r"absent from calendar_df"):
+        label_horizon(orphaned, calendar_df)
+
+
+def test_label_horizon_raises_on_a_non_datetime_origin_column(
+    monthly_series: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """Names the dtype rather than reporting an unexplained wall of nulls."""
+    as_strings = monthly_series.assign(
+        forecast_origin_date=monthly_series["forecast_origin_date"].astype(str)
+    )
+    with pytest.raises(ValueError, match=r"must be a datetime dtype"):
+        label_horizon(as_strings, calendar_df)
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "forecast_origin_date",
+        "predicted_fiscal_year_month",
+        "origin_month_fraction_elapsed",
+    ],
+)
+def test_label_horizon_raises_when_monthly_series_lacks_a_column(
+    monthly_series: pd.DataFrame, calendar_df: pd.DataFrame, missing: str
+) -> None:
+    """Each of the three is required; the message names the frame at fault."""
+    with pytest.raises(ValueError, match=r"monthly_series is missing required"):
+        label_horizon(monthly_series.drop(columns=[missing]), calendar_df)
+
+
+@pytest.mark.parametrize("missing", ["ds", "fiscal_year_month"])
+def test_label_horizon_raises_when_the_calendar_lacks_a_column(
+    monthly_series: pd.DataFrame, calendar_df: pd.DataFrame, missing: str
+) -> None:
+    """Distinguishes a bad calendar from a bad monthly_series in the message."""
+    with pytest.raises(ValueError, match=r"calendar_df is missing required"):
+        label_horizon(monthly_series, calendar_df.drop(columns=[missing]))
+
+
+def test_label_horizon_does_not_mutate_its_inputs(
+    monthly_series: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """Neither frame gains an origin-fiscal-month column as a side effect."""
+    before_series, before_calendar = monthly_series.copy(), calendar_df.copy()
+    label_horizon(monthly_series, calendar_df)
+    pd.testing.assert_frame_equal(monthly_series, before_series)
+    pd.testing.assert_frame_equal(calendar_df, before_calendar)

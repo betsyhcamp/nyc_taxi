@@ -4,8 +4,8 @@ import pandas as pd
 import pytest
 from mlforecast.lag_transforms import RollingMean
 
+from fcstnyctaxi.lib.origin_modeling_table._checks import require_columns
 from fcstnyctaxi.lib.origin_modeling_table.builders import (
-    _require_columns,
     attach_mtd_revenue,
     attach_weekly_features,
     attach_workday_progress,
@@ -98,34 +98,34 @@ def complete_panel_df() -> pd.DataFrame:
 
 
 # ================================================
-# _require_columns
+# require_columns
 # ================================================
 
 
-def test_require_columns_passes_when_all_present() -> None:
+def testrequire_columns_passes_when_all_present() -> None:
     """Returns None rather than raising when every required column is there."""
     df = pd.DataFrame({"a": [1], "b": [2]})
-    assert _require_columns(df, ["a", "b"], "df") is None
+    assert require_columns(df, ["a", "b"], "df") is None
 
 
-def test_require_columns_ignores_extra_columns() -> None:
+def testrequire_columns_ignores_extra_columns() -> None:
     """Requires a subset, not an exact column set, so extras pass."""
     df = pd.DataFrame({"a": [1], "b": [2], "extra": [3]})
-    assert _require_columns(df, ["a"], "df") is None
+    assert require_columns(df, ["a"], "df") is None
 
 
-def test_require_columns_raises_naming_frame_and_missing_columns() -> None:
+def testrequire_columns_raises_naming_frame_and_missing_columns() -> None:
     """The message names which frame is at fault, which a bare KeyError cannot."""
     df = pd.DataFrame({"a": [1]})
     with pytest.raises(ValueError, match=r"panel_df is missing required columns"):
-        _require_columns(df, ["a", "b"], "panel_df")
+        require_columns(df, ["a", "b"], "panel_df")
 
 
-def test_require_columns_reports_every_missing_column_not_just_the_first() -> None:
+def testrequire_columns_reports_every_missing_column_not_just_the_first() -> None:
     """One call surfaces all missing columns instead of one fix-and-retry each."""
     df = pd.DataFrame({"a": [1]})
     with pytest.raises(ValueError) as excinfo:
-        _require_columns(df, ["a", "b", "c"], "df")
+        require_columns(df, ["a", "b", "c"], "df")
     assert "'b'" in str(excinfo.value)
     assert "'c'" in str(excinfo.value)
 

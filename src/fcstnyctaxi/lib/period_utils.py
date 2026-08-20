@@ -5,6 +5,7 @@ from datetime import date
 
 import numpy as np
 import pandas as pd
+from pandas.api.types import is_datetime64_any_dtype
 
 
 def _get_trailing_dates(
@@ -70,6 +71,81 @@ def derive_horizon_label(
         target % 100 - last_completed % 100
     )
     return "horizon_" + pd.Series(month_difference, index=target.index).astype(str)
+
+
+def label_horizon(monthly_series: pd.DataFrame, calendar_df: pd.DataFrame) -> pd.Series:
+    """Label each row of a monthly_series frame with its horizon.
+
+    Maps each origin date to its own fiscal month via the calendar, then delegates
+    to derive_horizon_label. Requires only columns attach_tier_and_weight already
+    produces.
+
+    The origin unit is deliberately unconstrained. Registered sidecars carry mixed
+    units and stay mixed, and pandas matches datetime keys across s/ms/ns. What does
+    corrupt a label is an origin absent from the calendar, which the null check below
+    catches.
+
+    Args:
+        monthly_series: Requires (forecast_origin_date, predicted_fiscal_year_month,
+            origin_month_fraction_elapsed).
+        calendar_df: Fiscal calendar; requires (ds, fiscal_year_month). Rows that
+            repeat a ds with the same fiscal month are collapsed; a ds carrying two
+            different fiscal months is an error.
+
+    Returns:
+        Series of "horizon_N" labels, indexed like monthly_series.
+
+    Raises:
+        ValueError: If either frame lacks a required column, if forecast_origin_date
+            is not a datetime dtype, if calendar_df maps one ds to two fiscal months,
+            or if any origin is absent from the calendar.
+    """
+    for frame, name, required in (
+        (
+            monthly_series,
+            "monthly_series",
+            [
+                "forecast_origin_date",
+                "predicted_fiscal_year_month",
+                "origin_month_fraction_elapsed",
+            ],
+        ),
+        (calendar_df, "calendar_df", ["ds", "fiscal_year_month"]),
+    ):
+        missing = [c for c in required if c not in frame.columns]
+        if missing:
+            raise ValueError(f"{name} is missing required columns: {missing}")
+
+    if not is_datetime64_any_dtype(monthly_series["forecast_origin_date"]):
+        raise ValueError(
+            "monthly_series['forecast_origin_date'] must be a datetime dtype, got "
+            f"{monthly_series['forecast_origin_date'].dtype}"
+        )
+
+    lookup_df = calendar_df[["ds", "fiscal_year_month"]].drop_duplicates()
+    if not lookup_df["ds"].is_unique:
+        conflicting = lookup_df.loc[lookup_df["ds"].duplicated(), "ds"].unique()
+        raise ValueError(
+            f"calendar_df maps {len(conflicting)} ds value(s) to more than one "
+            f"fiscal_year_month; first few: {sorted(conflicting)[:5]}"
+        )
+
+    origin_fiscal_month = monthly_series["forecast_origin_date"].map(
+        lookup_df.set_index("ds")["fiscal_year_month"]
+    )
+    unmapped = origin_fiscal_month.isna()
+    if unmapped.any():
+        missing_origins = monthly_series.loc[unmapped, "forecast_origin_date"].unique()
+        raise ValueError(
+            f"{len(missing_origins)} forecast origin(s) absent from calendar_df; "
+            f"first few: {sorted(missing_origins)[:5]}"
+        )
+
+    return derive_horizon_label(
+        predicted_fiscal_year_month=monthly_series["predicted_fiscal_year_month"],
+        origin_fiscal_year_month=origin_fiscal_month,
+        origin_month_fraction_elapsed=monthly_series["origin_month_fraction_elapsed"],
+    )
 
 
 def generate_origins_for_periods(
