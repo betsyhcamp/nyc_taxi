@@ -997,3 +997,47 @@ def test_attach_weekly_features_raises_when_the_features_lack_a_column(
         attach_weekly_features(
             origin_target_table, weekly_features_frame.drop(columns=[missing])
         )
+
+
+# ================================================
+# Calendar-join fan-out guards
+#
+# Three merges join a frame to calendar_df on ds. A repeated calendar ds fans the
+# left side out, and the extra rows are manufactured HERE rather than arriving in
+# the input — which is the line these guards draw. A duplicated PANEL row is the
+# other side of that line: it arrives duplicated, is passed through, and is
+# data-prep's business, not this module's.
+# ================================================
+
+
+def test_trim_raises_on_a_duplicated_calendar_ds(
+    complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """The fan-out the completeness check cannot see: nunique is blind to repeats."""
+    duplicated = pd.concat([calendar_df, calendar_df.iloc[[0]]], ignore_index=True)
+    with pytest.raises(pd.errors.MergeError):
+        trim_incomplete_series_months(complete_panel_df, duplicated)
+
+
+def test_trim_passes_a_duplicated_panel_row_through_untouched(
+    complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """Panel duplicates arrive that way and are not this module's to reject."""
+    doubled = pd.concat(
+        [complete_panel_df, complete_panel_df.iloc[[0]]], ignore_index=True
+    )
+    trimmed, _ = trim_incomplete_series_months(doubled, calendar_df)
+    assert len(trimmed) == len(doubled)
+
+
+def test_attach_mtd_raises_on_a_duplicated_calendar_ds(
+    origin_spine: pd.DataFrame,
+    actual_monthly_df: pd.DataFrame,
+    complete_panel_df: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+) -> None:
+    """Names the calendar join rather than failing two steps later at mtd_lookup."""
+    grid = build_origin_series_grid(origin_spine, actual_monthly_df)
+    duplicated = pd.concat([calendar_df, calendar_df.iloc[[0]]], ignore_index=True)
+    with pytest.raises(pd.errors.MergeError):
+        attach_mtd_revenue(grid, complete_panel_df, duplicated)
