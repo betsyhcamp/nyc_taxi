@@ -7,6 +7,13 @@ import numpy as np
 import pandas as pd
 from pandas.api.types import is_datetime64_any_dtype
 
+from fcstnyctaxi.lib.cross_validation_utils import sorted_origin_horizon_pairs
+
+# Canonical datetime unit for forecast origins in every artifact this project writes.
+# "ns" for conformity, not principle: a sidecar's other datetime columns are already
+# ns via pd.to_datetime, and for a join key agreement beats precision honesty.
+ORIGIN_TIME_UNIT = "ns"
+
 
 def _get_trailing_dates(
     calendar_df: pd.DataFrame,
@@ -146,6 +153,32 @@ def label_horizon(monthly_series: pd.DataFrame, calendar_df: pd.DataFrame) -> pd
         origin_fiscal_year_month=origin_fiscal_month,
         origin_month_fraction_elapsed=monthly_series["origin_month_fraction_elapsed"],
     )
+
+
+def normalized_origin_horizon_pairs(
+    origin_horizon_pairs: list[tuple], freq: int | str
+) -> list[tuple]:
+    """Sort origin/horizon pairs and normalize the origins to ORIGIN_TIME_UNIT.
+
+    A project-owned policy wrapper rather than an edit to sorted_origin_horizon_pairs,
+    which is a mirror of tsbricks and must stay aligned. The unit rides a scalar origin
+    into a column via .assign(), and parquet writes "s" as "ms", so normalizing
+    here is what makes the persisted artifact agree with the frame that produced it.
+
+    Args:
+        origin_horizon_pairs: Raw (origin, horizon) pairs from
+            cfg.cross_validation.origin_horizon_pairs().
+        freq: Forecast frequency. freq == 1 means integer origins, which have no
+            unit and pass through untouched.
+
+    Returns:
+        The pairs sorted ascending by origin, with datetime origins at
+        ORIGIN_TIME_UNIT.
+    """
+    pairs = sorted_origin_horizon_pairs(origin_horizon_pairs, freq)
+    if freq == 1:
+        return pairs
+    return [(origin.as_unit(ORIGIN_TIME_UNIT), horizon) for origin, horizon in pairs]
 
 
 def generate_origins_for_periods(

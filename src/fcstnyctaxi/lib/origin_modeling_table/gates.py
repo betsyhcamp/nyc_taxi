@@ -912,27 +912,44 @@ def assert_all_horizon_1(
     )
 
 
-def assert_tier_categorical(
-    monthly_series: pd.DataFrame, expected_categories: Sequence[str]
-) -> None:
-    """Assert tier is categorical carrying the full ordered category list.
+def assert_tier_categorical(monthly_series: pd.DataFrame, num_tiers: int = 5) -> None:
+    """Assert tier is categorical and carries the full set of tiers, not a subset.
 
-    Checking only the dtype passes on a categorical carrying three observed
-    categories, which the leaderboard would then read as the complete tier set.
+    Label-agnostic on purpose: nothing downstream requires particular tier names.
+    leaderboard.py reads tier.cat.categories as the tier universe and iterates it, so
+    what matters is that the set is complete, not what it is called. Only the count
+    is declared, so renaming a tier needs no change here.
+
+    Two assertions, and the dtype one is a precondition rather than a peer.
+    .cat.categories exists only on a categorical, so checking the count alone would
+    surface a non-categorical as "Can only use .cat accessor with a 'category'
+    dtype" — an AttributeError naming pandas rather than the defect, and the wrong
+    exception type for a suite that expects AssertionError.
+
+    They also catch different failures. assign_tiers computes
+    effective_tiers = min(num_tiers, mean_pos.nunique()) and slices the labels, so a
+    fold with too few distinct means truncates. Folds whose ladders disagree concat
+    to object dtype — the first assertion. Every fold truncating identically stays
+    categorical and short — the second.
 
     Args:
         monthly_series: Requires a tier column.
-        expected_categories: The full tier list, ordered lowest to highest.
+        num_tiers: How many tiers assign_tiers was asked for. Defaults to its own
+            default, so a framing using standard tiering states nothing.
     """
     require_columns(monthly_series, ["tier"], "monthly_series")
 
     dtype = monthly_series["tier"].dtype
     assert isinstance(dtype, pd.CategoricalDtype), (
-        f"tier must be a categorical dtype, got {dtype}"
+        f"tier must be a categorical dtype, got {dtype}; folds whose tier ladders "
+        "disagree concat to object, which is what a partially-truncated run looks like"
     )
-    actual = list(dtype.categories)
-    assert actual == list(expected_categories), (
-        f"tier categories are {actual}, expected {list(expected_categories)}"
+
+    categories = list(dtype.categories)
+    assert len(categories) == num_tiers, (
+        f"tier carries {len(categories)} categories, expected {num_tiers}: "
+        f"{categories}. Every fold truncated to the same short ladder, which the "
+        "dtype check cannot see and the leaderboard would read as the complete set"
     )
 
 

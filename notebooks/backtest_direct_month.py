@@ -16,7 +16,6 @@
 import json
 import sys
 
-import numpy as np
 import pandas as pd
 import yaml
 from lightgbm import LGBMRegressor
@@ -40,10 +39,25 @@ from fcstnyctaxi.lib.origin_modeling_table.builders import (
     trim_incomplete_series_months,
 )
 from fcstnyctaxi.lib.origin_modeling_table.column_roles import ModelingTableSchema
+from fcstnyctaxi.lib.origin_modeling_table.gates import (
+    assert_all_horizon_1,
+    assert_benchmark_key_parity,
+    assert_fold_is_populated,
+    assert_join_integrity,
+    assert_lag_alignment,
+    assert_month_total_reconciliation,
+    assert_mtd_construction,
+    assert_no_future_leakage,
+    assert_preprocess_feature_drift,
+    assert_shared_cutoff,
+    assert_tier_categorical,
+    expected_sidecar_counts,
+    weekly_actuals_by_fiscal_week,
+)
 from fcstnyctaxi.lib.period_utils import (
     assign_tiers,
     compute_series_weights,
-    derive_horizon_label,
+    label_horizon,
 )
 from fcstnyctaxi.lib.utils import generate_run_id, get_project_root_dir
 
@@ -62,8 +76,6 @@ ts_df = pd.read_parquet(timeseries_uri)
 calendar_df = pd.read_parquet(calendar_uri)
 
 # %%
-TARGET_MONTHS = [202504, 202505, 202506, 202507, 202508, 202509]
-
 # TODO: refactor to remove hardcoding &, instead, use parameter file for these items
 # Hardcoded for now; registry lookup (resolve_sidecar_uri) is deferred
 BENCHMARK_SIDECAR_URI = (
@@ -86,6 +98,21 @@ G1_FEATURES = [
 MLF_FEATURES = ["lag1", "rolling_mean_lag1_window_size4"]
 G3_FEATURES = ["last_completed_month_revenue"]
 FEATURE_COLUMNS = G1_FEATURES + MLF_FEATURES + G3_FEATURES
+
+TARGET_MONTHS = [202504, 202505, 202506, 202507, 202508, 202509]
+# Inputs to the future-scramble leakage gate. cutoff_W must be an origin with
+# weeks_actualized == 1 in a 5-week month, so the scrambled region sits inside the
+# target month and MTD is exercised; it stays hardcoded because it is an operator's
+# choice of scenario rather than a fact about the data (spec §12). The partition must
+# cover FEATURE_COLUMNS exactly — adding a feature without classifying it fails the gate.
+cutoff_W = pd.Timestamp("2025-05-25")
+Y_DERIVED_FEATURE_COLS = ["mtd_revenue", *MLF_FEATURES, *G3_FEATURES]
+CALENDAR_DERIVED_FEATURE_COLS = [
+    "workdays_elapsed",
+    "workdays_remaining",
+    "number_workdays",
+]
+
 
 # Column roles for the modeling table. Declared here because which columns are
 # features is this framing's decision; the library only applies the declaration.
@@ -141,22 +168,15 @@ weekly_features = build_weekly_features(
     ts_df, FREQ, lags=MLF_LAGS, lag_transforms=MLF_LAG_TRANSFORMS
 )
 
-# drift-guard gate: preprocess must emit exactly the native names MLF_FEATURES declares
-emitted = [
-    c for c in weekly_features.columns if c not in {"unique_id", "feature_row_ds", "y"}
-]
-assert set(emitted) == set(MLF_FEATURES), (
-    f"drift: preprocess emitted {sorted(emitted)}, MLF_FEATURES declares {sorted(MLF_FEATURES)}"
+assert_preprocess_feature_drift(
+    weekly_features, MLF_FEATURES, lags=MLF_LAGS, lag_transforms=MLF_LAG_TRANSFORMS
 )
 
 # %%
-# alignment sanity check, then display `weekly_features`
 weekly_features = weekly_features.sort_values(
     by=["unique_id", "feature_row_ds"]
 ).reset_index(drop=True)
-prior_week_y = weekly_features.groupby("unique_id")["y"].shift(1)
-check_rows = ~weekly_features["lag1"].isna()
-assert (weekly_features["lag1"] == prior_week_y).loc[check_rows].all()
+assert_lag_alignment(weekly_features, MLF_LAGS)
 
 # %%
 weekly_features
@@ -217,61 +237,11 @@ origin_target_table = build_origin_target_table(
 )
 
 # %%
-# ============ MTD-identity gate (vectorized, over ALL (unique_id, target_month)) ============
-# Ground truth: raw weekly y per (series, month, week-of-month), from panel
-weekly_y = ts_df.merge(
-    calendar_df[["ds", "fiscal_year_month", "fiscal_week_of_month"]],
-    on="ds",
-    how="left",
-).rename(
-    columns={
-        "fiscal_year_month": "target_month",
-        "fiscal_week_of_month": "week_of_month",
-        "y": "week_y",
-    }
-)[["unique_id", "target_month", "week_of_month", "week_y"]]
+# raw per-week actuals, the independent source both MTD-identity gates compare against
+weekly_actuals = weekly_actuals_by_fiscal_week(ts_df, calendar_df)
 
-# ---- Gate 2: sign-safe MTD construction ----
-# mtd increments within each (series, month); sort first — diff() is order-dependent.
-ott = origin_target_table.sort_values(["unique_id", "target_month", "weeks_actualized"])
-ott = ott.assign(
-    mtd_increment=ott.groupby(["unique_id", "target_month"])["mtd_revenue"].diff()
-)
-# check: MTD=0 origin has zero month-to-date
-bad_mtd0 = ott[(ott["weeks_actualized"] == 0) & (ott["mtd_revenue"] != 0)]
-assert bad_mtd0.empty, f"MTD=0 origins with nonzero mtd:\n{bad_mtd0.head()}"
-
-# check: each increment equals that week's raw y (weeks_actualized >= 1; may be negative)
-increments = ott[ott["weeks_actualized"] >= 1].merge(
-    weekly_y,
-    left_on=["unique_id", "target_month", "weeks_actualized"],
-    right_on=["unique_id", "target_month", "week_of_month"],
-    how="left",
-)
-gate2_fail = increments[increments["mtd_increment"] != increments["week_y"]]
-assert gate2_fail.empty, (
-    f"Gate 2 (increment != weekly y) failed for {len(gate2_fail)} rows:\n"
-    f"{gate2_fail[['unique_id', 'target_month', 'weeks_actualized', 'mtd_increment', 'week_y']].head()}"
-)
-
-# ---- Gate 1: reconciliation (target == mtd at last origin + final week's y) ----
-last_origin = origin_target_table[
-    origin_target_table["weeks_actualized"] == origin_target_table["weeks_in_month"] - 1
-]
-reconciliation = last_origin.merge(
-    weekly_y,
-    left_on=["unique_id", "target_month", "weeks_in_month"],
-    right_on=["unique_id", "target_month", "week_of_month"],
-    how="left",
-)
-reconstructed = reconciliation["mtd_revenue"] + reconciliation["week_y"]
-gate1_fail = reconciliation[
-    reconstructed != reconciliation["target_month_total_revenue"]
-]
-assert gate1_fail.empty, (
-    f"Gate 1 (reconciliation) failed for {len(gate1_fail)} rows:\n"
-    f"{gate1_fail[['unique_id', 'target_month', 'mtd_revenue', 'week_y', 'target_month_total_revenue']].head()}"
-)
+assert_mtd_construction(origin_target_table, weekly_actuals, actual_monthly_df)
+assert_month_total_reconciliation(origin_target_table, weekly_actuals, actual_monthly_df)
 
 
 # %%
@@ -284,60 +254,17 @@ modeling_table = MODELING_SCHEMA.select(modeling_table)
 MODELING_SCHEMA.validate(modeling_table)
 
 # %%
-# ====== Gate: join integrity ===========
-keyed_origins = origin_target_table.copy()
-
-keyed_origins["feature_row_ds"] = keyed_origins["forecast_origin_date"] + pd.Timedelta(
-    weeks=1
-)
-
-assert modeling_table["unique_id"].dtype == weekly_features["unique_id"].dtype
-assert modeling_table["feature_row_ds"].dtype == weekly_features["feature_row_ds"].dtype
-
-antijoin = keyed_origins.merge(
-    weekly_features[["unique_id", "feature_row_ds"]],
-    on=["unique_id", "feature_row_ds"],
-    how="left",
-    indicator=True,
-)
-assert (antijoin["_merge"] == "left_only").sum() == 0
-
-assert len(modeling_table) == len(origin_target_table)
+assert_join_integrity(modeling_table, origin_target_table, weekly_features)
 
 
 # %%
 modeling_table.head()
 
 # %%
-# ====== Gate: mtd identity checking lag ===========
-mt = modeling_table.sort_values(by=["unique_id", "target_month", "weeks_actualized"])
-mt = mt.assign(
-    mtd_increment=mt.groupby(["unique_id", "target_month"])["mtd_revenue"].diff()
-)
-interior = mt["weeks_actualized"] >= 1
-assert (mt.loc[interior, "mtd_increment"] == mt.loc[interior, "lag1"]).all()
-
-panel_at_W = ts_df.rename(columns={"ds": "forecast_origin_date", "y": "y_at_W"})
-
-check = modeling_table.merge(
-    panel_at_W[["unique_id", "forecast_origin_date", "y_at_W"]],
-    on=["unique_id", "forecast_origin_date"],
-    how="left",
-)
-observed = check["y_at_W"].notna()
-assert (check.loc[observed, "lag1"] == check.loc[observed, "y_at_W"]).all()
+assert_shared_cutoff(modeling_table, ts_df, MLF_LAGS)
 
 # %%
 # ====== Gate: general leakage smoke test (future-scramble) ===========
-# Leak-free == an origin's features are invariant to any change in weeks > W.
-# Scramble all y after a cutoff, rebuild every y-derived input, and assert every
-# origin at/before the cutoff has identical FEATURES. The target is excluded since it
-# legitimately includes future weeks. Vectorized over all unique_ids.
-
-# early-in-month (weeks_actualized=1) in a 5-week month leaves several same-month weeks
-# in the scrambled region; wa=1 (not 0) keeps W inside the target month so mtd is exercised
-cutoff_W = pd.Timestamp("2025-05-25")
-
 
 def rebuild_all(panel):
     actual_monthly = compute_actual_monthly_totals(
@@ -355,27 +282,13 @@ def rebuild_all(panel):
     return MODELING_SCHEMA.select(attach_weekly_features(ot, features))
 
 
-panel_scrambled = ts_df.copy()
-panel_scrambled["y"] = panel_scrambled["y"].astype(float)
-future = panel_scrambled["ds"] > cutoff_W
-panel_scrambled.loc[future, "y"] = (
-    np.random.default_rng(0).random(int(future.sum())) * 1e6
-)
-
-base = rebuild_all(ts_df)
-scrambled = rebuild_all(panel_scrambled)
-
-keys = ["unique_id", "forecast_origin_date"]
-past_base = MODELING_SCHEMA.select_features(
-    base[base["forecast_origin_date"] <= cutoff_W].sort_values(keys)
-).reset_index(drop=True)
-past_scr = MODELING_SCHEMA.select_features(
-    scrambled[scrambled["forecast_origin_date"] <= cutoff_W].sort_values(keys)
-).reset_index(drop=True)
-
-same = (past_base == past_scr) | (past_base.isna() & past_scr.isna())
-assert same.all().all(), (
-    "LEAK: future y changed features of an origin at/before the cutoff"
+assert_no_future_leakage(
+    ts_df,
+    rebuild_all,
+    MODELING_SCHEMA,
+    cutoff_W,
+    y_derived_features=Y_DERIVED_FEATURE_COLS,
+    calendar_derived_features=CALENDAR_DERIVED_FEATURE_COLS,
 )
 
 
@@ -383,9 +296,7 @@ assert same.all().all(), (
 def run_fold(modeling_table, val_month):
     is_train = modeling_table["target_month"] < val_month
     is_val = modeling_table["target_month"] == val_month
-    assert set(modeling_table.loc[is_train, "target_month"]).isdisjoint(
-        set(modeling_table.loc[is_val, "target_month"])
-    )
+    assert_fold_is_populated(modeling_table, val_month)
 
     X = MODELING_SCHEMA.select_features(modeling_table)
     y = modeling_table[MODELING_SCHEMA.target_col]
@@ -461,22 +372,8 @@ len(monthly_series)
 monthly_series.head()
 
 # %%
-# Setup for gate check: origin's fiscal month from base calendar dataframe
-origin_fiscal_month_by_ds = calendar_df.set_index("ds")["fiscal_year_month"]
-origin_fiscal_month = monthly_series["forecast_origin_date"].map(
-    origin_fiscal_month_by_ds
-)
-
-horizon = derive_horizon_label(
-    predicted_fiscal_year_month=monthly_series["predicted_fiscal_year_month"],
-    origin_fiscal_year_month=origin_fiscal_month,
-    origin_month_fraction_elapsed=monthly_series["origin_month_fraction_elapsed"],
-)
-
-# Gate: Since we are only predicting current month, all rows==horizon_1 label
-assert (horizon == "horizon_1").all(), (
-    f"non-horizon_1 rows: {int((horizon != 'horizon_1').sum())}"
-)
+# Gate: since we only predict the current month, every row must be horizon_1
+assert_all_horizon_1(monthly_series, calendar_df)
 
 # %%
 # prep sidecar: per_series_mtd file
@@ -574,23 +471,15 @@ composed_cfg = {
 # ===============================================
 
 # %%
-# Gate: Check `tier` is categorical datatype
-assert isinstance(monthly_series["tier"].dtype, pd.CategoricalDtype)
+# Gate: tier must be categorical AND carry the full ordered category list, since
+# leaderboard.py reads dtype.categories as the complete tier set
+assert_tier_categorical(monthly_series)
 
 # %%
 # Setup for gate: load the benchmark monthly_series, label horizon, keep horizon_1 in TARGET_MONTHS
 bench_monthly_series = pd.read_parquet(f"{BENCHMARK_SIDECAR_URI}monthly_series.parquet")
 
-origin_fiscal_month_by_ds = calendar_df.set_index("ds")["fiscal_year_month"]
-bench_origin_fiscal_month = bench_monthly_series["forecast_origin_date"].map(
-    origin_fiscal_month_by_ds
-)
-bench_horizon = derive_horizon_label(
-    predicted_fiscal_year_month=bench_monthly_series["predicted_fiscal_year_month"],
-    origin_fiscal_year_month=bench_origin_fiscal_month,
-    origin_month_fraction_elapsed=bench_monthly_series["origin_month_fraction_elapsed"],
-)
-bench_monthly_series["horizon"] = bench_horizon
+bench_monthly_series["horizon"] = label_horizon(bench_monthly_series, calendar_df)
 
 mask = (bench_monthly_series["horizon"] == "horizon_1") & (
     bench_monthly_series["predicted_fiscal_year_month"].isin(TARGET_MONTHS)
@@ -598,46 +487,23 @@ mask = (bench_monthly_series["horizon"] == "horizon_1") & (
 benchmark_h1 = bench_monthly_series[mask].reset_index(drop=True)
 
 # %%
-monthly_series_keys = set(
-    zip(
-        monthly_series["forecast_origin_date"],
-        monthly_series["predicted_fiscal_year_month"],
-        monthly_series["unique_id"], strict=False,
-    )
+# Gate: challenger and benchmark must cover identical keys and agree on the values
+# both derive from the same panel and calendar. The expected counts are derived from
+# the spine, panel and realized actuals — never from a sidecar — so they survive a
+# change to TARGET_MONTHS or the series count without an edit here.
+sidecar_counts = assert_benchmark_key_parity(
+    monthly_series,
+    benchmark_h1,
+    expected_counts=expected_sidecar_counts(
+        origin_spine, ts_df, actual_monthly_df, TARGET_MONTHS
+    ),
 )
-bench_keys = set(
-    zip(
-        benchmark_h1["forecast_origin_date"],
-        benchmark_h1["predicted_fiscal_year_month"],
-        benchmark_h1["unique_id"], strict=False,
-    )
-)
-assert monthly_series_keys == bench_keys, (
-    f"Keys not the same here {monthly_series_keys.symmetric_difference(bench_keys)}"
-)
-
 print(
-    f"target months:{monthly_series['predicted_fiscal_year_month'].nunique()} (expect 6)\n"
-    f"origins: {monthly_series['forecast_origin_date'].nunique()} (expect 26)\n"
-    f"series: {monthly_series['unique_id'].nunique()} (expect 68)\n"
-    f"horizon_1 events: {len(monthly_series)} (expect 1768)"
+    f"target months: {sidecar_counts['target_months']}\n"
+    f"origins: {sidecar_counts['origins']}\n"
+    f"series: {sidecar_counts['series']}\n"
+    f"horizon_1 events: {sidecar_counts['events']}"
 )
-
-# %%
-# Run gates to check benchmark:Current work parity
-rtol = 1e-9
-key_cols = ["forecast_origin_date", "predicted_fiscal_year_month", "unique_id"]
-
-parity = monthly_series.merge(benchmark_h1, on=key_cols, suffixes=("_c", "_bench"))
-assert np.allclose(
-    parity["actual_monthly_total_c"], parity["actual_monthly_total_bench"], rtol=rtol
-)
-assert np.allclose(parity["series_weight_c"], parity["series_weight_bench"], rtol=rtol)
-assert (parity["tier_c"] == parity["tier_bench"]).all()
-assert (
-    parity["origin_month_fraction_elapsed_c"]
-    == parity["origin_month_fraction_elapsed_bench"]
-).all()
 
 # %%
 # Write the sidecar (only reached if every gate above passed)

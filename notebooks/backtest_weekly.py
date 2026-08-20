@@ -21,7 +21,6 @@ import fsspec  # reads composed_config.yaml from GCS in compare_sidecars
 
 from fcstnyctaxi.lib.backtest_results import build_backtest_results, build_cv_results
 from fcstnyctaxi.lib.config_utils import merge_configs, save_config
-from fcstnyctaxi.lib.cross_validation_utils import sorted_origin_horizon_pairs
 from fcstnyctaxi.lib.io import write_text_to_gcs
 from fcstnyctaxi.lib.monthly_aggregation import (
     build_monthly_forecast_vs_actual,
@@ -29,9 +28,11 @@ from fcstnyctaxi.lib.monthly_aggregation import (
     compute_actual_monthly_totals,
 )
 from fcstnyctaxi.lib.period_utils import (
+    ORIGIN_TIME_UNIT,
     assign_tiers,
     compute_series_weights,
-    generate_origins_for_periods
+    generate_origins_for_periods,
+    normalized_origin_horizon_pairs,
 )
 from fcstnyctaxi.lib.utils import get_project_root_dir, generate_run_id
 
@@ -156,7 +157,7 @@ def evaluate_model(
     per_fold_metrics = []
     per_fold_forecasts: dict[str, pd.DataFrame] = {}
 
-    origin_horizon_pairs = sorted_origin_horizon_pairs(
+    origin_horizon_pairs = normalized_origin_horizon_pairs(
         cfg.cross_validation.origin_horizon_pairs(),
         cfg.data.freq
         )
@@ -279,7 +280,7 @@ cv_forecasts_df = pd.concat(
 cv_forecasts_df["forecast_origin_date"] = (
     cv_forecasts_df["fold_id"]
     .map(backtest_results.cv.fold_id_to_origin)
-    .astype("datetime64[s]")  # timestamp unit to match the other output files
+    .astype(f"datetime64[{ORIGIN_TIME_UNIT}]")  # one unit across every output file
 )
 
 cv_forecasts_df = cv_forecasts_df[
