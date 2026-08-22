@@ -678,7 +678,7 @@ def test_build_monthly_series_raises_when_the_panel_lacks_a_column(
     missing: str,
 ) -> None:
     """Without this, a missing y surfaces as KeyError('y') from inside period_utils."""
-    with pytest.raises(ValueError, match=r"panel is missing required"):
+    with pytest.raises(ValueError, match=r"panel_df is missing required"):
         build_monthly_series(
             bms_forecasts_df, bms_panel.drop(columns=[missing]), bms_calendar_df
         )

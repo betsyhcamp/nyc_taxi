@@ -1,10 +1,20 @@
+"""Frame builders for the origin-level modeling table.
+
+Package portability note: origin_modeling_table depends on pandas, numpy,
+MLForecast, and two narrow leaves from lib/ — period_utils, for label_horizon
+in gates, and column_checks, for require_columns. Neither drags a dependency
+graph behind it, which is what keeps this package liftable for the work-data
+port. A dependency on config.py or io.py, which reach out to a filesystem and a
+bucket, would not be.
+"""
+
 from typing import cast
 
 import numpy as np
 import pandas as pd
 from mlforecast import MLForecast
 
-from fcstnyctaxi.lib.origin_modeling_table._checks import require_columns
+from fcstnyctaxi.lib.column_checks import require_columns
 
 
 def trim_incomplete_series_months(
@@ -128,6 +138,7 @@ def build_weekly_features(
         MLForecast feature name), one row per panel row. ds is renamed
         feature_row_ds, as a join key for future use.
     """
+    require_columns(df=panel, required=["unique_id", "ds", "y"], frame_name="panel")
     mlf = MLForecast(models=[], freq=freq, lags=lags, lag_transforms=lag_transforms)
     feats = cast(
         pd.DataFrame, mlf.preprocess(panel, dropna=False)

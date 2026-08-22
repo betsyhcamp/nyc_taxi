@@ -4,7 +4,6 @@ import pandas as pd
 import pytest
 from mlforecast.lag_transforms import RollingMean
 
-from fcstnyctaxi.lib.origin_modeling_table._checks import require_columns
 from fcstnyctaxi.lib.origin_modeling_table.builders import (
     attach_mtd_revenue,
     attach_weekly_features,
@@ -95,39 +94,6 @@ def complete_panel_df() -> pd.DataFrame:
     id_10 = pd.DataFrame({"unique_id": 10, "ds": WEEKS, "y": range(10, 100, 10)})
     id_20 = pd.DataFrame({"unique_id": 20, "ds": WEEKS, "y": range(100, 1000, 100)})
     return pd.concat([id_10, id_20], ignore_index=True)
-
-
-# ================================================
-# require_columns
-# ================================================
-
-
-def testrequire_columns_passes_when_all_present() -> None:
-    """Returns None rather than raising when every required column is there."""
-    df = pd.DataFrame({"a": [1], "b": [2]})
-    assert require_columns(df, ["a", "b"], "df") is None
-
-
-def testrequire_columns_ignores_extra_columns() -> None:
-    """Requires a subset, not an exact column set, so extras pass."""
-    df = pd.DataFrame({"a": [1], "b": [2], "extra": [3]})
-    assert require_columns(df, ["a"], "df") is None
-
-
-def testrequire_columns_raises_naming_frame_and_missing_columns() -> None:
-    """The message names which frame is at fault, which a bare KeyError cannot."""
-    df = pd.DataFrame({"a": [1]})
-    with pytest.raises(ValueError, match=r"panel_df is missing required columns"):
-        require_columns(df, ["a", "b"], "panel_df")
-
-
-def testrequire_columns_reports_every_missing_column_not_just_the_first() -> None:
-    """One call surfaces all missing columns instead of one fix-and-retry each."""
-    df = pd.DataFrame({"a": [1]})
-    with pytest.raises(ValueError) as excinfo:
-        require_columns(df, ["a", "b", "c"], "df")
-    assert "'b'" in str(excinfo.value)
-    assert "'c'" in str(excinfo.value)
 
 
 # ================================================
@@ -349,6 +315,25 @@ def test_build_weekly_features_lag1_is_the_prior_week_within_each_series(
     observed = feats["lag1"].notna()
     assert (feats.loc[observed, "lag1"] == prior_y[observed]).all()
     assert feats.loc[~observed, "feature_row_ds"].tolist() == [WEEKS[0], WEEKS[0]]
+
+
+@pytest.mark.parametrize("missing", ["unique_id", "ds", "y"])
+def test_build_weekly_features_raises_when_the_panel_lacks_a_column(
+    complete_panel_df: pd.DataFrame, missing: str
+) -> None:
+    """Without this, two of the three surface as a bare KeyError from MLForecast.
+
+    Dropping unique_id or ds raises inside preprocess naming neither the frame
+    nor the caller, so the check exists to put the failure back on the argument
+    the caller passed.
+    """
+    with pytest.raises(ValueError, match=r"panel is missing required columns"):
+        build_weekly_features(
+            complete_panel_df.drop(columns=[missing]),
+            "W-SUN",
+            lags=[1],
+            lag_transforms={},
+        )
 
 
 # ================================================

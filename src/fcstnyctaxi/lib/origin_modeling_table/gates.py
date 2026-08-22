@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 import numpy as np
 import pandas as pd
 
-from fcstnyctaxi.lib.origin_modeling_table._checks import require_columns
+from fcstnyctaxi.lib.column_checks import require_columns
 from fcstnyctaxi.lib.origin_modeling_table.column_roles import ModelingTableSchema
 from fcstnyctaxi.lib.period_utils import label_horizon
 

@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from pandas.api.types import is_datetime64_any_dtype
 
+from fcstnyctaxi.lib.column_checks import require_columns
 from fcstnyctaxi.lib.cross_validation_utils import sorted_origin_horizon_pairs
 
 # Canonical datetime unit for forecast origins in every artifact this project writes.
@@ -107,21 +108,16 @@ def label_horizon(monthly_series: pd.DataFrame, calendar_df: pd.DataFrame) -> pd
             is not a datetime dtype, if calendar_df maps one ds to two fiscal months,
             or if any origin is absent from the calendar.
     """
-    for frame, name, required in (
-        (
-            monthly_series,
-            "monthly_series",
-            [
-                "forecast_origin_date",
-                "predicted_fiscal_year_month",
-                "origin_month_fraction_elapsed",
-            ],
-        ),
-        (calendar_df, "calendar_df", ["ds", "fiscal_year_month"]),
-    ):
-        missing = [c for c in required if c not in frame.columns]
-        if missing:
-            raise ValueError(f"{name} is missing required columns: {missing}")
+    require_columns(
+        monthly_series,
+        [
+            "forecast_origin_date",
+            "predicted_fiscal_year_month",
+            "origin_month_fraction_elapsed",
+        ],
+        "monthly_series",
+    )
+    require_columns(calendar_df, ["ds", "fiscal_year_month"], "calendar_df")
 
     if not is_datetime64_any_dtype(monthly_series["forecast_origin_date"]):
         raise ValueError(

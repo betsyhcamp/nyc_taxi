@@ -2,6 +2,7 @@ from typing import cast
 
 import pandas as pd
 
+from fcstnyctaxi.lib.column_checks import require_columns
 from fcstnyctaxi.lib.period_utils import assign_tiers, compute_series_weights
 
 
@@ -346,28 +347,19 @@ def build_monthly_series(
     Raises:
         ValueError: If either frame lacks a required column.
     """
-    required = [
-        "unique_id",
-        "forecast_origin_date",
-        "target_month",
-        "monthly_forecast",
-        "actual_monthly_total",
-    ]
-    missing = [c for c in required if c not in forecasts_df.columns]
-    if missing:
-        raise ValueError(f"forecasts_df is missing required columns: {missing}")
-
-    missing = [c for c in ("unique_id", "ds", "y") if c not in panel_df.columns]
-    if missing:
-        raise ValueError(f"panel is missing required columns: {missing}")
-
-    missing = [
-        c
-        for c in ("ds", "origin_month_fraction_elapsed")
-        if c not in calendar_df.columns
-    ]
-    if missing:
-        raise ValueError(f"calendar_df is missing required columns: {missing}")
+    require_columns(
+        forecasts_df,
+        [
+            "unique_id",
+            "forecast_origin_date",
+            "target_month",
+            "monthly_forecast",
+            "actual_monthly_total",
+        ],
+        "forecasts_df",
+    )
+    require_columns(panel_df, ["unique_id", "ds", "y"], "panel_df")
+    require_columns(calendar_df, ["ds", "origin_month_fraction_elapsed"], "calendar_df")
 
     # assemble forecasts w/ tier, weight; items needed later for scoring of backtests
     fraction_by_origin = calendar_df.set_index("ds")["origin_month_fraction_elapsed"]
