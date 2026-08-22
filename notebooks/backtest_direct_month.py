@@ -27,6 +27,7 @@ from fcstnyctaxi.lib.fold_metrics import compute_wrmae_pooled
 from fcstnyctaxi.lib.io import write_text_to_gcs
 from fcstnyctaxi.lib.monthly_aggregation import (
     attach_tier_and_weight,
+    build_monthly_series,
     compute_actual_monthly_totals,
 )
 from fcstnyctaxi.lib.origin_modeling_table.builders import (
@@ -328,42 +329,11 @@ len(forecasts_df)
 forecasts_df.head()
 
 # %%
-# assemble forecasts w/ tier, weight, added items needed later for scoring backtests
-fraction_by_origin = calendar_df.set_index("ds")["origin_month_fraction_elapsed"]
-
-monthly_rows_rename_dict = {
+forecasts_df = forecasts_df.rename(columns={
     "prediction": "monthly_forecast",
     "target_month_total_revenue": "actual_monthly_total",
-    "target_month": "fiscal_year_month",
-}
-monthly_rows_col_keep = [
-    "unique_id",
-    "fiscal_year_month",
-    "monthly_forecast",
-    "actual_monthly_total",
-]
-rows = []
-for origin_date, origin_group in forecasts_df.groupby("forecast_origin_date"):
-    monthly_rows_df = origin_group.rename(columns=monthly_rows_rename_dict)[
-        monthly_rows_col_keep
-    ]
-    tier_df = assign_tiers(
-        train_df=ts_df, origin_date=origin_date, calendar_df=calendar_df
-    )
-
-    weight_df = compute_series_weights(
-        train_df=ts_df, origin_date=origin_date, calendar_df=calendar_df
-    )
-    origin_group_built = attach_tier_and_weight(
-        monthly_rows_df=monthly_rows_df,
-        tier_df=tier_df,
-        weight_df=weight_df,
-        fold_origin=origin_date,
-        origin_month_fraction_elapsed=fraction_by_origin[origin_date],
-    )
-    rows.append(origin_group_built)
-
-monthly_series = pd.concat(rows, ignore_index=True)
+})
+monthly_series = build_monthly_series(forecasts_df, ts_df, calendar_df)
 
 # %%
 len(monthly_series)

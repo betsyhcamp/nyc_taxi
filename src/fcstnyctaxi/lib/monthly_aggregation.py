@@ -1,4 +1,8 @@
+from typing import cast
+
 import pandas as pd
+
+from fcstnyctaxi.lib.period_utils import assign_tiers, compute_series_weights
 
 
 def compute_actual_monthly_totals(
@@ -307,3 +311,86 @@ def attach_tier_and_weight(
             ]
         ]
     )
+
+
+def build_monthly_series(
+    forecasts_df: pd.DataFrame,
+    panel_df: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Assemble fold predictions into the leaderboard-ready sidecar frame.
+
+    Loops per origin because tiers and series weights are computed from trailing
+    data as of each one. A single call over all folds would score late origins
+    with information the early ones did not have. Extracted into reusable func
+    for parity use cases. period_col is "target_month" attach_tier_and_weight only
+    defaults period_col = "fiscal_year_month".
+
+    Args:
+        forecasts_df: Fold output. Requires (unique_id, forecast_origin_date,
+            target_month, monthly_forecast, actual_monthly_total). The value
+            columns arrive already renamed, since what a framing calls its model
+            output is its own detail.
+        panel_df: The TRIMMED weekly panel which is the same one the modeling table
+            was built from. assign_tiers and compute_series_weights derive trailing
+            windows from it, so an untrimmed panel yields different tiers and breaks
+            benchmark parity. Unverifiable from the frame itself, hence stated. Requires
+            (unique_id, ds, y)
+        calendar_df: Fiscal calendar; requires (ds, origin_month_fraction_elapsed).
+
+    Returns:
+        One row per (origin, series) with columns (forecast_origin_date,
+        predicted_fiscal_year_month, unique_id, tier, monthly_forecast,
+        actual_monthly_total, series_weight, origin_month_fraction_elapsed).
+
+    Raises:
+        ValueError: If either frame lacks a required column.
+    """
+    required = [
+        "unique_id",
+        "forecast_origin_date",
+        "target_month",
+        "monthly_forecast",
+        "actual_monthly_total",
+    ]
+    missing = [c for c in required if c not in forecasts_df.columns]
+    if missing:
+        raise ValueError(f"forecasts_df is missing required columns: {missing}")
+
+    missing = [c for c in ("unique_id", "ds", "y") if c not in panel_df.columns]
+    if missing:
+        raise ValueError(f"panel is missing required columns: {missing}")
+
+    missing = [
+        c
+        for c in ("ds", "origin_month_fraction_elapsed")
+        if c not in calendar_df.columns
+    ]
+    if missing:
+        raise ValueError(f"calendar_df is missing required columns: {missing}")
+
+    # assemble forecasts w/ tier, weight; items needed later for scoring of backtests
+    fraction_by_origin = calendar_df.set_index("ds")["origin_month_fraction_elapsed"]
+    rows = []
+    for key_date, origin_group in forecasts_df.groupby("forecast_origin_date"):
+        origin_date = cast(pd.Timestamp, key_date)
+        monthly_rows_df = origin_group[
+            ["unique_id", "target_month", "monthly_forecast", "actual_monthly_total"]
+        ]
+        tier_df = assign_tiers(
+            train_df=panel_df, origin_date=origin_date, calendar_df=calendar_df
+        )
+
+        weight_df = compute_series_weights(
+            train_df=panel_df, origin_date=origin_date, calendar_df=calendar_df
+        )
+        origin_group_built = attach_tier_and_weight(
+            monthly_rows_df=monthly_rows_df,
+            tier_df=tier_df,
+            weight_df=weight_df,
+            fold_origin=origin_date,
+            origin_month_fraction_elapsed=fraction_by_origin[origin_date],
+            period_col="target_month",
+        )
+        rows.append(origin_group_built)
+    return pd.concat(rows, ignore_index=True)
