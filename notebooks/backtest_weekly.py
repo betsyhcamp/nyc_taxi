@@ -350,12 +350,25 @@ def _decategorize(df: pd.DataFrame) -> pd.DataFrame:
     return df.astype({c: "object" for c in cat_cols}) if cat_cols else df
 
 
-def _compare_frames(new_df: pd.DataFrame, ref_df: pd.DataFrame) -> tuple[bool, str]:
+def _compare_frames(
+    new_df: pd.DataFrame,
+    ref_df: pd.DataFrame,
+    expected_dtype_changes: set[str] = frozenset(),
+) -> tuple[bool, str]:
     """Compare two frames: sort by every column in canonical name order,
     reset the index, then compare column set, dtypes, and values.
 
     Sorting by every column is deterministic without naming key columns, which
     matters for tsbricks-owned schemas and survives an upstream schema change.
+
+    Args:
+        new_df: Frame from the run being verified.
+        ref_df: Frame from the registered reference sidecar.
+        expected_dtype_changes: Columns whose dtype is allowed to differ,
+            compared on values only. Empty by default, so every other caller
+            stays strict. Intended for a deliberate one-time dtype migration
+            across a reference boundary; drop the argument once the reference
+            itself carries the new dtype.
 
     Returns:
         (passed, detail) where detail names what differed — differing columns,
@@ -374,7 +387,7 @@ def _compare_frames(new_df: pd.DataFrame, ref_df: pd.DataFrame) -> tuple[bool, s
     dtype_diffs = {
         c: f"{new_df[c].dtype} vs {ref_df[c].dtype}"
         for c in cols
-        if new_df[c].dtype != ref_df[c].dtype
+        if new_df[c].dtype != ref_df[c].dtype and c not in expected_dtype_changes
     }
     if dtype_diffs:
         problems.append(f"dtype mismatches: {dtype_diffs}")
@@ -388,7 +401,11 @@ def _compare_frames(new_df: pd.DataFrame, ref_df: pd.DataFrame) -> tuple[bool, s
 
     value_diffs = []
     for c in cols:
-        if a[c].equals(b[c]):
+        # Not Series.equals: it is dtype-strict, so a column in
+        # expected_dtype_changes would report "values differ (0 rows differ)"
+        # even when every instant matches. Not a bare == either: that treats
+        # NaN != NaN, so an identical NaN-bearing column would report differing.
+        if ((a[c] == b[c]) | (a[c].isna() & b[c].isna())).all():
             continue
         if pd.api.types.is_numeric_dtype(a[c]) and pd.api.types.is_numeric_dtype(b[c]):
             value_diffs.append(f"{c} (max abs delta {(a[c] - b[c]).abs().max():.6g})")
@@ -422,6 +439,18 @@ def _dict_diff(new_obj, ref_obj, path: str = "") -> list[str]:
 
 
 # %%
+# TEMPORARY — delete this constant and both call-site arguments once the
+# registered reference itself carries datetime64[ns] origins.
+#
+# ORIGIN_TIME_UNIT moved forecast_origin_date from ms to ns, so this run's
+# artifacts differ in dtype from a reference written before that change. The
+# exception is scoped to dtype only: values are still compared, and every
+# other column stays strict. Discharge is checkable, not remembered — read
+# forecast_origin_date's dtype on the registered sidecar; if it is already ns,
+# nothing is being excused and this can go.
+ORIGIN_DTYPE_MIGRATION = {"forecast_origin_date"}
+
+
 def compare_sidecars(new_uri: str, reference_uri: str) -> pd.DataFrame:
     """Check that a re-run reproduced a prior registration.
 
@@ -493,9 +522,12 @@ def compare_sidecars(new_uri: str, reference_uri: str) -> pd.DataFrame:
         absent = "new" if ms_new is None else "reference"
         record("monthly_series unchanged", False, f"unreadable in {absent} sidecar")
     else:
-        record("monthly_series unchanged", *_compare_frames(ms_new, ms_ref))
+        record(
+            "monthly_series unchanged",
+            *_compare_frames(ms_new, ms_ref, ORIGIN_DTYPE_MIGRATION),
+        )
 
-    # -- raw_cv_forecasts identical on its pre-existing columns --------------
+    # -- raw_cv_forecasts identical --------------------------------------
     # Independent of the monthly_series comparison, not a restatement of it:
     # two different weekly
     # forecast vectors can sum to identical monthly totals, so monthly_series
@@ -507,19 +539,8 @@ def compare_sidecars(new_uri: str, reference_uri: str) -> pd.DataFrame:
         absent = "new" if raw_new is None else "reference"
         record("raw_cv_forecasts unchanged", False, f"unreadable in {absent} sidecar")
     else:
-        added = set(raw_new.columns) - set(raw_ref.columns)
-        removed = set(raw_ref.columns) - set(raw_new.columns)
-        if added != {"forecast_origin_date"} or removed:
-            record(
-                "raw_cv_forecasts unchanged",
-                False,
-                f"forecast_origin_date should be the only addition — "
-                f"added={sorted(added)}, removed={sorted(removed)}",
-            )
-        else:
-            # Compare on the reference's columns, dropping this PR's addition.
-            passed, detail = _compare_frames(raw_new[list(raw_ref.columns)], raw_ref)
-            record("raw_cv_forecasts unchanged", passed, detail)
+        passed, detail = _compare_frames(raw_new, raw_ref, ORIGIN_DTYPE_MIGRATION)
+        record("raw_cv_forecasts unchanged", passed, detail)
 
     return pd.DataFrame(results, columns=["check", "status", "detail"])
 
@@ -555,6 +576,7 @@ def validate_sidecar(uri: str) -> pd.DataFrame:
     ms_df = _read(uri, "monthly_series.parquet")
     comp_df = _read(uri, "monthly_forecast_components.parquet")
     raw_df = _read(uri, "raw_cv_forecasts.parquet")
+    cal_df = _read(uri, "fiscal_calendar.parquet")
 
     # -- components key-set equality and reconstruction -------------------
     # Outer merge (not inner) with indicator: an inner merge would verify
@@ -610,37 +632,52 @@ def validate_sidecar(uri: str) -> pd.DataFrame:
                 f"{type(exc).__name__}: {exc}",
             )
 
-    # -- forecast_origin_date dtype agrees across files -------------------
-    # Asserted as equality among the three, with no expected literal: a
-    # hardcoded dtype would go red on a pandas/pyarrow upgrade that broke
-    # nothing. Expect datetime64[ms] today; the spec's future-work section
-    # carries the root fix (normalizing the origin unit upstream).
+    # -- forecast_origin_date unit anchored to the calendar ---------------
+    # Anchored to this sidecar's own fiscal_calendar.ds rather than asserted as
+    # mutual agreement among the three output files. Mutual agreement is
+    # common-mode blind: all three derive their origin from one variable, so
+    # they agree even when all three are wrong together, and the check passes
+    # having established nothing. The calendar is written from a separate read
+    # and is the upstream every origin is ultimately derived from, which makes
+    # this the first form of the check that can independently fail.
+    #
+    # Still no hardcoded literal, for the reason the earlier version gave: a
+    # pinned "ns" would go red on a pandas/pyarrow upgrade that broke nothing.
+    # ORIGIN_TIME_UNIT states the policy; this states internal coherence.
+    #
+    # Series.dt.unit, not str(dtype): as_unit() rejects "datetime64[ns]" with
+    # ValueError, so the accessor is the only form that composes.
+    CHECK = "forecast_origin_date unit matches calendar"
     frames = {
         "raw_cv_forecasts": raw_df,
         "monthly_series": ms_df,
         "monthly_forecast_components": comp_df,
     }
-    absent_frames = [name for name, df in frames.items() if df is None]
+    absent_frames = [n for n, df in frames.items() if df is None]
     lacking = [
-        name
-        for name, df in frames.items()
+        n
+        for n, df in frames.items()
         if df is not None and "forecast_origin_date" not in df.columns
     ]
-    if absent_frames:
-        record(
-            "forecast_origin_date dtype", False, f"unreadable: {absent_frames}"
-        )
+    if cal_df is None:
+        record(CHECK, False, "fiscal_calendar.parquet unreadable")
+    elif "ds" not in cal_df.columns:
+        record(CHECK, False, "fiscal_calendar.parquet has no ds column")
+    elif absent_frames:
+        record(CHECK, False, f"unreadable: {absent_frames}")
     elif lacking:
-        record("forecast_origin_date dtype", False, f"column absent in: {lacking}")
+        record(CHECK, False, f"column absent in: {lacking}")
     else:
-        dtypes = {n: str(df["forecast_origin_date"].dtype) for n, df in frames.items()}
-        agreed = len(set(dtypes.values())) == 1
+        cal_unit = cal_df["ds"].dt.unit
+        units = {n: df["forecast_origin_date"].dt.unit for n, df in frames.items()}
+        off = {n: u for n, u in units.items() if u != cal_unit}
         record(
-            "forecast_origin_date dtype",
-            agreed,
-            f"all {next(iter(dtypes.values()))}"
-            if agreed
-            else "; ".join(f"{n}={d}" for n, d in dtypes.items()),
+            CHECK,
+            not off,
+            f"all {cal_unit}, matching fiscal_calendar.ds"
+            if not off
+            else f"fiscal_calendar.ds={cal_unit}; "
+            + "; ".join(f"{n}={u}" for n, u in off.items()),
         )
 
     # -- raw forecasts are keyed by origin --------------------------------
