@@ -23,7 +23,7 @@ from mlforecast.lag_transforms import RollingMean
 from tsbricks.blocks.metadata import get_git_hash, get_uv_lock_info
 
 from fcstnyctaxi.lib.config_utils import save_config
-from fcstnyctaxi.lib.fold_metrics import compute_wrmae_pooled
+from fcstnyctaxi.lib.fold_metrics import compute_wrmae_by_progress
 from fcstnyctaxi.lib.io import write_text_to_gcs
 from fcstnyctaxi.lib.monthly_aggregation import (
     attach_tier_and_weight,
@@ -502,33 +502,13 @@ per_series_mtd.to_parquet(f"{sidecar_uri}per_series_mtd.parquet", index=False)
 print(f"Sidecar written: {sidecar_uri}")
 
 # %%
-join_keys = ["forecast_origin_date", "predicted_fiscal_year_month"]
-ch = monthly_series.merge(origin_progress, on=join_keys)
-bm = benchmark_h1.merge(origin_progress, on=join_keys)
 
-rows = []
-for _, wim, wa in (
-    ch[["weeks_in_month", "weeks_actualized"]].drop_duplicates().itertuples()
-):
-    ch_cohort = ch[(ch["weeks_in_month"] == wim) & (ch["weeks_actualized"] == wa)]
-    bm_cohort = bm[(bm["weeks_in_month"] == wim) & (bm["weeks_actualized"] == wa)]
-    rows.append(
-        {
-            "weeks_in_month": wim,
-            "weeks_actualized": wa,
-            "n_events": len(ch_cohort),
-            "wrmae_vs_benchmark": compute_wrmae_pooled(ch_cohort, bm_cohort),
-        }
-    )
-
-progress_skill = (
-    pd.DataFrame(rows)
-    .sort_values(["weeks_in_month", "weeks_actualized"])
-    .reset_index(drop=True)
+progress_skill = compute_wrmae_by_progress(
+    challenger_df=monthly_series, 
+    benchmark_df=benchmark_h1, origin_spine=origin_spine
 )
+
 progress_skill
-
-
 # %%
 # below-MTD: where does the model predict below already-booked MTD?
 pred_below_cols = [

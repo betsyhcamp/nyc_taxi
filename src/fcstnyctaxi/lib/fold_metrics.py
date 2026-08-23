@@ -6,6 +6,7 @@ from collections.abc import Callable
 import numpy as np
 import pandas as pd
 
+from fcstnyctaxi.lib.column_checks import require_columns
 from fcstnyctaxi.lib.metrics import (
     _SMALL_NUM_BOUND,
 )
@@ -14,6 +15,8 @@ _log = logging.getLogger(__name__)
 
 _FOLD_KEYS = ["forecast_origin_date", "predicted_fiscal_year_month"]
 _JOIN_KEYS = _FOLD_KEYS + ["unique_id"]
+_PROGRESS_COLS = ["weeks_in_month", "weeks_actualized"]
+_PROGRESS_SKILL_COLS = _PROGRESS_COLS + ["n_events", "wrmae_vs_benchmark"]
 
 
 def compute_wrmae_pooled(
@@ -332,6 +335,118 @@ def compute_weighted_signed_bias(
         )
 
     return np.nanmean(per_fold_wsb.to_numpy(dtype=np.float64)).item()
+
+
+def _attach_progress(df: pd.DataFrame, origin_spine: pd.DataFrame) -> pd.DataFrame:
+    """Join the spine's progress columns onto a fold frame, losing no rows.
+
+    Args:
+        df: Challenger or benchmark frame at series x fold grain, already
+            filtered to a single horizon.
+        origin_spine: enumerate_origins output with one row per origin, carrying
+            target_month and the progress columns.
+
+    Returns:
+        df with _PROGRESS_COLS added; same row count.
+
+    Raises:
+        ValueError: If df already carries the progress columns, leaving the row count
+            intact and the frame wrong. Or if any df row has no origin_spine entry,
+            which is what an unfiltered multi-horizon frame produces.
+        pd.errors.MergeError: If origin_spine is not unique on the fold keys.
+            The public caller checks uniqueness first, so this is a backstop
+            with a less specific message.
+    """
+    spine = origin_spine[["forecast_origin_date", "target_month"] + _PROGRESS_COLS]
+    spine = spine.rename(columns={"target_month": "predicted_fiscal_year_month"})
+
+    col_collisions = [c for c in df.columns if c in _PROGRESS_COLS]
+    if col_collisions:
+        raise ValueError(
+            f"Input df has columns: {col_collisions}; these columns cause "
+            "name collision during join within _attach_progress()"
+        )
+
+    lost = df.loc[
+        ~df.set_index(_FOLD_KEYS).index.isin(spine.set_index(_FOLD_KEYS).index),
+        _FOLD_KEYS,
+    ]
+    if not lost.empty:
+        raise ValueError(
+            f"{len(lost)} of {len(df)} rows have no origin_spine entry:\n"
+            f"{lost.drop_duplicates().head(5).to_string(index=False)}"
+        )
+
+    out = df.merge(spine, on=_FOLD_KEYS, how="inner", validate="many_to_one")
+
+    return out
+
+
+def compute_wrmae_by_progress(
+    challenger_df: pd.DataFrame, benchmark_df: pd.DataFrame, origin_spine: pd.DataFrame
+) -> pd.DataFrame:
+    """Fold-averaged pooled WRMAE per origin-progress cohort.
+
+    The progress axis comes from origin_spine, not from either frame's own
+    columns: the benchmark carries no progress columns, so a challenger-sourced
+    axis cannot segment both sides of a skill ratio.
+
+    Args:
+        challenger_df: Series x fold frame, the columns compute_wrmae_pooled
+            needs. Must be filtered to a single horizon first since horizon_2 rows
+            predict M+1 while their origin's spine entry says M, so they match
+            no spine key and trip the row-loss check in _attach_progress.
+        benchmark_df: Same grain and horizon as challenger_df.
+        origin_spine: enumerate_origins output, unique on
+            (forecast_origin_date, target_month) and carrying the progress
+            columns.
+
+    Returns:
+        One row per (weeks_in_month, weeks_actualized) cohort present in
+        challenger_df, with n_events and wrmae_vs_benchmark, sorted by cohort.
+        Empty with the declared columns when challenger_df is empty rather than
+        raising.
+
+    Raises:
+        ValueError: If a frame lacks a required column, or origin_spine is not
+            unique on its keys.
+    """
+
+    spine_keys = ["forecast_origin_date", "target_month"]
+    require_columns(challenger_df, _FOLD_KEYS, "challenger_df")
+    require_columns(benchmark_df, _FOLD_KEYS, "benchmark_df")
+    require_columns(origin_spine, spine_keys + _PROGRESS_COLS, "origin_spine")
+
+    dupes = origin_spine.loc[
+        origin_spine.duplicated(spine_keys, keep=False), spine_keys
+    ]
+    if not dupes.empty:
+        raise ValueError(
+            f"origin_spine must be unique on {spine_keys}; "
+            f"{len(dupes)} rows share {len(dupes.drop_duplicates())} key(s):\n"
+            f"{dupes.drop_duplicates().head(5).to_string(index=False)}"
+        )
+
+    ch = _attach_progress(challenger_df, origin_spine)
+    bm = _attach_progress(benchmark_df, origin_spine)
+    rows = []
+    for _, wim, wa in ch[_PROGRESS_COLS].drop_duplicates().itertuples():
+        ch_cohort = ch[(ch["weeks_in_month"] == wim) & (ch["weeks_actualized"] == wa)]
+        bm_cohort = bm[(bm["weeks_in_month"] == wim) & (bm["weeks_actualized"] == wa)]
+        rows.append(
+            {
+                "weeks_in_month": wim,
+                "weeks_actualized": wa,
+                "n_events": len(ch_cohort),
+                "wrmae_vs_benchmark": compute_wrmae_pooled(ch_cohort, bm_cohort),
+            }
+        )
+
+    return (
+        pd.DataFrame(rows, columns=_PROGRESS_SKILL_COLS)
+        .sort_values(_PROGRESS_COLS)
+        .reset_index(drop=True)
+    )
 
 
 def _wape_adapter(
