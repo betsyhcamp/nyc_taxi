@@ -80,7 +80,7 @@ calendar_df = pd.read_parquet(calendar_uri)
 # TODO: refactor to remove hardcoding &, instead, use parameter file for these items
 # Hardcoded for now; registry lookup (resolve_sidecar_uri) is deferred
 BENCHMARK_SIDECAR_URI = (
-    "gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_weekly/20260803T230103657210Z/"
+    "gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_weekly/20260823T023431354658Z/"
 )
 
 FREQ = "W-SUN"
