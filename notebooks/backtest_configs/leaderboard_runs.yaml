@@ -15,11 +15,11 @@ runs:
 #    sidecar_id: 20260802T015412644312Z
   - model: naive_26week
     framing: weekly_to_monthly
-    sidecar_id: 20260815T040931105059Z
+    sidecar_id: 20260823T023431354658Z
     benchmark: true
   - model: autoets_26week
     framing: weekly_to_monthly
-    sidecar_id: 20260815T042155415181Z
+    sidecar_id: 20260823T024020347034Z
 
   # note use of sidecar_uri for a run that isn't located in default_base_uri
   - model: lightgbm_2part
@@ -28,4 +28,4 @@ runs:
       # note use of sidecar_uri for a run that isn't located in default_base_uri
   - model: lightgbm_direct_smoketest
     framing: direct_month
-    sidecar_uri: gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_direct_month/20260812T041455920699Z/
+    sidecar_uri: gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_direct_month/20260824T005310842746Z/

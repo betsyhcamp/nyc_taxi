@@ -7,11 +7,13 @@ import pytest
 from fcstnyctaxi.lib.fold_metrics import (
     _FOLD_KEYS,
     _JOIN_KEYS,
+    _PROGRESS_SKILL_COLS,
     compute_hero_metric,
     compute_signed_bias_per_series,
     compute_signed_bias_pooled,
     compute_wape,
     compute_weighted_signed_bias,
+    compute_wrmae_by_progress,
     compute_wrmae_per_series,
     compute_wrmae_pooled,
 )
@@ -515,3 +517,166 @@ def test_signed_bias_per_series_orchestration_agrees_with_primitive(tier_dfs):
             )
         )
     np.testing.assert_allclose(orch, np.nanmean(fold_vals), rtol=1e-7)
+
+
+# ================================================
+# compute_wrmae_by_progress
+# ================================================
+
+
+@pytest.fixture
+def progress_dfs():
+    """2 origins x 2 series, each origin its own cohort, with DIFFERENT skill.
+
+    Cohort (4, 1) from origin 1: challenger errors 10/20 against benchmark
+    20/40 -> 30/60 = 0.5. Cohort (5, 2) from origin 2: both sides err 20/40
+    -> 60/60 = 1.0. The cohorts must differ, or a bug that pools every row
+    into one number is indistinguishable from correct segmentation.
+
+    Challenger rows are ordered origin_2 first, so the cohorts arrive as
+    [(5, 2), (4, 1)] and the closing sort has real work to do. Ordering them
+    the other way would make the sort assertion vacuous.
+    """
+    challenger = pd.DataFrame(
+        {
+            "forecast_origin_date": [_ORIGIN_2, _ORIGIN_2, _ORIGIN_1, _ORIGIN_1],
+            "predicted_fiscal_year_month": [_MONTH_2, _MONTH_2, _MONTH_1, _MONTH_1],
+            "unique_id": ["A", "B", "A", "B"],
+            "monthly_forecast": [120.0, 240.0, 110.0, 220.0],
+            "actual_monthly_total": [100.0, 200.0, 100.0, 200.0],
+            "series_weight": [1.0, 1.0, 1.0, 1.0],
+        }
+    )
+    benchmark = challenger[_JOIN_KEYS].assign(
+        monthly_forecast=[120.0, 240.0, 120.0, 240.0]
+    )
+    spine = pd.DataFrame(
+        {
+            "forecast_origin_date": [_ORIGIN_1, _ORIGIN_2],
+            "target_month": [_MONTH_1, _MONTH_2],
+            "weeks_in_month": [4, 5],
+            "weeks_actualized": [1, 2],
+        }
+    )
+    return challenger, benchmark, spine
+
+
+def test_compute_wrmae_by_progress_returns_expected_cohort_table(progress_dfs):
+    """Pins values, n_events, row sort and column schema in one comparison.
+
+    assert_frame_equal covers all four at once, so the expected frame is an
+    executable statement of the return contract rather than four assertions
+    that each check one column.
+    """
+    challenger, benchmark, spine = progress_dfs
+
+    out = compute_wrmae_by_progress(challenger, benchmark, spine)
+
+    expected = pd.DataFrame(
+        {
+            "weeks_in_month": [4, 5],
+            "weeks_actualized": [1, 2],
+            "n_events": [2, 2],
+            "wrmae_vs_benchmark": [0.5, 1.0],
+        }
+    )
+    pd.testing.assert_frame_equal(out, expected)
+
+
+def test_compute_wrmae_by_progress_raises_when_the_benchmark_loses_rows(progress_dfs):
+    """Both sides are checked, not just the challenger.
+
+    The natural bug is validating the challenger and copy-pasting past the
+    benchmark: it drops rows silently and shifts the skill ratio rather than
+    failing, so nothing else on this list would catch it.
+    """
+    challenger, benchmark, spine = progress_dfs
+    orphan = benchmark.head(1).assign(forecast_origin_date=pd.Timestamp("2024-03-03"))
+    benchmark = pd.concat([benchmark, orphan], ignore_index=True)
+
+    with pytest.raises(ValueError, match=r"rows have no origin_spine entry"):
+        compute_wrmae_by_progress(challenger, benchmark, spine)
+
+
+def test_compute_wrmae_by_progress_returns_declared_columns_when_empty(progress_dfs):
+    """An empty challenger yields an empty frame, not a KeyError from the sort.
+
+    Regression guard: the columns= argument that supplies the schema reads as
+    mere column ordering, so a later tidy-up could drop it and no other test
+    would notice.
+    """
+    _, benchmark, spine = progress_dfs
+
+    out = compute_wrmae_by_progress(pd.DataFrame(columns=_JOIN_KEYS), benchmark, spine)
+
+    assert out.empty
+    assert list(out.columns) == _PROGRESS_SKILL_COLS
+
+
+def test_compute_wrmae_by_progress_takes_cohorts_from_the_spine(progress_dfs):
+    """The same frames under a different spine produce different cohorts.
+
+    This is the one property that distinguishes this implementation from the
+    inline loop it replaces, which derived progress from the challenger's own
+    columns. Asserting the cohorts against a single spine would be satisfied
+    by either version.
+    """
+    challenger, benchmark, spine = progress_dfs
+    relabelled = spine.assign(weeks_in_month=[5, 4], weeks_actualized=[3, 0])
+
+    out = compute_wrmae_by_progress(challenger, benchmark, relabelled)
+
+    cohorts = set(
+        out[["weeks_in_month", "weeks_actualized"]].itertuples(index=False, name=None)
+    )
+    assert cohorts == {(5, 3), (4, 0)}
+
+
+def test_compute_wrmae_by_progress_raises_on_a_duplicated_spine_key(progress_dfs):
+    """A fanned spine is named as a spine defect before either merge runs."""
+    challenger, benchmark, spine = progress_dfs
+    fanned = pd.concat([spine, spine.head(1)], ignore_index=True)
+
+    with pytest.raises(ValueError, match=r"origin_spine must be unique"):
+        compute_wrmae_by_progress(challenger, benchmark, fanned)
+
+
+@pytest.mark.parametrize(
+    ("frame_name", "missing"),
+    [
+        ("challenger_df", "forecast_origin_date"),
+        ("challenger_df", "predicted_fiscal_year_month"),
+        ("benchmark_df", "forecast_origin_date"),
+        ("benchmark_df", "predicted_fiscal_year_month"),
+        ("origin_spine", "target_month"),
+        ("origin_spine", "weeks_in_month"),
+    ],
+)
+def test_compute_wrmae_by_progress_raises_when_a_frame_lacks_a_column(
+    progress_dfs, frame_name, missing
+):
+    """Every frame is checked, and the message names which one is at fault."""
+    frames = dict(
+        zip(
+            ("challenger_df", "benchmark_df", "origin_spine"), progress_dfs, strict=True
+        )
+    )
+    frames[frame_name] = frames[frame_name].drop(columns=[missing])
+
+    with pytest.raises(ValueError, match=rf"{frame_name} is missing required columns"):
+        compute_wrmae_by_progress(**frames)
+
+
+def test_compute_wrmae_by_progress_raises_when_a_frame_carries_progress_columns(
+    progress_dfs,
+):
+    """A pre-merged frame must fail loudly rather than merge to _x/_y suffixes.
+
+    The suffixed merge leaves the row count intact, so the row-loss check
+    cannot see it and the cohort loop would raise KeyError somewhere unrelated.
+    """
+    challenger, benchmark, spine = progress_dfs
+    challenger = challenger.assign(weeks_in_month=4, weeks_actualized=1)
+
+    with pytest.raises(ValueError, match=r"name collision"):
+        compute_wrmae_by_progress(challenger, benchmark, spine)

@@ -5,6 +5,15 @@ from datetime import date
 
 import numpy as np
 import pandas as pd
+from pandas.api.types import is_datetime64_any_dtype
+
+from fcstnyctaxi.lib.column_checks import require_columns
+from fcstnyctaxi.lib.cross_validation_utils import sorted_origin_horizon_pairs
+
+# Canonical datetime unit for forecast origins in every artifact this project writes.
+# "ns" for conformity, not principle: a sidecar's other datetime columns are already
+# ns via pd.to_datetime, and for a join key agreement beats precision honesty.
+ORIGIN_TIME_UNIT = "ns"
 
 
 def _get_trailing_dates(
@@ -70,6 +79,102 @@ def derive_horizon_label(
         target % 100 - last_completed % 100
     )
     return "horizon_" + pd.Series(month_difference, index=target.index).astype(str)
+
+
+def label_horizon(monthly_series: pd.DataFrame, calendar_df: pd.DataFrame) -> pd.Series:
+    """Label each row of a monthly_series frame with its horizon.
+
+    Maps each origin date to its own fiscal month via the calendar, then delegates
+    to derive_horizon_label. Requires only columns attach_tier_and_weight already
+    produces.
+
+    The origin unit is deliberately unconstrained. Registered sidecars carry mixed
+    units and stay mixed, and pandas matches datetime keys across s/ms/ns. What does
+    corrupt a label is an origin absent from the calendar, which the null check below
+    catches.
+
+    Args:
+        monthly_series: Requires (forecast_origin_date, predicted_fiscal_year_month,
+            origin_month_fraction_elapsed).
+        calendar_df: Fiscal calendar; requires (ds, fiscal_year_month). Rows that
+            repeat a ds with the same fiscal month are collapsed; a ds carrying two
+            different fiscal months is an error.
+
+    Returns:
+        Series of "horizon_N" labels, indexed like monthly_series.
+
+    Raises:
+        ValueError: If either frame lacks a required column, if forecast_origin_date
+            is not a datetime dtype, if calendar_df maps one ds to two fiscal months,
+            or if any origin is absent from the calendar.
+    """
+    require_columns(
+        monthly_series,
+        [
+            "forecast_origin_date",
+            "predicted_fiscal_year_month",
+            "origin_month_fraction_elapsed",
+        ],
+        "monthly_series",
+    )
+    require_columns(calendar_df, ["ds", "fiscal_year_month"], "calendar_df")
+
+    if not is_datetime64_any_dtype(monthly_series["forecast_origin_date"]):
+        raise ValueError(
+            "monthly_series['forecast_origin_date'] must be a datetime dtype, got "
+            f"{monthly_series['forecast_origin_date'].dtype}"
+        )
+
+    lookup_df = calendar_df[["ds", "fiscal_year_month"]].drop_duplicates()
+    if not lookup_df["ds"].is_unique:
+        conflicting = lookup_df.loc[lookup_df["ds"].duplicated(), "ds"].unique()
+        raise ValueError(
+            f"calendar_df maps {len(conflicting)} ds value(s) to more than one "
+            f"fiscal_year_month; first few: {sorted(conflicting)[:5]}"
+        )
+
+    origin_fiscal_month = monthly_series["forecast_origin_date"].map(
+        lookup_df.set_index("ds")["fiscal_year_month"]
+    )
+    unmapped = origin_fiscal_month.isna()
+    if unmapped.any():
+        missing_origins = monthly_series.loc[unmapped, "forecast_origin_date"].unique()
+        raise ValueError(
+            f"{len(missing_origins)} forecast origin(s) absent from calendar_df; "
+            f"first few: {sorted(missing_origins)[:5]}"
+        )
+
+    return derive_horizon_label(
+        predicted_fiscal_year_month=monthly_series["predicted_fiscal_year_month"],
+        origin_fiscal_year_month=origin_fiscal_month,
+        origin_month_fraction_elapsed=monthly_series["origin_month_fraction_elapsed"],
+    )
+
+
+def normalized_origin_horizon_pairs(
+    origin_horizon_pairs: list[tuple], freq: int | str
+) -> list[tuple]:
+    """Sort origin/horizon pairs and normalize the origins to ORIGIN_TIME_UNIT.
+
+    A project-owned policy wrapper rather than an edit to sorted_origin_horizon_pairs,
+    which is a mirror of tsbricks and must stay aligned. The unit rides a scalar origin
+    into a column via .assign(), and parquet writes "s" as "ms", so normalizing
+    here is what makes the persisted artifact agree with the frame that produced it.
+
+    Args:
+        origin_horizon_pairs: Raw (origin, horizon) pairs from
+            cfg.cross_validation.origin_horizon_pairs().
+        freq: Forecast frequency. freq == 1 means integer origins, which have no
+            unit and pass through untouched.
+
+    Returns:
+        The pairs sorted ascending by origin, with datetime origins at
+        ORIGIN_TIME_UNIT.
+    """
+    pairs = sorted_origin_horizon_pairs(origin_horizon_pairs, freq)
+    if freq == 1:
+        return pairs
+    return [(origin.as_unit(ORIGIN_TIME_UNIT), horizon) for origin, horizon in pairs]
 
 
 def generate_origins_for_periods(

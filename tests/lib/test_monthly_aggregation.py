@@ -6,6 +6,7 @@ import pytest
 from fcstnyctaxi.lib.monthly_aggregation import (
     attach_tier_and_weight,
     build_monthly_forecast_vs_actual,
+    build_monthly_series,
     combine_monthly_forecast,
     compute_actual_monthly_totals,
     compute_mtd_actuals,
@@ -18,8 +19,7 @@ from fcstnyctaxi.lib.monthly_aggregation import (
 # 8 weeks, W-SUN, spanning two fiscal months: 202501 (weeks 0-3) and 202502
 # (weeks 4-7). The fold origin sits at week 5 (second week of 202502), so
 # weeks 4-5 are already observed (MTD actuals) and weeks 6-7 are still ahead
-# (predicted remaining) — this is the MTD-actuals-vs-full-month boundary
-# noted in spec_lightgbm_n_estimators_calibration_v1.md §8.4.
+# (predicted remaining) which is the MTD-actuals-vs-full-month boundary
 #
 # Known values, worked by hand:
 #   id=10: mtd_actuals=100+150=250, predicted_remaining=80+90=170
@@ -449,3 +449,250 @@ def test_compute_actual_monthly_totals_sums_all_months_not_just_one(
     assert row["actual_monthly_total"].item() == 4
 
     assert len(result) == 4
+
+
+# ================================================
+# build_monthly_series
+#
+# Distinct fixture names (bms_*) rather than reusing calendar_df above: this
+# function needs origin_month_fraction_elapsed, and redefining a fixture name
+# would silently override it for every test in the file.
+#
+# 4 W-SUN weeks in one fiscal month, two series, two origins:
+#
+#   week   0    1    2    3      origin A = week 1, origin B = week 3
+#   id=10  10   20   30   40
+#   id=20   1    2  300  400     <- OVERTAKES id=10 at week 2
+#
+# Two independent signatures of per-origin looping, and they need different
+# fixture properties to be observable:
+#
+#   series_weight is cbrt(trailing sum), an ABSOLUTE measure, so it moves
+#   whenever the window grows:  id=10 cbrt(30)=3.107 at A, cbrt(100)=4.642 at B.
+#
+#   tier is a RELATIVE ranking, so it only moves if the ORDER changes. Hence the
+#   overtake: at A id=10 outranks id=20 (low vs very_low); at B that reverses.
+#   Without it, freezing assign_tiers to one origin passes every test — found by
+#   mutation, not by reading.
+# ================================================
+
+BMS_WEEKS = pd.date_range("2025-02-02", periods=4, freq="W-SUN")
+
+
+@pytest.fixture
+def bms_calendar_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "ds": BMS_WEEKS,
+            "fiscal_year_month": [202502] * 4,
+            "origin_month_fraction_elapsed": [0.25, 0.5, 0.75, 1.0],
+        }
+    )
+
+
+@pytest.fixture
+def bms_panel() -> pd.DataFrame:
+    """Two series at distinct scales so a tier or weight swap is visible."""
+    return pd.concat(
+        [
+            pd.DataFrame({"unique_id": 10, "ds": BMS_WEEKS, "y": [10, 20, 30, 40]}),
+            pd.DataFrame({"unique_id": 20, "ds": BMS_WEEKS, "y": [1, 2, 300, 400]}),
+        ],
+        ignore_index=True,
+    )
+
+
+@pytest.fixture
+def bms_forecasts_df() -> pd.DataFrame:
+    """Fold output for two origins x two series, value columns already renamed.
+
+    Carries target_month, NOT fiscal_year_month — the name both framings' fold
+    loops produce, and the one period_col must route through.
+    """
+    return pd.DataFrame(
+        {
+            "unique_id": [10, 20, 10, 20],
+            "forecast_origin_date": [BMS_WEEKS[1]] * 2 + [BMS_WEEKS[3]] * 2,
+            "target_month": [202502] * 4,
+            "monthly_forecast": [95.0, 9.5, 99.0, 9.9],
+            "actual_monthly_total": [100.0, 10.0, 100.0, 10.0],
+        }
+    )
+
+
+def test_build_monthly_series_column_schema(
+    bms_forecasts_df: pd.DataFrame,
+    bms_panel: pd.DataFrame,
+    bms_calendar_df: pd.DataFrame,
+) -> None:
+    """The sidecar contract: leaderboard.py reads these columns in this order."""
+    out = build_monthly_series(bms_forecasts_df, bms_panel, bms_calendar_df)
+    assert list(out.columns) == [
+        "forecast_origin_date",
+        "predicted_fiscal_year_month",
+        "unique_id",
+        "tier",
+        "monthly_forecast",
+        "actual_monthly_total",
+        "series_weight",
+        "origin_month_fraction_elapsed",
+    ]
+
+
+def test_build_monthly_series_renames_target_month_to_the_sidecar_name(
+    bms_forecasts_df: pd.DataFrame,
+    bms_panel: pd.DataFrame,
+    bms_calendar_df: pd.DataFrame,
+) -> None:
+    """period_col must route target_month through, not the fiscal_year_month default.
+
+    Omitting period_col does not fail loudly: .rename() ignores a name that is not
+    present, so the column survives unrenamed and the closing select raises a
+    KeyError that names neither the rename nor the caller.
+    """
+    out = build_monthly_series(bms_forecasts_df, bms_panel, bms_calendar_df)
+    assert "target_month" not in out.columns
+    assert out["predicted_fiscal_year_month"].tolist() == [202502] * 4
+
+
+def test_build_monthly_series_returns_one_row_per_origin_and_series(
+    bms_forecasts_df: pd.DataFrame,
+    bms_panel: pd.DataFrame,
+    bms_calendar_df: pd.DataFrame,
+) -> None:
+    """Two origins x two series, and the concat must not duplicate or drop."""
+    out = build_monthly_series(bms_forecasts_df, bms_panel, bms_calendar_df)
+    assert len(out) == 4
+    assert not out.duplicated(["forecast_origin_date", "unique_id"]).any()
+
+
+def test_build_monthly_series_computes_weights_as_of_each_origin(
+    bms_forecasts_df: pd.DataFrame,
+    bms_panel: pd.DataFrame,
+    bms_calendar_df: pd.DataFrame,
+) -> None:
+    """The reason the function loops at all, and what a single call would break.
+
+    series_weight is cbrt(trailing sum), so the later origin must see a larger
+    window: cbrt(10+20) = 3.107 against cbrt(10+20+30+40) = 4.642. One call over
+    all folds would score the early origin with information it did not have.
+    """
+    out = build_monthly_series(bms_forecasts_df, bms_panel, bms_calendar_df)
+    early, late = BMS_WEEKS[1], BMS_WEEKS[3]
+    w = out.set_index(["forecast_origin_date", "unique_id"])["series_weight"]
+    assert w[(early, 10)] == pytest.approx(30 ** (1 / 3))
+    assert w[(late, 10)] == pytest.approx(100 ** (1 / 3))
+    assert w[(early, 10)] < w[(late, 10)]
+
+
+def test_build_monthly_series_assigns_tiers_as_of_each_origin(
+    bms_forecasts_df: pd.DataFrame,
+    bms_panel: pd.DataFrame,
+    bms_calendar_df: pd.DataFrame,
+) -> None:
+    """Tier is a relative ranking, so it moves only when the ORDER changes.
+
+    id=20 overtakes id=10 at week 2, so the early origin must rank id=10 above
+    id=20 and the late origin must reverse it. Freezing assign_tiers to a single
+    origin passes every other test in this file.
+    """
+    out = build_monthly_series(bms_forecasts_df, bms_panel, bms_calendar_df)
+    tier = out.set_index(["forecast_origin_date", "unique_id"])["tier"].astype(str)
+    early, late = BMS_WEEKS[1], BMS_WEEKS[3]
+    assert (tier[(early, 10)], tier[(early, 20)]) == ("low", "very_low")
+    assert (tier[(late, 10)], tier[(late, 20)]) == ("very_low", "low")
+
+
+def test_build_monthly_series_attaches_the_fraction_elapsed_of_each_origin(
+    bms_forecasts_df: pd.DataFrame,
+    bms_panel: pd.DataFrame,
+    bms_calendar_df: pd.DataFrame,
+) -> None:
+    """Fold-level context is looked up per origin, not broadcast from one row."""
+    out = build_monthly_series(bms_forecasts_df, bms_panel, bms_calendar_df)
+    frac = out.set_index("forecast_origin_date")["origin_month_fraction_elapsed"]
+    assert frac[BMS_WEEKS[1]].unique().tolist() == [0.5]
+    assert frac[BMS_WEEKS[3]].unique().tolist() == [1.0]
+
+
+def test_build_monthly_series_passes_forecast_and_actual_through_unchanged(
+    bms_forecasts_df: pd.DataFrame,
+    bms_panel: pd.DataFrame,
+    bms_calendar_df: pd.DataFrame,
+) -> None:
+    """Only tier, weight and fold context are added; the values are not touched."""
+    out = build_monthly_series(bms_forecasts_df, bms_panel, bms_calendar_df)
+    merged = bms_forecasts_df.merge(
+        out,
+        left_on=["unique_id", "forecast_origin_date"],
+        right_on=["unique_id", "forecast_origin_date"],
+        suffixes=("_in", "_out"),
+    )
+    assert (merged["monthly_forecast_in"] == merged["monthly_forecast_out"]).all()
+    assert (
+        merged["actual_monthly_total_in"] == merged["actual_monthly_total_out"]
+    ).all()
+
+
+def test_build_monthly_series_tiers_come_from_the_panel_not_the_forecasts(
+    bms_forecasts_df: pd.DataFrame,
+    bms_panel: pd.DataFrame,
+    bms_calendar_df: pd.DataFrame,
+) -> None:
+    """Which panel is passed changes the output — why the trimmed-panel precondition
+    matters and why it cannot be checked from the frame's shape."""
+    out = build_monthly_series(bms_forecasts_df, bms_panel, bms_calendar_df)
+    swapped = bms_panel.assign(y=bms_panel["y"] * 1000)
+    out_swapped = build_monthly_series(bms_forecasts_df, swapped, bms_calendar_df)
+    assert not out["series_weight"].equals(out_swapped["series_weight"])
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "unique_id",
+        "forecast_origin_date",
+        "target_month",
+        "monthly_forecast",
+        "actual_monthly_total",
+    ],
+)
+def test_build_monthly_series_raises_when_forecasts_lack_a_column(
+    bms_forecasts_df: pd.DataFrame,
+    bms_panel: pd.DataFrame,
+    bms_calendar_df: pd.DataFrame,
+    missing: str,
+) -> None:
+    """Names the frame at fault; a bare KeyError from a nested call would not."""
+    with pytest.raises(ValueError, match=r"forecasts_df is missing required"):
+        build_monthly_series(
+            bms_forecasts_df.drop(columns=[missing]), bms_panel, bms_calendar_df
+        )
+
+
+@pytest.mark.parametrize("missing", ["unique_id", "ds", "y"])
+def test_build_monthly_series_raises_when_the_panel_lacks_a_column(
+    bms_forecasts_df: pd.DataFrame,
+    bms_panel: pd.DataFrame,
+    bms_calendar_df: pd.DataFrame,
+    missing: str,
+) -> None:
+    """Without this, a missing y surfaces as KeyError('y') from inside period_utils."""
+    with pytest.raises(ValueError, match=r"panel_df is missing required"):
+        build_monthly_series(
+            bms_forecasts_df, bms_panel.drop(columns=[missing]), bms_calendar_df
+        )
+
+
+@pytest.mark.parametrize("missing", ["ds", "origin_month_fraction_elapsed"])
+def test_build_monthly_series_raises_when_the_calendar_lacks_a_column(
+    bms_forecasts_df: pd.DataFrame,
+    bms_panel: pd.DataFrame,
+    bms_calendar_df: pd.DataFrame,
+    missing: str,
+) -> None:
+    """Distinguishes a bad calendar from a bad forecasts frame in the message."""
+    with pytest.raises(ValueError, match=r"calendar_df is missing required"):
+        build_monthly_series(
+            bms_forecasts_df, bms_panel, bms_calendar_df.drop(columns=[missing])
+        )

@@ -9,16 +9,19 @@ configs:
   model: notebooks/backtest_configs/model_weekly_autoets.yaml
 
 verification:
-  # Registered run that compare_sidecars() checks this run against — the prior
+  # Registered run that compare_sidecars() checks this run against which is the prior
   # registration of the SAME model, not the leaderboard's scoring benchmark.
   # Must name a `model` in leaderboard_runs.yaml and must match the model
   # selected in configs.model above; change the two together.
   #   model_weekly_naive.yaml   <-> naive_26week
   #   model_weekly_autoets.yaml <-> autoets_26week
   #
-  # null for a brand-new model with no prior registration to reproduce. The
-  # comparison is then skipped entirely; validate_sidecar() still runs and
-  # checks the new sidecar is well-formed.
+  # Set null whenever this run is INTENDED to produce different output: a new
+  # model, a different backtest window, a subset of periods (how lightgbm_2part
+  # is built), or changed features/hyperparameters. compare_sidecars() asks only
+  # "did this reproduce the registered run?", so any deliberate change makes
+  # every check fail for expected reasons and the report stops being readable.
+  # validate_sidecar() still runs and checks the new sidecar is well-formed.
   reference_model: autoets_26week
 
 optuna: null   # populated when running Optuna tuning; null for fixed-hyperparameter runs

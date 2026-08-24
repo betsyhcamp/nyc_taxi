@@ -1,0 +1,1028 @@
+from __future__ import annotations
+
+import pandas as pd
+import pytest
+from mlforecast.lag_transforms import RollingMean
+
+from fcstnyctaxi.lib.origin_modeling_table.builders import (
+    attach_mtd_revenue,
+    attach_weekly_features,
+    attach_workday_progress,
+    build_origin_series_grid,
+    build_weekly_features,
+    enumerate_origins,
+    trim_incomplete_series_months,
+)
+
+# ================================================
+# Fixtures
+#
+# 9 consecutive W-SUN weeks spanning two fiscal months with DIFFERENT week
+# counts — 202501 has 4 weeks, 202502 has 5. The differing counts matter: a
+# predicate that hardcoded 4 instead of reading weeks_in_month would pass on a
+# fixture where every month were the same length.
+#
+#   id=10: complete in both months (4 + 5 = 9 rows)      -> both pairs kept
+#   id=20: complete in 202501 (4 rows), only 3 of 5
+#          weeks in 202502 (3 rows)                      -> 202502 dropped
+#
+# Worked by hand: 16 panel rows in, 13 out, and exactly one dropped pair
+# (20, 202502) with weeks_present=3 against weeks_in_month=5.
+# ================================================
+
+WEEKS = pd.date_range("2025-01-05", periods=9, freq="W-SUN")
+
+
+@pytest.fixture
+def calendar_df() -> pd.DataFrame:
+    """202501 has 4 weeks / 17 workdays; 202502 has 5 weeks / 21 workdays.
+
+    count_workdays is deliberately non-uniform so an off-by-one in the cumulative
+    sum shows up as a wrong number rather than a coincidentally right one. Cumulative
+    workdays are 5, 9, 14, 17 for 202501 and 5, 10, 14, 19, 21 for 202502.
+    """
+    return pd.DataFrame(
+        {
+            "ds": WEEKS,
+            "fiscal_year_month": [202501] * 4 + [202502] * 5,
+            "fiscal_week_of_month": [1, 2, 3, 4, 1, 2, 3, 4, 5],
+            "weeks_in_month": [4] * 4 + [5] * 5,
+            "origin_month_fraction_elapsed": [
+                0.25,
+                0.5,
+                0.75,
+                1.0,
+                0.2,
+                0.4,
+                0.6,
+                0.8,
+                1.0,
+            ],
+            "count_workdays": [5, 4, 5, 3, 5, 5, 4, 5, 2],
+        }
+    )
+
+
+@pytest.fixture
+def panel_df() -> pd.DataFrame:
+    """id=10 complete throughout; id=20 partial in 202502 (weeks 1-3 only)."""
+    id_10 = pd.DataFrame({"unique_id": 10, "ds": WEEKS, "y": range(10, 100, 10)})
+    id_20 = pd.DataFrame({"unique_id": 20, "ds": WEEKS[:7], "y": range(100, 800, 100)})
+    return pd.concat([id_10, id_20], ignore_index=True)
+
+
+@pytest.fixture
+def duplicated_week_panel_df() -> pd.DataFrame:
+    """id=30 has 4 rows in the 4-week 202501, but only 3 DISTINCT weeks.
+
+    Week 2 appears twice and week 4 never. A row count would say 4 and keep the
+    pair; a distinct-week count says 3 and drops it. This is the only fixture
+    that separates nunique from size.
+    """
+    return pd.DataFrame(
+        {
+            "unique_id": 30,
+            "ds": [WEEKS[0], WEEKS[1], WEEKS[1], WEEKS[2]],
+            "y": [1, 2, 3, 4],
+        }
+    )
+
+
+@pytest.fixture
+def complete_panel_df() -> pd.DataFrame:
+    """Two gapless series, for feature tests that need a regular frequency."""
+    id_10 = pd.DataFrame({"unique_id": 10, "ds": WEEKS, "y": range(10, 100, 10)})
+    id_20 = pd.DataFrame({"unique_id": 20, "ds": WEEKS, "y": range(100, 1000, 100)})
+    return pd.concat([id_10, id_20], ignore_index=True)
+
+
+# ================================================
+# trim_incomplete_series_months — trim behavior
+# ================================================
+
+
+def test_trim_keeps_complete_pairs_and_drops_the_partial_one(
+    panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """16 panel rows in, 13 out: only id=20's partial 202502 is removed."""
+    trimmed, _ = trim_incomplete_series_months(panel_df, calendar_df)
+
+    assert len(trimmed) == 13
+    kept = set(zip(trimmed["unique_id"], trimmed["ds"].dt.month, strict=True))
+    assert (10, 1) in kept and (10, 2) in kept  # id=10 complete in both months
+    assert (20, 1) in kept  # id=20 complete in 202501
+
+
+def test_trim_drops_whole_pairs_never_a_subset_of_one(
+    panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """The keep predicate is group-constant, so no row of a dropped pair survives."""
+    trimmed, _ = trim_incomplete_series_months(panel_df, calendar_df)
+
+    id_20_feb = trimmed[(trimmed["unique_id"] == 20) & (trimmed["ds"] >= WEEKS[4])]
+    assert id_20_feb.empty
+
+
+def test_trim_preserves_panel_columns(
+    panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """Returns the panel's three columns, not the calendar columns joined in."""
+    trimmed, _ = trim_incomplete_series_months(panel_df, calendar_df)
+    assert list(trimmed.columns) == ["unique_id", "ds", "y"]
+
+
+def test_trim_reads_weeks_in_month_rather_than_assuming_a_fixed_length(
+    panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """id=10's 202502 has 5 weeks and is kept; a hardcoded 4 would drop it."""
+    trimmed, dropped = trim_incomplete_series_months(panel_df, calendar_df)
+
+    id_10_feb = trimmed[(trimmed["unique_id"] == 10) & (trimmed["ds"] >= WEEKS[4])]
+    assert len(id_10_feb) == 5
+    assert 10 not in set(dropped["unique_id"])
+
+
+# ================================================
+# trim_incomplete_series_months — dropped_pairs contract
+# ================================================
+
+
+def test_dropped_pairs_names_exactly_the_dropped_pair(
+    panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """Pins the whole frame: one row, four columns, exact values."""
+    _, dropped = trim_incomplete_series_months(panel_df, calendar_df)
+
+    expected = pd.DataFrame(
+        {
+            "unique_id": [20],
+            "fiscal_year_month": [202502],
+            "weeks_present": [3],
+            "weeks_in_month": [5],
+        }
+    )
+    pd.testing.assert_frame_equal(dropped, expected, check_dtype=False)
+
+
+def test_dropped_pairs_is_pair_grain_not_row_grain(
+    panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """One row per dropped (series, month), though 3 panel rows were removed."""
+    _, dropped = trim_incomplete_series_months(panel_df, calendar_df)
+    assert len(dropped) == 1
+    assert not dropped.duplicated(["unique_id", "fiscal_year_month"]).any()
+
+
+def test_trim_counts_distinct_weeks_so_a_duplicated_week_cannot_fake_completeness(
+    duplicated_week_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """4 rows in a 4-week month, but only 3 distinct weeks — must still drop."""
+    trimmed, _ = trim_incomplete_series_months(duplicated_week_panel_df, calendar_df)
+    assert trimmed.empty
+
+
+def test_dropped_pairs_weeks_present_counts_distinct_weeks_not_rows(
+    duplicated_week_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """weeks_present reports distinct weeks, so a duplicate does not inflate it."""
+    _, dropped = trim_incomplete_series_months(duplicated_week_panel_df, calendar_df)
+    assert dropped.loc[0, "weeks_present"] == 3  # not 4, the row count
+
+
+def test_dropped_pairs_is_empty_with_declared_columns_when_nothing_is_dropped(
+    complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """An empty result still carries the four declared columns, not zero columns."""
+    trimmed, dropped = trim_incomplete_series_months(complete_panel_df, calendar_df)
+
+    assert len(trimmed) == len(complete_panel_df)
+    assert dropped.empty
+    assert list(dropped.columns) == [
+        "unique_id",
+        "fiscal_year_month",
+        "weeks_present",
+        "weeks_in_month",
+    ]
+
+
+# ================================================
+# trim_incomplete_series_months — guard clauses
+#
+# The postcondition (no partial pair survives) has no test: it is unreachable
+# by construction, since the keep predicate is group-constant and therefore
+# removes whole pairs. It guards against a future edit breaking that property,
+# not against any input.
+# ================================================
+
+
+@pytest.mark.parametrize("missing", ["unique_id", "ds", "y"])
+def test_trim_raises_when_panel_lacks_a_required_column(
+    panel_df: pd.DataFrame, calendar_df: pd.DataFrame, missing: str
+) -> None:
+    """Each panel column is required; dropping any one of them halts the trim."""
+    with pytest.raises(ValueError, match=r"panel_df is missing required columns"):
+        trim_incomplete_series_months(panel_df.drop(columns=[missing]), calendar_df)
+
+
+@pytest.mark.parametrize(
+    "missing", ["fiscal_year_month", "fiscal_week_of_month", "weeks_in_month"]
+)
+def test_trim_raises_when_calendar_lacks_a_required_column(
+    panel_df: pd.DataFrame, calendar_df: pd.DataFrame, missing: str
+) -> None:
+    """Each calendar column is required; dropping any one of them halts the trim."""
+    with pytest.raises(ValueError, match=r"calendar_df is missing required columns"):
+        trim_incomplete_series_months(panel_df, calendar_df.drop(columns=[missing]))
+
+
+def test_trim_raises_when_calendar_does_not_cover_a_panel_date(
+    panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """An unlabeled row would otherwise vanish silently, absent from dropped_pairs."""
+    orphan = pd.DataFrame(
+        {"unique_id": [10], "ds": [pd.Timestamp("1999-01-03")], "y": [1]}
+    )
+    panel_with_orphan = pd.concat([panel_df, orphan], ignore_index=True)
+
+    with pytest.raises(ValueError, match=r"does not cover 1 panel date"):
+        trim_incomplete_series_months(panel_with_orphan, calendar_df)
+
+
+def test_trim_coverage_error_reports_distinct_dates_not_rows(
+    panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """One bad date shared by many series is one problem, not many."""
+    orphans = pd.DataFrame(
+        {
+            "unique_id": [10, 20],
+            "ds": [pd.Timestamp("1999-01-03")] * 2,
+            "y": [1, 2],
+        }
+    )
+    panel_with_orphans = pd.concat([panel_df, orphans], ignore_index=True)
+
+    with pytest.raises(ValueError, match=r"does not cover 1 panel date"):
+        trim_incomplete_series_months(panel_with_orphans, calendar_df)
+
+
+# ================================================
+# build_weekly_features
+# ================================================
+
+
+def test_build_weekly_features_renames_ds_to_feature_row_ds(
+    complete_panel_df: pd.DataFrame,
+) -> None:
+    """The rename happens at the source, so no caller sees a bare ds."""
+    feats = build_weekly_features(
+        complete_panel_df, "W-SUN", lags=[1], lag_transforms={}
+    )
+    assert "feature_row_ds" in feats.columns
+    assert "ds" not in feats.columns
+
+
+def test_build_weekly_features_keeps_every_panel_row(
+    complete_panel_df: pd.DataFrame,
+) -> None:
+    """dropna=False: early weeks with NaN lags must survive attach_weekly_features."""
+    feats = build_weekly_features(
+        complete_panel_df, "W-SUN", lags=[1], lag_transforms={1: [RollingMean(4)]}
+    )
+    assert len(feats) == len(complete_panel_df)
+    assert feats["lag1"].isna().sum() == 2  # one first week per series
+
+
+def test_build_weekly_features_emits_native_mlforecast_names(
+    complete_panel_df: pd.DataFrame,
+) -> None:
+    """Native names are kept, which is what MLF_FEATURES is drift-gated against."""
+    feats = build_weekly_features(
+        complete_panel_df, "W-SUN", lags=[1], lag_transforms={1: [RollingMean(4)]}
+    )
+    emitted = set(feats.columns) - {"unique_id", "feature_row_ds", "y"}
+    assert emitted == {"lag1", "rolling_mean_lag1_window_size4"}
+
+
+def test_build_weekly_features_lag1_is_the_prior_week_within_each_series(
+    complete_panel_df: pd.DataFrame,
+) -> None:
+    """lag1 never crosses a series boundary; only each series' first week is NaN."""
+    feats = build_weekly_features(
+        complete_panel_df, "W-SUN", lags=[1], lag_transforms={}
+    ).sort_values(["unique_id", "feature_row_ds"])
+
+    prior_y = feats.groupby("unique_id")["y"].shift(1)
+    observed = feats["lag1"].notna()
+    assert (feats.loc[observed, "lag1"] == prior_y[observed]).all()
+    assert feats.loc[~observed, "feature_row_ds"].tolist() == [WEEKS[0], WEEKS[0]]
+
+
+@pytest.mark.parametrize("missing", ["unique_id", "ds", "y"])
+def test_build_weekly_features_raises_when_the_panel_lacks_a_column(
+    complete_panel_df: pd.DataFrame, missing: str
+) -> None:
+    """Without this, two of the three surface as a bare KeyError from MLForecast.
+
+    Dropping unique_id or ds raises inside preprocess naming neither the frame
+    nor the caller, so the check exists to put the failure back on the argument
+    the caller passed.
+    """
+    with pytest.raises(ValueError, match=r"panel is missing required columns"):
+        build_weekly_features(
+            complete_panel_df.drop(columns=[missing]),
+            "W-SUN",
+            lags=[1],
+            lag_transforms={},
+        )
+
+
+# ================================================
+# enumerate_origins
+#
+# Against the calendar fixture, only 202502 can have origins: origins targeting
+# 202501 are dropped (it is the first month, with no prior month to learn from)
+# and the final week is dropped (its shifted target month is NaN). So the spine is
+# 5 rows — weeks_actualized 0 through 4 — and every one carries weeks_in_month=5.
+# ================================================
+
+
+def test_enumerate_origins_returns_the_expected_spine(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """Pins the whole frame: 5 origins for 202502, weeks_actualized 0 through 4."""
+    expected = pd.DataFrame(
+        {
+            "target_month": [202502] * 5,
+            "forecast_origin_date": WEEKS[3:8],
+            "weeks_actualized": [0, 1, 2, 3, 4],
+            "weeks_in_month": [5] * 5,
+        }
+    )
+    pd.testing.assert_frame_equal(
+        enumerate_origins(calendar_df), expected, check_dtype=False
+    )
+
+
+def test_enumerate_origins_rolls_a_month_end_origin_forward(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """At fraction_elapsed == 1 the month is done, so the origin targets the next."""
+    spine = enumerate_origins(calendar_df)
+    month_end = spine[spine["forecast_origin_date"] == WEEKS[3]]
+
+    assert len(month_end) == 1
+    assert month_end["target_month"].item() == 202502
+    assert month_end["weeks_actualized"].item() == 0
+
+
+def test_enumerate_origins_takes_weeks_in_month_from_the_target_not_the_origin(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """The rolled-forward origin sits in 4-week 202501 but must carry 202502's 5."""
+    spine = enumerate_origins(calendar_df)
+    month_end = spine[spine["forecast_origin_date"] == WEEKS[3]]
+    assert month_end["weeks_in_month"].item() == 5
+
+
+def test_enumerate_origins_excludes_the_first_calendar_month(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """202501 has no prior month, so no origin may target it."""
+    assert 202501 not in set(enumerate_origins(calendar_df)["target_month"])
+
+
+def test_enumerate_origins_drops_the_final_week_with_no_next_month(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """The last week's shifted target month is NaN and cannot be an origin."""
+    assert WEEKS[8] not in set(enumerate_origins(calendar_df)["forecast_origin_date"])
+
+
+def test_enumerate_origins_is_unique_on_target_month_and_weeks_actualized(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """attach_workday_progress validates one_to_one, which relies on this."""
+    spine = enumerate_origins(calendar_df)
+    assert not spine.duplicated(["target_month", "weeks_actualized"]).any()
+
+
+def test_enumerate_origins_does_not_mutate_the_calendar(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """It writes target_month and weeks_actualized, but only to its own copy."""
+    before = calendar_df.copy()
+    enumerate_origins(calendar_df)
+    pd.testing.assert_frame_equal(calendar_df, before)
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "ds",
+        "fiscal_year_month",
+        "fiscal_week_of_month",
+        "weeks_in_month",
+        "origin_month_fraction_elapsed",
+    ],
+)
+def test_enumerate_origins_raises_when_the_calendar_lacks_a_required_column(
+    calendar_df: pd.DataFrame, missing: str
+) -> None:
+    """Each of the five is read by the body; none is optional."""
+    with pytest.raises(ValueError, match=r"calendar_df is missing required columns"):
+        enumerate_origins(calendar_df.drop(columns=[missing]))
+
+
+# ================================================
+# attach_workday_progress
+#
+# Expected for 202502 (21 workdays total), by weeks_actualized:
+#   0 -> elapsed 0,  remaining 21      3 -> elapsed 14, remaining 7
+#   1 -> elapsed 5,  remaining 16      4 -> elapsed 19, remaining 2
+#   2 -> elapsed 10, remaining 11
+# ================================================
+
+
+@pytest.fixture
+def origin_spine(calendar_df: pd.DataFrame) -> pd.DataFrame:
+    return enumerate_origins(calendar_df)
+
+
+def test_attach_workday_progress_manufactures_zero_at_the_month_end_origin(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """weeks_actualized=0 has no calendar week, so its 0 must be supplied, not NaN."""
+    progressed = attach_workday_progress(origin_spine, calendar_df)
+    zero = progressed[progressed["weeks_actualized"] == 0]
+
+    assert len(zero) == 1
+    assert zero["workdays_elapsed"].notna().all()
+    assert zero["workdays_elapsed"].item() == 0
+    assert zero["workdays_remaining"].item() == zero["number_workdays"].item()
+
+
+def test_attach_workday_progress_computes_the_expected_columns(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """Non-uniform workday counts, so an off-by-one in the cumsum is visible."""
+    progressed = attach_workday_progress(origin_spine, calendar_df)
+
+    assert progressed["workdays_elapsed"].tolist() == [0, 5, 10, 14, 19]
+    assert progressed["workdays_remaining"].tolist() == [21, 16, 11, 7, 2]
+
+
+def test_attach_workday_progress_uses_the_target_months_workday_total(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """The rolled-forward origin sits in 202501 (17) but must carry 202502's 21."""
+    progressed = attach_workday_progress(origin_spine, calendar_df)
+    month_end = progressed[progressed["forecast_origin_date"] == WEEKS[3]]
+
+    assert month_end["number_workdays"].item() == 21
+
+
+def test_attach_workday_progress_leaves_no_nulls(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """The week-zero row makes the join total, so no column may come back null."""
+    progressed = attach_workday_progress(origin_spine, calendar_df)
+    added = ["number_workdays", "workdays_elapsed", "workdays_remaining"]
+    assert not progressed[added].isna().any().any()
+
+
+def test_attach_workday_progress_preserves_spine_rows_and_order(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """A lookup must not reorder or drop the frame it is attached to."""
+    progressed = attach_workday_progress(origin_spine, calendar_df)
+    pd.testing.assert_frame_equal(
+        progressed[origin_spine.columns.tolist()], origin_spine
+    )
+
+
+def test_attach_workday_progress_does_not_mutate_the_spine(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """The caller's frame must not gain columns as a side effect."""
+    before = origin_spine.copy()
+    attach_workday_progress(origin_spine, calendar_df)
+    pd.testing.assert_frame_equal(origin_spine, before)
+
+
+def test_attach_workday_progress_raises_on_a_duplicated_calendar_week(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """A duplicate lookup key would silently fan origins out; one_to_one blocks it."""
+    duplicated = pd.concat([calendar_df, calendar_df.iloc[[5]]], ignore_index=True)
+    with pytest.raises(pd.errors.MergeError):
+        attach_workday_progress(origin_spine, duplicated)
+
+
+def test_attach_workday_progress_raises_on_a_duplicated_spine_origin(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """one_to_one guards the left side too, catching a malformed spine."""
+    duplicated = pd.concat([origin_spine, origin_spine.iloc[[2]]], ignore_index=True)
+    with pytest.raises(pd.errors.MergeError):
+        attach_workday_progress(duplicated, calendar_df)
+
+
+def test_attach_workday_progress_raises_when_a_target_month_is_absent(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """A month missing from the calendar must halt, not silently become zero."""
+    without_target = calendar_df[calendar_df["fiscal_year_month"] != 202502]
+    with pytest.raises(ValueError, match=r"NaN"):
+        attach_workday_progress(origin_spine, without_target)
+
+
+@pytest.mark.parametrize(
+    "missing", ["fiscal_year_month", "fiscal_week_of_month", "count_workdays"]
+)
+def test_attach_workday_progress_raises_when_the_calendar_lacks_a_column(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame, missing: str
+) -> None:
+    """The workday lookup needs all three; none is optional."""
+    with pytest.raises(ValueError, match=r"calendar_df is missing required columns"):
+        attach_workday_progress(origin_spine, calendar_df.drop(columns=[missing]))
+
+
+@pytest.mark.parametrize("missing", ["target_month", "weeks_actualized"])
+def test_attach_workday_progress_raises_when_the_spine_lacks_a_column(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame, missing: str
+) -> None:
+    """Both are merge keys; the other spine columns only pass through."""
+    with pytest.raises(ValueError, match=r"origin_spine is missing required columns"):
+        attach_workday_progress(origin_spine.drop(columns=[missing]), calendar_df)
+
+
+def test_attach_workday_progress_is_insensitive_to_calendar_row_order(
+    origin_spine: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """cumsum is order-dependent, so the function must sort before accumulating."""
+    shuffled = calendar_df.sample(frac=1, random_state=0)
+    pd.testing.assert_frame_equal(
+        attach_workday_progress(origin_spine, calendar_df),
+        attach_workday_progress(origin_spine, shuffled),
+    )
+
+
+# ================================================
+# build_origin_series_grid / attach_mtd_revenue
+#
+# Only 202502 has origins (5 of them), so the grid is 5 x however many series are
+# active in 202502. actual_monthly_df matches complete_panel_df: 202501 totals are
+# 100 / 1000 and 202502 totals are 350 / 3500.
+#
+# complete_panel_df's 202502 weeks are y = 50,60,70,80,90 for id=10 and
+# 500,...,900 for id=20, so month-to-date runs 0, 50, 110, 180, 260 and
+# 0, 500, 1100, 1800, 2600 across weeks_actualized 0 through 4.
+# ================================================
+
+
+@pytest.fixture
+def actual_monthly_df() -> pd.DataFrame:
+    """Both series active in both months; totals match complete_panel_df."""
+    return pd.DataFrame(
+        {
+            "unique_id": [10, 10, 20, 20],
+            "fiscal_year_month": [202501, 202502, 202501, 202502],
+            "actual_monthly_total": [100.0, 350.0, 1000.0, 3500.0],
+        }
+    )
+
+
+@pytest.fixture
+def short_history_actual_monthly_df() -> pd.DataFrame:
+    """id=20 is active only in 202501, so it has no realized 202502 total."""
+    return pd.DataFrame(
+        {
+            "unique_id": [10, 10, 20],
+            "fiscal_year_month": [202501, 202502, 202501],
+            "actual_monthly_total": [100.0, 350.0, 1000.0],
+        }
+    )
+
+
+def test_grid_fans_each_origin_across_every_active_series(
+    origin_spine: pd.DataFrame, actual_monthly_df: pd.DataFrame
+) -> None:
+    """5 origins x 2 series active in 202502 = 10 rows."""
+    grid = build_origin_series_grid(origin_spine, actual_monthly_df)
+
+    assert len(grid) == 10
+    assert grid.groupby("forecast_origin_date").size().tolist() == [2] * 5
+
+
+def test_grid_omits_a_series_with_no_realized_total_for_the_target_month(
+    origin_spine: pd.DataFrame, short_history_actual_monthly_df: pd.DataFrame
+) -> None:
+    """The inner join builds from actuals, so no pre-history rows are manufactured."""
+    grid = build_origin_series_grid(origin_spine, short_history_actual_monthly_df)
+
+    assert len(grid) == 5
+    assert set(grid["unique_id"]) == {10}
+
+
+def test_grid_keeps_actual_monthly_total_under_its_own_name(
+    origin_spine: pd.DataFrame, actual_monthly_df: pd.DataFrame
+) -> None:
+    """A framing renames it if its own target differs; the builder does not."""
+    grid = build_origin_series_grid(origin_spine, actual_monthly_df)
+    assert "actual_monthly_total" in grid.columns
+
+
+def test_grid_preserves_every_spine_column(
+    origin_spine: pd.DataFrame, actual_monthly_df: pd.DataFrame
+) -> None:
+    """Workday progress attached upstream must survive the fan-out."""
+    grid = build_origin_series_grid(origin_spine, actual_monthly_df)
+    assert set(origin_spine.columns) <= set(grid.columns)
+
+
+def test_grid_does_not_mutate_its_inputs(
+    origin_spine: pd.DataFrame, actual_monthly_df: pd.DataFrame
+) -> None:
+    """Neither caller frame may gain or lose a column."""
+    spine_before, actuals_before = origin_spine.copy(), actual_monthly_df.copy()
+    build_origin_series_grid(origin_spine, actual_monthly_df)
+    pd.testing.assert_frame_equal(origin_spine, spine_before)
+    pd.testing.assert_frame_equal(actual_monthly_df, actuals_before)
+
+
+def test_grid_raises_on_a_duplicated_spine_origin(
+    origin_spine: pd.DataFrame, actual_monthly_df: pd.DataFrame
+) -> None:
+    """validate= cannot guard a deliberate fan-out, so the result is checked instead."""
+    duplicated = pd.concat([origin_spine, origin_spine.iloc[[1]]], ignore_index=True)
+    with pytest.raises(ValueError, match=r"duplicate rows"):
+        build_origin_series_grid(duplicated, actual_monthly_df)
+
+
+def test_grid_raises_on_a_duplicated_actuals_row(
+    origin_spine: pd.DataFrame, actual_monthly_df: pd.DataFrame
+) -> None:
+    """A repeated (series, month) would double every origin's row for that pair."""
+    duplicated = pd.concat(
+        [actual_monthly_df, actual_monthly_df.iloc[[1]]], ignore_index=True
+    )
+    with pytest.raises(ValueError, match=r"duplicate rows"):
+        build_origin_series_grid(origin_spine, duplicated)
+
+
+@pytest.mark.parametrize("missing", ["target_month", "forecast_origin_date"])
+def test_grid_raises_when_the_spine_lacks_a_column(
+    origin_spine: pd.DataFrame, actual_monthly_df: pd.DataFrame, missing: str
+) -> None:
+    """forecast_origin_date is required by the uniqueness check, not by the merge."""
+    with pytest.raises(ValueError, match=r"origin_spine is missing required columns"):
+        build_origin_series_grid(
+            origin_spine.drop(columns=[missing]), actual_monthly_df
+        )
+
+
+@pytest.mark.parametrize(
+    "missing", ["unique_id", "fiscal_year_month", "actual_monthly_total"]
+)
+def test_grid_raises_when_the_actuals_lack_a_column(
+    origin_spine: pd.DataFrame, actual_monthly_df: pd.DataFrame, missing: str
+) -> None:
+    """All three are needed: two to join and key, one to attach."""
+    with pytest.raises(ValueError, match=r"actual_monthly_df is missing required"):
+        build_origin_series_grid(
+            origin_spine, actual_monthly_df.drop(columns=[missing])
+        )
+
+
+@pytest.fixture
+def grid(origin_spine: pd.DataFrame, actual_monthly_df: pd.DataFrame) -> pd.DataFrame:
+    return build_origin_series_grid(origin_spine, actual_monthly_df)
+
+
+def test_attach_mtd_manufactures_zero_at_the_month_end_origin(
+    grid: pd.DataFrame, complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """weeks_actualized=0 has no calendar week, so its 0 must be supplied, not NaN."""
+    out = attach_mtd_revenue(grid, complete_panel_df, calendar_df)
+    zero = out[out["weeks_actualized"] == 0]
+
+    assert len(zero) == 2
+    assert zero["mtd_revenue"].notna().all()
+    assert zero["mtd_revenue"].tolist() == [0.0, 0.0]
+
+
+def test_attach_mtd_accumulates_within_the_target_month(
+    grid: pd.DataFrame, complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """id=10's 202502 weeks are 50,60,70,80,90, so MTD runs 0, 50, 110, 180, 260."""
+    out = attach_mtd_revenue(grid, complete_panel_df, calendar_df)
+    id_10 = out[out["unique_id"] == 10].sort_values("weeks_actualized")
+
+    assert id_10["mtd_revenue"].tolist() == [0.0, 50.0, 110.0, 180.0, 260.0]
+
+
+def test_attach_mtd_does_not_leak_the_prior_months_revenue(
+    grid: pd.DataFrame, complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """The cumsum restarts each month; 202501's 100 must not carry into 202502."""
+    out = attach_mtd_revenue(grid, complete_panel_df, calendar_df)
+    first_observed = out[(out["unique_id"] == 10) & (out["weeks_actualized"] == 1)]
+
+    assert first_observed["mtd_revenue"].item() == 50.0
+
+
+def test_attach_mtd_returns_float_even_though_y_is_integral(
+    grid: pd.DataFrame, complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """The cast makes the dtype independent of whether the target happens to be int."""
+    assert complete_panel_df["y"].dtype == "int64"
+    out = attach_mtd_revenue(grid, complete_panel_df, calendar_df)
+    assert out["mtd_revenue"].dtype == "float64"
+
+
+def test_attach_mtd_leaves_no_nulls(
+    grid: pd.DataFrame, complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """The week-zero row makes the join total, so every grid row must match."""
+    out = attach_mtd_revenue(grid, complete_panel_df, calendar_df)
+    assert not out["mtd_revenue"].isna().any()
+
+
+def test_attach_mtd_preserves_grid_rows_and_order(
+    grid: pd.DataFrame, complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """An attach adds a column; it must not reorder or drop rows."""
+    out = attach_mtd_revenue(grid, complete_panel_df, calendar_df)
+    pd.testing.assert_frame_equal(out[grid.columns.tolist()], grid)
+
+
+def test_attach_mtd_does_not_mutate_its_inputs(
+    grid: pd.DataFrame, complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """The caller's grid must not gain mtd_revenue as a side effect."""
+    grid_before, panel_before = grid.copy(), complete_panel_df.copy()
+    attach_mtd_revenue(grid, complete_panel_df, calendar_df)
+    pd.testing.assert_frame_equal(grid, grid_before)
+    pd.testing.assert_frame_equal(complete_panel_df, panel_before)
+
+
+def test_attach_mtd_raises_when_the_panel_lacks_a_week_the_grid_expects(
+    grid: pd.DataFrame, complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """A missing week must halt, not silently become a zero month-to-date."""
+    without_a_week = complete_panel_df[complete_panel_df["ds"] != WEEKS[5]]
+    with pytest.raises(ValueError, match=r"no MTD match"):
+        attach_mtd_revenue(grid, without_a_week, calendar_df)
+
+
+def test_attach_mtd_raises_on_a_duplicated_panel_week(
+    grid: pd.DataFrame, complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """one_to_one catches the same defect the trim's distinct-week count guards."""
+    duplicated = pd.concat(
+        [complete_panel_df, complete_panel_df.iloc[[5]]], ignore_index=True
+    )
+    with pytest.raises(pd.errors.MergeError):
+        attach_mtd_revenue(grid, duplicated, calendar_df)
+
+
+@pytest.mark.parametrize("missing", ["unique_id", "target_month", "weeks_actualized"])
+def test_attach_mtd_raises_when_the_grid_lacks_a_column(
+    grid: pd.DataFrame,
+    complete_panel_df: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    missing: str,
+) -> None:
+    """All three are merge keys."""
+    with pytest.raises(ValueError, match=r"grid_df is missing required columns"):
+        attach_mtd_revenue(grid.drop(columns=[missing]), complete_panel_df, calendar_df)
+
+
+@pytest.mark.parametrize("missing", ["unique_id", "ds", "y"])
+def test_attach_mtd_raises_when_the_panel_lacks_a_column(
+    grid: pd.DataFrame,
+    complete_panel_df: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    missing: str,
+) -> None:
+    """The cumulative sum needs all three."""
+    with pytest.raises(ValueError, match=r"panel_df is missing required columns"):
+        attach_mtd_revenue(grid, complete_panel_df.drop(columns=[missing]), calendar_df)
+
+
+def test_grid_is_empty_when_no_series_is_active_in_the_target_month(
+    origin_spine: pd.DataFrame,
+) -> None:
+    """A calendar running ahead of the data must yield no rows, not NaN-target rows."""
+    only_first_month = pd.DataFrame(
+        {
+            "unique_id": [10, 20],
+            "fiscal_year_month": [202501, 202501],
+            "actual_monthly_total": [100.0, 1000.0],
+        }
+    )
+    grid = build_origin_series_grid(origin_spine, only_first_month)
+
+    assert grid.empty
+    assert list(grid.columns) == [
+        *origin_spine.columns,
+        "unique_id",
+        "actual_monthly_total",
+    ]
+
+
+# ================================================
+# attach_weekly_features
+#
+# The join key is the subtle part: forecast_origin_date = W is the last observed
+# week, but MLForecast names a feature row after the week it predicts, so the row
+# whose lag1 == y[W] is the one at W + 1 week.
+#
+# complete_panel_df's id=10 runs y = 10,20,...,90 across WEEKS[0..8], so an origin
+# at WEEKS[3] must see lag1 = 40 — the origin week's own value.
+# ================================================
+
+
+@pytest.fixture
+def origin_target_table() -> pd.DataFrame:
+    """Four origins for one series, at WEEKS[2] through WEEKS[5]."""
+    return pd.DataFrame(
+        {
+            "unique_id": 10,
+            "forecast_origin_date": WEEKS[2:6],
+            "target_month": [202501, 202501, 202502, 202502],
+        }
+    )
+
+
+@pytest.fixture
+def weekly_features_frame(complete_panel_df: pd.DataFrame) -> pd.DataFrame:
+    return build_weekly_features(
+        complete_panel_df, "W-SUN", lags=[1], lag_transforms={}
+    )
+
+
+def test_attach_weekly_features_keys_one_period_after_the_origin(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame
+) -> None:
+    """feature_row_ds = W + 1 week: the row MLForecast named for the following week."""
+    joined = attach_weekly_features(origin_target_table, weekly_features_frame)
+
+    expected = origin_target_table["forecast_origin_date"] + pd.Timedelta(weeks=1)
+    assert joined["feature_row_ds"].tolist() == expected.tolist()
+
+
+def test_attach_weekly_features_gives_each_origin_its_own_weeks_value_as_lag1(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame
+) -> None:
+    """The whole point of W+1: lag1 is y[W], not y[W-1]. Off by one and it is stale."""
+    joined = attach_weekly_features(origin_target_table, weekly_features_frame)
+
+    # id=10 has y = 10,20,...,90 across WEEKS[0..8]; origins are WEEKS[2..5]
+    assert joined["lag1"].tolist() == [30.0, 40.0, 50.0, 60.0]
+
+
+def test_attach_weekly_features_would_be_stale_if_keyed_at_the_origin_itself(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame
+) -> None:
+    """Pins the failure mode: joining at W gives y[W-1], one week out of date."""
+    at_origin = origin_target_table.merge(
+        weekly_features_frame.rename(
+            columns={"feature_row_ds": "forecast_origin_date"}
+        ),
+        on=["unique_id", "forecast_origin_date"],
+        how="left",
+    )
+    assert at_origin["lag1"].tolist() == [20.0, 30.0, 40.0, 50.0]  # each one week stale
+
+
+def test_attach_weekly_features_drops_the_future_valued_y(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame
+) -> None:
+    """y on the fetched row is y[W+1] — a week that has not happened at the origin."""
+    joined = attach_weekly_features(origin_target_table, weekly_features_frame)
+    assert "y" not in joined.columns
+
+
+def test_attach_weekly_features_returns_a_superset_and_selects_nothing(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame
+) -> None:
+    """Bounding the model matrix is ModelingTableSchema's job, not the builder's."""
+    joined = attach_weekly_features(origin_target_table, weekly_features_frame)
+    assert set(origin_target_table.columns) <= set(joined.columns)
+    assert {"feature_row_ds", "lag1"} <= set(joined.columns)
+
+
+def test_attach_weekly_features_preserves_origin_rows_and_order(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame
+) -> None:
+    """An attach adds columns; it must not reorder or drop origins."""
+    joined = attach_weekly_features(origin_target_table, weekly_features_frame)
+    pd.testing.assert_frame_equal(
+        joined[origin_target_table.columns.tolist()], origin_target_table
+    )
+
+
+def test_attach_weekly_features_does_not_mutate_its_inputs(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame
+) -> None:
+    """The caller's origin table must not gain feature_row_ds as a side effect."""
+    before = origin_target_table.copy()
+    attach_weekly_features(origin_target_table, weekly_features_frame)
+    pd.testing.assert_frame_equal(origin_target_table, before)
+
+
+def test_attach_weekly_features_raises_on_a_duplicated_feature_row(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame
+) -> None:
+    """one_to_one guards the right side: a repeated week would fan origins out."""
+    duplicated = pd.concat(
+        [weekly_features_frame, weekly_features_frame.iloc[[3]]], ignore_index=True
+    )
+    with pytest.raises(pd.errors.MergeError):
+        attach_weekly_features(origin_target_table, duplicated)
+
+
+def test_attach_weekly_features_raises_on_two_targets_sharing_one_origin(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame
+) -> None:
+    """one_to_one encodes a precondition: each origin targets exactly one month.
+
+    A multi-horizon framing would need many_to_one instead; this pins the current
+    assumption so the change is deliberate rather than discovered.
+    """
+    two_targets = pd.concat(
+        [
+            origin_target_table,
+            origin_target_table.iloc[[0]].assign(target_month=202502),
+        ],
+        ignore_index=True,
+    )
+    with pytest.raises(pd.errors.MergeError):
+        attach_weekly_features(two_targets, weekly_features_frame)
+
+
+@pytest.mark.parametrize("missing", ["unique_id", "forecast_origin_date"])
+def test_attach_weekly_features_raises_when_the_origin_table_lacks_a_column(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame, missing: str
+) -> None:
+    """Both are merge keys; a bare KeyError could not say which frame was at fault."""
+    with pytest.raises(ValueError, match=r"origin_target_table is missing required"):
+        attach_weekly_features(
+            origin_target_table.drop(columns=[missing]), weekly_features_frame
+        )
+
+
+@pytest.mark.parametrize("missing", ["unique_id", "feature_row_ds", "y"])
+def test_attach_weekly_features_raises_when_the_features_lack_a_column(
+    origin_target_table: pd.DataFrame, weekly_features_frame: pd.DataFrame, missing: str
+) -> None:
+    """y is required so its removal is provable, not merely assumed."""
+    with pytest.raises(ValueError, match=r"weekly_features is missing required"):
+        attach_weekly_features(
+            origin_target_table, weekly_features_frame.drop(columns=[missing])
+        )
+
+
+# ================================================
+# Calendar-join fan-out guards
+#
+# Three merges join a frame to calendar_df on ds. A repeated calendar ds fans the
+# left side out, and the extra rows are manufactured HERE rather than arriving in
+# the input — which is the line these guards draw. A duplicated PANEL row is the
+# other side of that line: it arrives duplicated, is passed through, and is
+# data-prep's business, not this module's.
+# ================================================
+
+
+def test_trim_raises_on_a_duplicated_calendar_ds(
+    complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """The fan-out the completeness check cannot see: nunique is blind to repeats."""
+    duplicated = pd.concat([calendar_df, calendar_df.iloc[[0]]], ignore_index=True)
+    with pytest.raises(pd.errors.MergeError):
+        trim_incomplete_series_months(complete_panel_df, duplicated)
+
+
+def test_trim_passes_a_duplicated_panel_row_through_untouched(
+    complete_panel_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> None:
+    """Panel duplicates arrive that way and are not this module's to reject."""
+    doubled = pd.concat(
+        [complete_panel_df, complete_panel_df.iloc[[0]]], ignore_index=True
+    )
+    trimmed, _ = trim_incomplete_series_months(doubled, calendar_df)
+    assert len(trimmed) == len(doubled)
+
+
+def test_attach_mtd_raises_on_a_duplicated_calendar_ds(
+    origin_spine: pd.DataFrame,
+    actual_monthly_df: pd.DataFrame,
+    complete_panel_df: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+) -> None:
+    """Names the calendar join rather than failing two steps later at mtd_lookup."""
+    grid = build_origin_series_grid(origin_spine, actual_monthly_df)
+    duplicated = pd.concat([calendar_df, calendar_df.iloc[[0]]], ignore_index=True)
+    with pytest.raises(pd.errors.MergeError):
+        attach_mtd_revenue(grid, complete_panel_df, duplicated)

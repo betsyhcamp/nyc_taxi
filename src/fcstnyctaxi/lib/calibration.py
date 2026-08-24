@@ -7,10 +7,13 @@ from tsbricks.backtesting import generate_folds
 from tsbricks.backtesting.schema import CrossValidationConfig, DataConfig
 from tsbricks.runner import invoke_model, invoke_predict
 
-from fcstnyctaxi.lib.cross_validation_utils import sorted_origin_horizon_pairs
 from fcstnyctaxi.lib.metrics import weighted_mae
 from fcstnyctaxi.lib.monthly_aggregation import build_monthly_forecast_vs_actual
-from fcstnyctaxi.lib.period_utils import compute_series_weights, derive_horizon_label
+from fcstnyctaxi.lib.period_utils import (
+    compute_series_weights,
+    derive_horizon_label,
+    normalized_origin_horizon_pairs,
+)
 
 
 def most_parsimonious_n_estimators(
@@ -97,7 +100,7 @@ def calibrate_n_estimators(
 
     cv_folds, _ = generate_folds(ts_df, calibration_cv_config, data_config)
 
-    origin_horizon_pairs = sorted_origin_horizon_pairs(
+    origin_horizon_pairs = normalized_origin_horizon_pairs(
         calibration_cv_config.origin_horizon_pairs(), data_config.freq
     )
 
