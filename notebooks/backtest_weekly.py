@@ -439,29 +439,14 @@ def _dict_diff(new_obj, ref_obj, path: str = "") -> list[str]:
 
 
 # %%
-# TEMPORARY — delete this constant and both call-site arguments once the
-# registered reference itself carries datetime64[ns] origins.
-#
-# ORIGIN_TIME_UNIT moved forecast_origin_date from ms to ns, so this run's
-# artifacts differ in dtype from a reference written before that change. The
-# exception is scoped to dtype only: values are still compared, and every
-# other column stays strict. Discharge is checkable, not remembered — read
-# forecast_origin_date's dtype on the registered sidecar; if it is already ns,
-# nothing is being excused and this can go.
-ORIGIN_DTYPE_MIGRATION = {"forecast_origin_date"}
-
-
 def compare_sidecars(new_uri: str, reference_uri: str) -> pd.DataFrame:
     """Check that a re-run reproduced a prior registration.
 
     Compares the run's inputs (composed config, time-series snapshot, fiscal
     calendar), monthly_series.parquet, and raw_cv_forecasts.parquet against a
-    reference sidecar. See notes/spec__weekly_sidecar_forecast_components.md
-    for the full check list and the rationale behind each.
-
-    Requires a prior registered run of the SAME model. There is nothing to
-    compare against otherwise, which is why this is a separate function rather
-    than an optional mode of validate_sidecar(): callers running a new model
+    reference sidecar. Requires a prior registered run of the SAME model. There is
+    nothing to compare against otherwise, which is why this is a separate function
+    rather than an optional mode of validate_sidecar(): callers running a new model
     skip it entirely instead of reading rows that report "not applicable".
 
     Every check runs and reports; nothing raises on failure, so one call
@@ -522,10 +507,7 @@ def compare_sidecars(new_uri: str, reference_uri: str) -> pd.DataFrame:
         absent = "new" if ms_new is None else "reference"
         record("monthly_series unchanged", False, f"unreadable in {absent} sidecar")
     else:
-        record(
-            "monthly_series unchanged",
-            *_compare_frames(ms_new, ms_ref, ORIGIN_DTYPE_MIGRATION),
-        )
+        record("monthly_series unchanged", *_compare_frames(ms_new, ms_ref))
 
     # -- raw_cv_forecasts identical --------------------------------------
     # Independent of the monthly_series comparison, not a restatement of it:
@@ -539,7 +521,7 @@ def compare_sidecars(new_uri: str, reference_uri: str) -> pd.DataFrame:
         absent = "new" if raw_new is None else "reference"
         record("raw_cv_forecasts unchanged", False, f"unreadable in {absent} sidecar")
     else:
-        passed, detail = _compare_frames(raw_new, raw_ref, ORIGIN_DTYPE_MIGRATION)
+        passed, detail = _compare_frames(raw_new, raw_ref)
         record("raw_cv_forecasts unchanged", passed, detail)
 
     return pd.DataFrame(results, columns=["check", "status", "detail"])

@@ -28,4 +28,4 @@ runs:
       # note use of sidecar_uri for a run that isn't located in default_base_uri
   - model: lightgbm_direct_smoketest
     framing: direct_month
-    sidecar_uri: gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_direct_month/20260812T041455920699Z/
+    sidecar_uri: gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_direct_month/20260824T005310842746Z/
