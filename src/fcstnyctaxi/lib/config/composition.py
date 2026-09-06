@@ -12,6 +12,7 @@ from typing import Any
 import yaml
 from tsbricks.backtesting.schema import BacktestConfig, parse_config
 
+from fcstnyctaxi.lib.config.loading import _load_config_file
 from fcstnyctaxi.lib.io import write_text_to_gcs
 
 
@@ -33,10 +34,7 @@ def merge_configs(*configs: dict | str | Path) -> BacktestConfig:
         if isinstance(element, dict):
             merged = _deep_merge(merged, element)
         elif isinstance(element, (str | Path)):
-            loaded_config = yaml.safe_load(Path(element).read_text())
-            if loaded_config is None:
-                raise ValueError(f"Config is empty at path {element}")
-            merged = _deep_merge(merged, loaded_config)
+            merged = _deep_merge(merged, _load_config_file(Path(element)))
         else:
             raise ValueError(
                 f"Passed {type(element).__name__}; only allow dict, str, or Path"
