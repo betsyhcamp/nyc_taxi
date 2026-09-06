@@ -20,7 +20,7 @@ import yaml
 import fsspec  # reads composed_config.yaml from GCS in compare_sidecars
 
 from fcstnyctaxi.lib.backtest_results import build_backtest_results, build_cv_results
-from fcstnyctaxi.lib.config_utils import merge_configs, save_config
+from fcstnyctaxi.lib.config.composition import merge_configs, save_config
 from fcstnyctaxi.lib.io import write_text_to_gcs
 from fcstnyctaxi.lib.monthly_aggregation import (
     build_monthly_forecast_vs_actual,

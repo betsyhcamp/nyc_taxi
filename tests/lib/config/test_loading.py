@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from fcstnyctaxi.lib.config import load_pipeline_config
+from fcstnyctaxi.lib.config.loading import load_pipeline_config
 
 
 @pytest.mark.parametrize("extension", [".yaml", ".yml"])

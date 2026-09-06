@@ -5,7 +5,7 @@ import os
 
 import kfp.local
 
-from fcstnyctaxi.lib.config import load_pipeline_config
+from fcstnyctaxi.lib.config.loading import load_pipeline_config
 from fcstnyctaxi.lib.io import (
     build_run_scoped_uri,
     prepare_sql,

@@ -5,7 +5,7 @@ import os
 from google.cloud import aiplatform
 from kfp import compiler
 
-from fcstnyctaxi.lib.config import load_pipeline_config
+from fcstnyctaxi.lib.config.loading import load_pipeline_config
 from fcstnyctaxi.lib.io import (
     build_run_scoped_uri,
     prepare_sql,

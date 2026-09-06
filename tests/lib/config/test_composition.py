@@ -7,7 +7,7 @@ import yaml
 from pytest_mock import MockerFixture
 from tsbricks.backtesting.schema import BacktestConfig
 
-from fcstnyctaxi.lib.config_utils import _deep_merge, merge_configs, save_config
+from fcstnyctaxi.lib.config.composition import _deep_merge, merge_configs, save_config
 
 # Minimum valid BacktestConfig as a plain dict — reused across multiple tests
 _MINIMAL_CONFIG: dict = {
@@ -171,7 +171,7 @@ def test_save_config_routes_gcs_path_to_write_text_to_gcs(
 ) -> None:
     """save_config calls write_text_to_gcs for gs:// paths, not local write."""
     gcs_uri = "gs://bucket/sidecar/composed_config.yaml"
-    mock_write = mocker.patch("fcstnyctaxi.lib.config_utils.write_text_to_gcs")
+    mock_write = mocker.patch("fcstnyctaxi.lib.config.composition.write_text_to_gcs")
     save_config(_MINIMAL_CONFIG, gcs_uri)
     mock_write.assert_called_once()
     assert mock_write.call_args.kwargs["gcs_uri"] == gcs_uri

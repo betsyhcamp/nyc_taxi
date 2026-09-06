@@ -35,7 +35,7 @@ from fcstnyctaxi.lib.monthly_aggregation import compute_actual_monthly_totals
 from fcstnyctaxi.lib.period_utils import generate_origins_for_periods
 from fcstnyctaxi.lib.io import write_text_to_gcs
 from fcstnyctaxi.lib.utils import get_project_root_dir, generate_run_id
-from fcstnyctaxi.lib.config_utils import save_config
+from fcstnyctaxi.lib.config.composition import save_config
 
 # %%
 project_root = get_project_root_dir()
