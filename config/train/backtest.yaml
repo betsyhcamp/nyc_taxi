@@ -1,0 +1,38 @@
+# The tsbricks-owned BacktestConfig, second layer.
+#
+# Transcribed from notebooks/backtest_configs/backtest_config.yaml minus `data`
+# (now base/data.yaml) and minus `evaluation_periods` (now train/modeling.yaml,
+# where it has a schema that will not silently drop it).
+#
+# Partial by construction — no `data` block and no `model` block — so this
+# fragment cannot validate against BacktestConfig alone. It is checked at
+# fragment level only until composition.
+cross_validation:
+  mode: explicit # the only supported mode
+  # forecast_origins is required with min_length=1 and is always injected at
+  # runtime, derived from the panel's last complete actual month. It is the only
+  # runtime override; data locations are lineage and live in run_identity.json.
+
+evaluation:
+  native:
+    metrics:
+      definitions:
+        - name: mae
+          callable: tsbricks.blocks.metrics.mae
+          type: simple
+  aggregated:
+    metrics:
+      definitions:
+        - name: mae
+          callable: tsbricks.blocks.metrics.mae
+          type: simple
+
+aggregation:
+  # Declared null and never injected. calendar_source is the last rung of a
+  # three-way fallback in tsbricks for callers who do not hold the calendar;
+  # this project stages both artifacts and passes calendar_df directly, so the
+  # rung is deliberately unused. Kept so the fragment says so at the point of use.
+  calendar_source: null
+  timestamp_col: ds
+  period_col: fiscal_year_month
+  agg_func: sum

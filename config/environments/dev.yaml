@@ -1,0 +1,37 @@
+# EnvironmentConfig — shared by all three slices.
+#
+# There is no `env` key: the environment is the selector that chose this file,
+# so declaring it here would be a second source of a derived fact. It is
+# recorded in the emitted manifest.json instead.
+#
+# There is no `service_accounts` block: pending an infosec determination,
+# accounts are supplied at submit time via FCST_{SLICE}_SERVICE_ACCOUNT. See
+# .env.example.
+gcp:
+  project_id: nyc-taxi-ehc
+  location: us-central1
+  bucket_name: nyc-taxi-ehc--modeling
+
+vertex:
+  pipeline_root: gs://nyc-taxi-ehc--modeling/vertex-pipeline-roots/
+
+artifact_registry:
+  # Deliberately independent of gcp.* — a shared registry commonly lives in a
+  # separate project, and registry region diverges from compute region more
+  # often than project does. Coincident today; not the same fact.
+  #
+  # Images carry repository and name only. The tag is the git hash, resolved at
+  # build and submit time, so committing one here would be a second source of
+  # truth for a value the release process owns.
+  project_id: nyc-taxi-ehc
+  location: us-central1
+  images:
+    feature:
+      repository: fcst-data-ingress-pipeline
+      image: extract-db-to-bucket
+    train:
+      repository: fcst-training-pipeline
+      image: fcst-training
+    inference:
+      repository: fcst-inference-pipeline
+      image: fcst-inference

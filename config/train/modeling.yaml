@@ -1,0 +1,25 @@
+# TrainModelingConfig — project-owned parameters that change the numbers, for
+# the monthly rollup, tiering, and weighting layered on top of tsbricks' weekly
+# backtest. These are homeless in BacktestConfig, which is why evaluation_periods
+# was previously an orphan key inside a tsbricks file, silently dropped on every
+# run.
+evaluation_periods:
+  start_months: null # explicit list -> pin an experiment; null -> derive
+  n_start_months: 4
+  start_month_step: 1
+  forecast_horizon_months: 2
+
+tiering:
+  trailing_weeks: 52
+  # The bin count is derived from len(tier_labels); there is no num_tiers.
+  tier_labels: [very_low, low, middle, high, very_high]
+
+weighting:
+  trailing_weeks: 26
+  dampening: cbrt
+
+model_roles:
+  # Values expand to the model set, deduplicated in declaration order. Each name
+  # must have a config/train/models/<name>.yaml.
+  benchmark: naive
+  challenger: xgboost

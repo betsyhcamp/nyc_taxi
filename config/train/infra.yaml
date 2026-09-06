@@ -1,0 +1,14 @@
+# TrainInfraConfig — values that do not change the forecast numbers.
+display_name_prefix: fcst-training-pipeline
+
+feature_source:
+  # Filenames only. The directory <env>/feature/<feature_run_id>/data_prep/ is
+  # derived by lib/io.py's build_feature_uri from the env selector and the
+  # feature_run_id parameter, so a `root` key would be a second source of a
+  # derived fact.
+  panel_filename: time_series.parquet
+  calendar_filename: fiscal_calendar.parquet
+  pointer_filename: _latest.json # resolution rung 3; unread until Feature writes one
+
+model_registry:
+  display_name: fcst-monthly-revenue

@@ -1,0 +1,12 @@
+# The shared data contract, expressed in the tsbricks-owned BacktestConfig.data
+# schema. Semantic ownership is the project's — F and T agree the panel is
+# unique_id / ds / y at W-SUN; schema ownership is tsbricks'. The two do not
+# have to coincide.
+#
+# Partial by construction: this fragment is the first layer of BacktestConfig
+# and cannot validate against that schema alone.
+data:
+  freq: W-SUN # fiscal weeks start Sunday. W-SAT was tried and caused a bug.
+  id_col: unique_id
+  date_col: ds
+  target_col: y

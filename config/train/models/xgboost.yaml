@@ -1,0 +1,12 @@
+# BacktestConfig, third layer. Allowed keys: {model}.
+#
+# hyperparameters are intentionally omitted until PR 1 adds
+# fcstnyctaxi/models/xgboost_weekly.py. ModelConfig requires only
+# fit_predict_callable, so this validates as written, and inventing provisional
+# tuning numbers would look authoritative while being certain to be replaced.
+#
+# The asymmetry with naive.yaml is deliberate: one model declaring
+# hyperparameters.freq and one declaring none gives the cross-field freq check
+# both branches without a synthetic fixture.
+model:
+  fit_predict_callable: fcstnyctaxi.models.xgboost_weekly.xgboost_weekly
