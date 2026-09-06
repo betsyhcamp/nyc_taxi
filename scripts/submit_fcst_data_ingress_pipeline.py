@@ -42,7 +42,7 @@ def main() -> None:
     )
 
     # MUST set env var BEFORE importing pipeline. Setting after import has no effect.
-    os.environ["FCSTNYCTAXI_EXTRACT_IMAGE"] = config.docker.extract_db_to_bucket
+    os.environ["FCST_EXTRACT_IMAGE"] = config.docker.extract_db_to_bucket
     from fcstnyctaxi.pipelines.fcst_data_ingress_pipeline import (
         fcst_data_ingress_pipeline,
     )
