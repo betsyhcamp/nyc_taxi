@@ -11,8 +11,10 @@ from fcstnyctaxi.lib.period_utils import (
     assign_tiers,
     compute_series_weights,
     derive_horizon_label,
+    derive_start_months,
     generate_origins_for_periods,
     label_horizon,
+    last_complete_actual_month,
 )
 
 # ================================================
@@ -68,6 +70,252 @@ def test_get_trailing_dates_truncates_when_calendar_is_short(
 
 
 # ================================================
+# last_complete_actual_month
+#
+# calendar_df months end 202501→01-26, 202502→02-23, 202503→03-23, 202504→04-20.
+# ================================================
+
+
+def test_last_complete_actual_month_at_a_month_end(calendar_df: pd.DataFrame) -> None:
+    """A panel ending on a month's last fiscal week completes that month."""
+    result = last_complete_actual_month(
+        max_actual_date=pd.Timestamp("2025-02-23"), calendar_df=calendar_df
+    )
+    assert result == 202502
+
+
+def test_last_complete_actual_month_mid_month_returns_the_month_before(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """The load-bearing case: a partial month is not complete.
+
+    Reporting 202502 here would let a full-month forecast be scored against three
+    of its four weeks -- silent corruption, which is why this function exists.
+    """
+    result = last_complete_actual_month(
+        max_actual_date=pd.Timestamp("2025-02-16"), calendar_df=calendar_df
+    )
+    assert result == 202501
+
+
+def test_last_complete_actual_month_at_the_calendar_end(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """A panel reaching the calendar's final week completes the final month."""
+    result = last_complete_actual_month(
+        max_actual_date=pd.Timestamp("2025-04-20"), calendar_df=calendar_df
+    )
+    assert result == 202504
+
+
+def test_last_complete_actual_month_raises_when_date_absent_from_calendar(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """A panel date the calendar does not carry is a contract violation."""
+    with pytest.raises(ValueError, match="not in calendar"):
+        last_complete_actual_month(
+            max_actual_date=pd.Timestamp("2025-06-01"), calendar_df=calendar_df
+        )
+
+
+def test_last_complete_actual_month_raises_when_no_month_has_completed(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """A panel ending in its first fiscal month has no complete month to report.
+
+    Without an explicit raise this returned NaN, which the downstream actuals
+    guard would compare as False and silently pass.
+    """
+    with pytest.raises(ValueError, match="completed months"):
+        last_complete_actual_month(
+            max_actual_date=pd.Timestamp("2025-01-05"), calendar_df=calendar_df
+        )
+
+
+def test_last_complete_actual_month_accepts_a_plain_date(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """Callers pass ts_df["ds"].max(); the rest of this module takes date objects."""
+    result = last_complete_actual_month(
+        max_actual_date=date(2025, 2, 23), calendar_df=calendar_df
+    )
+    assert result == 202502
+
+
+def test_last_complete_actual_month_matches_a_panel_date_in_another_unit(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """Panels carry ms timestamps against an ns calendar; both must resolve."""
+    ms_max = calendar_df["ds"].astype("datetime64[ms]").max()
+    assert ms_max.unit == "ms"
+    result = last_complete_actual_month(max_actual_date=ms_max, calendar_df=calendar_df)
+    assert result == 202504
+
+
+def test_last_complete_actual_month_coerces_string_columns(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """Period and date columns stored as strings are cast, not rejected."""
+    str_calendar = calendar_df.astype({"fiscal_year_month": str, "ds": str})
+    result = last_complete_actual_month(
+        max_actual_date=pd.Timestamp("2025-02-23"), calendar_df=str_calendar
+    )
+    assert result == 202502
+
+
+def test_last_complete_actual_month_does_not_mutate_calendar_df(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """The cast happens on a copy; the caller's frame keeps its dtypes."""
+    before = calendar_df.copy()
+    last_complete_actual_month(
+        max_actual_date=pd.Timestamp("2025-02-23"), calendar_df=calendar_df
+    )
+    pd.testing.assert_frame_equal(calendar_df, before)
+
+
+def test_last_complete_actual_month_returns_a_plain_int(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """np.int64 is not JSON-serialisable and this value reaches the run summary."""
+    result = last_complete_actual_month(
+        max_actual_date=pd.Timestamp("2025-02-23"), calendar_df=calendar_df
+    )
+    assert type(result) is int
+
+
+# ================================================
+# derive_start_months
+# ================================================
+
+
+def test_derive_start_months_offsets_by_the_horizon(calendar_df: pd.DataFrame) -> None:
+    """The latest period must end on last_complete, so its start sits h-1 earlier."""
+    result = derive_start_months(
+        last_complete_actual_month=202504,
+        n_start_months=2,
+        start_month_step=1,
+        forecast_horizon_months=2,
+        calendar_df=calendar_df,
+    )
+    assert result == [202502, 202503]
+
+
+def test_derive_start_months_horizon_one_reaches_the_last_complete_month(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """With h=1 a period covers one month, so the latest start is last_complete."""
+    result = derive_start_months(
+        last_complete_actual_month=202504,
+        n_start_months=1,
+        start_month_step=1,
+        forecast_horizon_months=1,
+        calendar_df=calendar_df,
+    )
+    assert result == [202504]
+
+
+def test_derive_start_months_honors_start_month_step(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """step=2 leaves a month between consecutive start months."""
+    result = derive_start_months(
+        last_complete_actual_month=202504,
+        n_start_months=2,
+        start_month_step=2,
+        forecast_horizon_months=1,
+        calendar_df=calendar_df,
+    )
+    assert result == [202502, 202504]
+
+
+def test_derive_start_months_returns_ascending(calendar_df: pd.DataFrame) -> None:
+    """Matches the shape an explicit evaluation_periods.start_months list supplies."""
+    result = derive_start_months(
+        last_complete_actual_month=202504,
+        n_start_months=3,
+        start_month_step=1,
+        forecast_horizon_months=1,
+        calendar_df=calendar_df,
+    )
+    assert result == [202502, 202503, 202504]
+
+
+def test_derive_start_months_raises_when_window_runs_off_the_calendar(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """The message names n_start_months -- the knob set, not a derived month.
+
+    Position 0 is refused rather than returned because generate_origins_for_periods
+    anchors first_origin on the preceding month's last week.
+    """
+    with pytest.raises(ValueError, match="n_start_months=4"):
+        derive_start_months(
+            last_complete_actual_month=202504,
+            n_start_months=4,
+            start_month_step=1,
+            forecast_horizon_months=1,
+            calendar_df=calendar_df,
+        )
+
+
+def test_derive_start_months_raises_when_last_complete_absent_from_calendar(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """An anchor month the calendar does not carry cannot be positioned."""
+    with pytest.raises(ValueError, match="not in calendar"):
+        derive_start_months(
+            last_complete_actual_month=209912,
+            n_start_months=2,
+            start_month_step=1,
+            forecast_horizon_months=2,
+            calendar_df=calendar_df,
+        )
+
+
+def test_derive_start_months_coerces_a_string_period_column(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """Both halves of the actuals guard must agree on type, so both cast to int."""
+    str_calendar = calendar_df.astype({"fiscal_year_month": str})
+    result = derive_start_months(
+        last_complete_actual_month=202504,
+        n_start_months=2,
+        start_month_step=1,
+        forecast_horizon_months=2,
+        calendar_df=str_calendar,
+    )
+    assert result == [202502, 202503]
+
+
+def test_derive_start_months_does_not_mutate_calendar_df(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """Only a column is read and cast; the caller's frame is untouched."""
+    before = calendar_df.copy()
+    derive_start_months(
+        last_complete_actual_month=202504,
+        n_start_months=2,
+        start_month_step=1,
+        forecast_horizon_months=2,
+        calendar_df=calendar_df,
+    )
+    pd.testing.assert_frame_equal(calendar_df, before)
+
+
+def test_derive_start_months_returns_plain_ints(calendar_df: pd.DataFrame) -> None:
+    """np.int64 elements would follow this list into the emitted run summary."""
+    result = derive_start_months(
+        last_complete_actual_month=202504,
+        n_start_months=2,
+        start_month_step=1,
+        forecast_horizon_months=2,
+        calendar_df=calendar_df,
+    )
+    assert all(type(m) is int for m in result)
+
+
+# ================================================
 # generate_origins_for_periods
 # ================================================
 
@@ -81,6 +329,7 @@ def test_generate_origins_single_start_month(calendar_df: pd.DataFrame) -> None:
         start_months=[202502],
         forecast_horizon_months=1,
         calendar_df=calendar_df,
+        last_complete_actual_month=202504,
     )
     assert result == [
         {"origin": "2025-01-26", "horizon": 4},
@@ -98,6 +347,7 @@ def test_generate_origins_result_is_sorted_with_no_duplicates(
         start_months=[202502, 202503],
         forecast_horizon_months=2,
         calendar_df=calendar_df,
+        last_complete_actual_month=202504,
     )
     origins = [r["origin"] for r in result]
     assert origins == sorted(set(origins))
@@ -111,6 +361,7 @@ def test_generate_origins_raises_when_start_month_is_first_in_calendar(
             start_months=[202501],
             forecast_horizon_months=1,
             calendar_df=calendar_df,
+            last_complete_actual_month=202504,
         )
 
 
@@ -122,6 +373,7 @@ def test_generate_origins_raises_when_horizon_exceeds_calendar(
             start_months=[202504],
             forecast_horizon_months=2,
             calendar_df=calendar_df,
+            last_complete_actual_month=202504,
         )
 
 
@@ -134,6 +386,7 @@ def test_generate_origins_raises_when_start_month_not_in_calendar(
             start_months=[202512],
             forecast_horizon_months=1,
             calendar_df=calendar_df,
+            last_complete_actual_month=202504,
         )
 
 
@@ -148,6 +401,7 @@ def test_generate_origins_string_period_column_coerced_to_int(
         start_months=[202502],
         forecast_horizon_months=1,
         calendar_df=str_calendar,
+        last_complete_actual_month=202504,
     )
     assert result == [
         {"origin": "2025-01-26", "horizon": 4},
@@ -169,6 +423,7 @@ def test_generate_origins_string_period_column_does_not_mutate_calendar_df(
         start_months=[202502],
         forecast_horizon_months=1,
         calendar_df=str_calendar,
+        last_complete_actual_month=202504,
     )
     assert str_calendar["fiscal_year_month"].dtype == original_dtype
 
@@ -182,6 +437,7 @@ def test_generate_origins_custom_column_names(calendar_df: pd.DataFrame) -> None
         start_months=[202502],
         forecast_horizon_months=1,
         calendar_df=renamed,
+        last_complete_actual_month=202504,
         calendar_time_col="week_start",
         calendar_period_id="period_id",
     )
@@ -191,6 +447,95 @@ def test_generate_origins_custom_column_names(calendar_df: pd.DataFrame) -> None
         {"origin": "2025-02-09", "horizon": 2},
         {"origin": "2025-02-16", "horizon": 1},
     ]
+
+
+# ================================================
+# generate_origins_for_periods -- the actuals guard
+# ================================================
+
+
+def test_generate_origins_raises_when_period_extends_beyond_actuals(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """Constructible but not scoreable: the calendar reaches 202504, actuals stop
+    at 202503, and a period from 202503 at h=2 ends in 202504.
+
+    The calendar-extent check cannot catch this -- the calendar must run ahead of
+    the panel to supply future_x_df, so it approves months whose actuals are absent.
+    """
+    with pytest.raises(ValueError, match="last complete month of actuals"):
+        generate_origins_for_periods(
+            start_months=[202503],
+            forecast_horizon_months=2,
+            calendar_df=calendar_df,
+            last_complete_actual_month=202503,
+        )
+
+
+def test_generate_origins_accepts_a_period_ending_exactly_at_last_complete(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """Equality is the intended boundary; a strict inequality would discard a
+    fully-scoreable month of actuals."""
+    result = generate_origins_for_periods(
+        start_months=[202502],
+        forecast_horizon_months=1,
+        calendar_df=calendar_df,
+        last_complete_actual_month=202502,
+    )
+    assert len(result) == 4
+
+
+def test_generate_origins_checks_the_calendar_bound_before_the_actuals_bound(
+    calendar_df: pd.DataFrame,
+) -> None:
+    """Both bounds are violated here, and the calendar one must win.
+
+    The actuals guard indexes cal_months[month_end_idx], so reversing the order
+    would raise IndexError instead of naming the problem.
+    """
+    with pytest.raises(ValueError, match="last month in the calendar"):
+        generate_origins_for_periods(
+            start_months=[202504],
+            forecast_horizon_months=2,
+            calendar_df=calendar_df,
+            last_complete_actual_month=202501,
+        )
+
+
+@pytest.mark.parametrize(
+    ("n_start_months", "start_month_step", "forecast_horizon_months"),
+    [(1, 1, 1), (2, 1, 1), (3, 1, 1), (1, 1, 2), (2, 1, 2), (2, 2, 1)],
+)
+def test_derived_start_months_never_trip_the_actuals_guard(
+    calendar_df: pd.DataFrame,
+    n_start_months: int,
+    start_month_step: int,
+    forecast_horizon_months: int,
+) -> None:
+    """Pins the coupling between the two functions' inverse month offsets.
+
+    derive_start_months places the latest start at -(h-1) from last_complete, and
+    generate_origins_for_periods computes a period's end at -1+h from its start, so
+    the last period lands exactly on last_complete and the guard never fires. The
+    guard exists for explicit start_months a human pins. Changing either offset
+    without the other breaks this test.
+    """
+    last_complete = 202504
+    start_months = derive_start_months(
+        last_complete_actual_month=last_complete,
+        n_start_months=n_start_months,
+        start_month_step=start_month_step,
+        forecast_horizon_months=forecast_horizon_months,
+        calendar_df=calendar_df,
+    )
+    origins = generate_origins_for_periods(
+        start_months=start_months,
+        forecast_horizon_months=forecast_horizon_months,
+        calendar_df=calendar_df,
+        last_complete_actual_month=last_complete,
+    )
+    assert origins
 
 
 # ================================================

@@ -32,7 +32,11 @@ from fcstnyctaxi.lib.calibration import (
     most_parsimonious_n_estimators
 )
 from fcstnyctaxi.lib.monthly_aggregation import compute_actual_monthly_totals
-from fcstnyctaxi.lib.period_utils import generate_origins_for_periods
+from fcstnyctaxi.lib.period_utils import (
+    generate_origins_for_periods,
+    last_complete_actual_month
+)
+
 from fcstnyctaxi.lib.io import write_text_to_gcs
 from fcstnyctaxi.lib.utils import get_project_root_dir, generate_run_id
 from fcstnyctaxi.lib.config.composition import save_config
@@ -70,10 +74,17 @@ calendar_df = pd.read_parquet(calendar_uri)
 # Expand monthly calibration_periods.start_months into the exact weekly
 # {origin, horizon} list
 calibration_periods = cal_cfg["calibration_periods"]
+last_complete = last_complete_actual_month(
+    max_actual_date=ts_df["ds"].max(),
+    calendar_df=calendar_df,
+    calendar_time_col ="ds",
+    calendar_period_id = "fiscal_year_month"
+)
 calibration_origin_pairs = generate_origins_for_periods(
     start_months=calibration_periods["start_months"],
     forecast_horizon_months=calibration_periods["forecast_horizon_months"],
     calendar_df=calendar_df,
+    last_complete_actual_month=last_complete,
     calendar_time_col="ds",
 )
 print(f"Generated {len(calibration_origin_pairs)} calibration origins")

@@ -32,6 +32,7 @@ from fcstnyctaxi.lib.period_utils import (
     assign_tiers,
     compute_series_weights,
     generate_origins_for_periods,
+    last_complete_actual_month,
     normalized_origin_horizon_pairs,
 )
 from fcstnyctaxi.lib.utils import get_project_root_dir, generate_run_id
@@ -88,11 +89,18 @@ if explicit_origins is not None:
     origin_pairs = explicit_origins
 else:
     eval_periods = raw_backtest_cfg["evaluation_periods"]
-
+    last_complete = last_complete_actual_month(
+        max_actual_date = ts_df["ds"].max(),
+        calendar_df=calendar_df,
+        calendar_time_col="ds",
+        calendar_period_id= "fiscal_year_month"
+    )
+    print(f"Last complete actual month: {last_complete}")
     origin_pairs = generate_origins_for_periods(
         start_months=eval_periods["start_months"],
         forecast_horizon_months=eval_periods["forecast_horizon_months"],
         calendar_df=calendar_df,
+        last_complete_actual_month=last_complete,
         calendar_time_col="ds"
     )
 

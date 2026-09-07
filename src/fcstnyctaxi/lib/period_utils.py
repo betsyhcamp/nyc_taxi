@@ -177,15 +177,128 @@ def normalized_origin_horizon_pairs(
     return [(origin.as_unit(ORIGIN_TIME_UNIT), horizon) for origin, horizon in pairs]
 
 
-def generate_origins_for_periods(
-    start_months: list[int],
-    forecast_horizon_months: int,
+def last_complete_actual_month(
+    *,
+    max_actual_date: pd.Timestamp | date | str,
     calendar_df: pd.DataFrame,
     calendar_time_col: str = "ds",
     calendar_period_id: str = "fiscal_year_month",
-) -> list[dict]:
+) -> int:
+    """Return the last fiscal month whose actuals are complete.
+
+    A month is complete when its last fiscal week falls on or before
+    max_actual_date, so a panel ending mid-month resolves to the month before.
+
+    Args:
+        max_actual_date: The panel's last observed date, e.g. ts_df["ds"].max().
+        calendar_df: Fiscal calendar; requires calendar_time_col and
+            calendar_period_id. Not mutated. Both columns are cast rather than
+            parsed — a calendar needing format-guessing is a data defect.
+        calendar_time_col: Fiscal week start dates. Default "ds".
+        calendar_period_id: YYYYMM periods; cast to int, so string or float
+            storage is accepted. Default "fiscal_year_month".
+
+    Returns:
+        YYYYMM integer of the last complete fiscal month.
+
+    Raises:
+        ValueError: If max_actual_date is absent from the calendar, or if no
+            fiscal month has completed as of max_actual_date.
     """
-        Return deduplicated list of {origin, horizon} dicts to use as forecast origins.
+    max_actual_date = pd.Timestamp(max_actual_date)
+
+    cal_df = calendar_df.copy().astype(
+        {
+            calendar_period_id: "int64",
+            calendar_time_col: "datetime64[ns]",
+        }
+    )
+
+    if max_actual_date not in cal_df[calendar_time_col].unique():
+        raise ValueError(
+            f"Provided max actual date of {max_actual_date} not in calendar"
+        )
+
+    month_ends = cal_df.groupby(calendar_period_id)[calendar_time_col].max()
+    complete_months = month_ends[month_ends <= max_actual_date].index
+
+    if complete_months.empty:
+        raise ValueError("Provided calendar does not have any full completed months")
+
+    return int(complete_months.max())
+
+
+def derive_start_months(
+    *,
+    last_complete_actual_month: int,
+    n_start_months: int,
+    start_month_step: int,
+    forecast_horizon_months: int,
+    calendar_df: pd.DataFrame,
+    calendar_period_id: str = "fiscal_year_month",
+) -> list[int]:
+    """Derive evaluation period start months from the last complete actual month.
+
+    The latest period must be fully scoreable, so its start month sits
+    forecast_horizon_months - 1 months before last_complete_actual_month; earlier
+    ones step back from there. Positions index the calendar's sorted month list,
+    never YYYYMM arithmetic since 202501 - 1 is not a month. The floor is position 1,
+    not 0, because generate_origins_for_periods anchors first_origin on the last
+    week of the preceding month.
+
+    Args:
+        last_complete_actual_month: YYYYMM, from last_complete_actual_month().
+        n_start_months: How many evaluation periods to derive.
+        start_month_step: Fiscal months between consecutive start months.
+        forecast_horizon_months: Months covered per period; sets the offset from
+            last_complete_actual_month to the latest start month.
+        calendar_df: Fiscal calendar; requires calendar_period_id. Not mutated.
+        calendar_period_id: YYYYMM periods; cast to int, so string or float
+            storage is accepted. Default "fiscal_year_month".
+
+    Returns:
+        n_start_months YYYYMM integers, ascending.
+
+    Raises:
+        ValueError: If last_complete_actual_month is absent from the calendar, or
+            if the window reaches before calendar position 1.
+    """
+    cal_months = sorted(
+        calendar_df[calendar_period_id].astype("int64").unique().tolist()
+    )
+
+    if last_complete_actual_month not in cal_months:
+        raise ValueError(
+            f"last_complete_actual_month {last_complete_actual_month} not in calendar."
+        )
+
+    latest_idx = cal_months.index(last_complete_actual_month) - (
+        forecast_horizon_months - 1
+    )
+    earliest_idx = latest_idx - (n_start_months - 1) * start_month_step
+
+    if earliest_idx < 1:
+        raise ValueError(
+            f"n_start_months={n_start_months} at start_month_step="
+            f"{start_month_step} reaches calendar position {earliest_idx}, before "
+            "the earliest usable position 1."
+        )
+
+    start_idxs = range(earliest_idx, latest_idx + 1, start_month_step)
+
+    return [cal_months[i] for i in start_idxs]
+
+
+def generate_origins_for_periods(
+    *,
+    start_months: list[int],
+    forecast_horizon_months: int,
+    calendar_df: pd.DataFrame,
+    last_complete_actual_month: int,
+    calendar_time_col: str = "ds",
+    calendar_period_id: str = "fiscal_year_month",
+) -> list[dict]:
+    """Return deduplicated list of {origin, horizon} dicts to use as forecast origins.
 
     Args:
         start_months: YYYYMM integers, e.g. [202505, 202506]. Each defines one
@@ -194,6 +307,10 @@ def generate_origins_for_periods(
             1 for remaining_month.
         calendar_df: fiscal calendar DataFrame. Must contain a date column
             (calendar_time_col) and an integer period column (calendar_period_id).
+        last_complete_actual_month: YYYYMM of the last month whose actuals are
+            complete, from last_complete_actual_month(). Required rather than
+            derived here: the calendar must extend into the future for future_x_df,
+            so it cannot answer where the actuals stop.
         calendar_time_col: column name in calendar_df holding fiscal week start dates.
             Default "ds".
         calendar_period_id: column name in calendar_df holding YYYYMM period integers.
@@ -204,6 +321,12 @@ def generate_origins_for_periods(
         Sorted, deduplicated list of dicts with keys "origin" (ISO date string) and
         "horizon" (int weeks). Each origin date appears exactly once; when the same
         origin belongs to overlapping periods the maximum horizon is kept.
+
+    Raises:
+        ValueError: If a start_month is absent from the calendar or is its first
+            month, or if a period extends beyond the calendar's last month (the
+            origins cannot be constructed) or beyond last_complete_actual_month
+            (they can be constructed but not scored).
     """
     cal_dates = pd.to_datetime(calendar_df[calendar_time_col])
     period_as_int = calendar_df[calendar_period_id].astype(int)
@@ -237,6 +360,12 @@ def generate_origins_for_periods(
             )
 
         month_end_val = cal_months[month_end_idx]
+        if month_end_val > last_complete_actual_month:
+            raise ValueError(
+                f"start_month={month} forecast_horizon_months={forecast_horizon_months}"
+                " extends beyond the last complete month of actuals"
+            )
+
         last_week = get_weeks_list(month_end_val)[-1]
 
         first_origin = get_weeks_list(month_before_val)[-1]
