@@ -1,24 +1,47 @@
-# EnvironmentConfig — shared by all three slices.
+# TODO: Once conventions are understood by the team, trim down comments
+
+# EnvironmentConfig which is shared by all three slices.
+#
+# Specified what may varies by environment, for F, T, and I together. Each slice's
+# own infra.yaml and modeling.yaml is environment-independent, so this is the only file
+# in the tree that can hold a value differing between dev and prod.
 #
 # There is no `env` key: the environment is the selector that chose this file,
 # so declaring it here would be a second source of a derived fact. It is
 # recorded in the emitted manifest.json instead.
 #
-# There is no `service_accounts` block: pending an infosec determination,
+# There is no `service_accounts` block: pending an InfoSec determination,
 # accounts are supplied at submit time via FCST_{SLICE}_SERVICE_ACCOUNT. See
 # .env.example.
-gcp:
+#
+# The blocks are operational planes. Each carries its own project and location
+# because each is separately assignable in GCP but see the exception under
+# `storage`.
+
+compute:
+  # Where jobs run and bill. Also Feature's BigQuery *job* project, which is a
+  # different thing from the project holding the tables (see source_data).
   project_id: nyc-taxi-ehc
   location: us-central1
+
+storage:
+  # No project_id or location here, unlike every other block. GCS bucket names
+  # are globally unique, so a gs:// URI addresses an object completely — nothing
+  # in the code takes a project or a location for storage. The bucket's own
+  # location is authoritative in GCP; restating it here would be a second source
+  # that can drift.
   bucket_name: nyc-taxi-ehc--modeling
 
 vertex:
+  # KFP's own scratch: component outputs, caches, execution metadata. Not
+  # derived from bucket_name, so orchestration scratch can be given its own
+  # bucket and lifecycle policy without a schema change.
   pipeline_root: gs://nyc-taxi-ehc--modeling/vertex-pipeline-roots/
 
 artifact_registry:
-  # Deliberately independent of gcp.* — a shared registry commonly lives in a
-  # separate project, and registry region diverges from compute region more
-  # often than project does. Coincident today; not the same fact.
+  # Independent of compute since a shared registry may live in a separate
+  # project, and registry region diverges from compute region more often than
+  # project does.
   #
   # Images carry repository and name only. The tag is the git hash, resolved at
   # build and submit time, so committing one here would be a second source of
@@ -30,8 +53,16 @@ artifact_registry:
       repository: fcst-data-ingress-pipeline
       image: extract-db-to-bucket
     train:
-      repository: fcst-training-pipeline
-      image: fcst-training
+      repository: fcst-train-pipeline
+      image: fcst-train
     inference:
       repository: fcst-inference-pipeline
       image: fcst-inference
+
+source_data:
+  # Feature's BigQuery source. Training and Inference never
+  # touch BigQuery. It lives here rather than in config/feature/ because Feature's
+  # own fragments are environment-independent, and this varies when dev and prod
+  # read different datasets.
+  project_id: nyc-taxi-ehc
+  location: us-central1 # must match upstream the dataset's location — not a free choice

@@ -13,11 +13,10 @@ from fcstnyctaxi.schemas.config.train import (
 def valid_infra_dict() -> dict:
     """A complete, valid TrainInfraConfig dict. Each test gets a fresh copy."""
     return {
-        "display_name_prefix": "fcst-training-pipeline",
+        "display_name_prefix": "fcst-train-pipeline",
         "feature_source": {
             "panel_filename": "time_series.parquet",
             "calendar_filename": "fiscal_calendar.parquet",
-            "pointer_filename": "_latest.json",
         },
         "model_registry": {"display_name": "fcst-monthly-revenue"},
     }
@@ -97,6 +96,21 @@ def test_explicit_start_months_pin_an_experiment(valid_modeling_dict: dict) -> N
     config = TrainModelingConfig(**valid_modeling_dict)
 
     assert config.evaluation_periods.start_months == [202504, 202505]
+
+
+def test_empty_start_months_raises(valid_modeling_dict: dict) -> None:
+    """`null` is the only way to say derive.
+
+    An empty list would mean the same thing today, since the consumer spells
+    this `cfg.start_months or derive_start_months(...)`. Forbidding it makes
+    that expression equivalent to `is not None`, so narrowing the idiom later
+    cannot silently turn [] into "zero months" — a failure that would surface on
+    forecast_origins, two layers from the edit that caused it.
+    """
+    valid_modeling_dict["evaluation_periods"]["start_months"] = []
+
+    with pytest.raises(ValidationError, match="start_months"):
+        TrainModelingConfig(**valid_modeling_dict)
 
 
 def test_unknown_dampening_name_raises(valid_modeling_dict: dict) -> None:

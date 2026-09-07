@@ -3,18 +3,15 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
+from fcstnyctaxi.schemas.config.environment import EnvironmentConfig, StorageSettings
 
 
 @pytest.fixture
 def valid_environment_dict() -> dict:
     """A complete, valid EnvironmentConfig dict. Each test gets a fresh copy."""
     return {
-        "gcp": {
-            "project_id": "test-project",
-            "location": "us-central1",
-            "bucket_name": "test-bucket",
-        },
+        "compute": {"project_id": "test-compute-project", "location": "us-central1"},
+        "storage": {"bucket_name": "test-bucket"},
         "vertex": {"pipeline_root": "gs://test-bucket/vertex-pipeline-roots/"},
         "artifact_registry": {
             "project_id": "test-registry-project",
@@ -25,6 +22,7 @@ def valid_environment_dict() -> dict:
                 "inference": {"repository": "repo-i", "image": "img-i"},
             },
         },
+        "source_data": {"project_id": "test-data-project", "location": "US"},
     }
 
 
@@ -32,21 +30,49 @@ def test_valid_dict_constructs_environment_config(valid_environment_dict: dict) 
     """A complete dict constructs EnvironmentConfig and every nested model."""
     config = EnvironmentConfig(**valid_environment_dict)
 
-    assert config.gcp.bucket_name == "test-bucket"
+    assert config.compute.project_id == "test-compute-project"
+    assert config.storage.bucket_name == "test-bucket"
     assert config.vertex.pipeline_root == "gs://test-bucket/vertex-pipeline-roots/"
     assert config.artifact_registry.images.train.repository == "repo-t"
+    assert config.source_data.project_id == "test-data-project"
 
 
-def test_artifact_registry_is_independent_of_gcp(valid_environment_dict: dict) -> None:
-    """The registry carries its own project and location, not gcp.*'s.
+def test_three_planes_carry_independent_projects(valid_environment_dict: dict) -> None:
+    """compute, artifact_registry, and source_data are separately assignable.
 
-    A shared registry commonly lives in a separate project, and registry region
-    diverges from compute region more often than project does.
+    A shared registry commonly lives in its own project; source tables commonly
+    live in a data-platform project read cross-project. Coincident in dev is not
+    the same fact.
     """
     config = EnvironmentConfig(**valid_environment_dict)
 
-    assert config.artifact_registry.project_id != config.gcp.project_id
-    assert config.artifact_registry.location != config.gcp.location
+    projects = {
+        config.compute.project_id,
+        config.artifact_registry.project_id,
+        config.source_data.project_id,
+    }
+    assert len(projects) == 3
+    assert config.artifact_registry.location != config.compute.location
+
+
+def test_storage_carries_no_project_or_location() -> None:
+    """GCS bucket names are globally unique, so no project or location is read.
+
+    Shipping either would put two decoys beside one real knob: editing them
+    would silently do nothing, since only bucket_name reaches a gs:// URI.
+    """
+    assert set(StorageSettings.model_fields) == {"bucket_name"}
+
+
+@pytest.mark.parametrize("field", ["project_id", "location"])
+def test_storage_rejects_project_or_location(
+    valid_environment_dict: dict, field: str
+) -> None:
+    """The asymmetry is enforced, not merely documented."""
+    valid_environment_dict["storage"][field] = "something"
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        EnvironmentConfig(**valid_environment_dict)
 
 
 def test_env_field_is_rejected(valid_environment_dict: dict) -> None:
@@ -108,9 +134,21 @@ def test_image_ref_rejects_a_tag(valid_environment_dict: dict) -> None:
         EnvironmentConfig(**valid_environment_dict)
 
 
+def test_multi_regional_source_data_location_is_accepted(
+    valid_environment_dict: dict,
+) -> None:
+    """BigQuery locations may be multi-regional, which is why the field is
+    `location` rather than `region` across every plane."""
+    valid_environment_dict["source_data"]["location"] = "EU"
+
+    config = EnvironmentConfig(**valid_environment_dict)
+
+    assert config.source_data.location == "EU"
+
+
 def test_environment_config_is_frozen(valid_environment_dict: dict) -> None:
     """Composed configuration is immutable once validated."""
     config = EnvironmentConfig(**valid_environment_dict)
 
     with pytest.raises(ValidationError):
-        config.gcp.bucket_name = "other-bucket"  # type: ignore[misc]
+        config.storage.bucket_name = "other-bucket"  # type: ignore[misc]

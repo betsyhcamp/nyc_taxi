@@ -8,8 +8,9 @@ here. Without that line the two converge and pydantic gets tested twice.
 It exists because nothing else in the suite reads the real tree: commit 7a's
 composition spine is tested against a synthetic fixture slice under `tmp_path`,
 deliberately, so that the spine is demonstrably promotable. That leaves these
-files unread by any test until an impl loads them, and §4.4 bakes the tree into
-the image, so a bad value is a rebuild rather than an edit.
+files unread by any test until an impl loads them — and the tree is baked into
+every image as its final layer, so a bad value costs a rebuild rather than an
+edit. See `config/README.md`.
 
 The gate is split, because only some fragments are complete on their own:
 
@@ -69,8 +70,9 @@ def test_dev_environment_validates() -> None:
         **_load_config_file(CONFIG_DIR / "environments/dev.yaml")
     )
 
-    assert config.gcp.bucket_name == "nyc-taxi-ehc--modeling"
+    assert config.storage.bucket_name == "nyc-taxi-ehc--modeling"
     assert config.vertex.pipeline_root.startswith("gs://")
+    assert config.compute.location == config.artifact_registry.location
 
 
 def test_train_infra_validates() -> None:
