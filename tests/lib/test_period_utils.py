@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import get_args
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from fcstnyctaxi.lib.period_utils import (
+    DAMPENING_FNS,
     _get_trailing_dates,
     assign_tiers,
     compute_series_weights,
@@ -16,6 +18,7 @@ from fcstnyctaxi.lib.period_utils import (
     label_horizon,
     last_complete_actual_month,
 )
+from fcstnyctaxi.schemas.config.train import DampeningName
 
 # ================================================
 # Fixtures
@@ -40,6 +43,27 @@ def train_df() -> pd.DataFrame:
         for d in dates
     ]
     return pd.DataFrame(rows)
+
+
+# ================================================
+# DAMPENING_FNS
+# ================================================
+
+
+def test_dampening_fns_covers_every_declared_name() -> None:
+    """The map and the DampeningName contract stay exhaustive of each other.
+
+    Redundant with the import-time guard by design: this states the invariant
+    where a reader looks for it, and names it when it fails.
+    """
+    assert set(DAMPENING_FNS) == set(get_args(DampeningName))
+
+
+def test_dampening_fns_apply_the_transform_they_name() -> None:
+    """Each name resolves to its own transform; "none" is the identity."""
+    assert DAMPENING_FNS["cbrt"](8.0) == pytest.approx(2.0)
+    assert DAMPENING_FNS["sqrt"](9.0) == pytest.approx(3.0)
+    assert DAMPENING_FNS["none"](5.0) == 5.0
 
 
 # ================================================
@@ -567,7 +591,6 @@ def test_assign_tiers_higher_revenue_gets_higher_tier(
         date(2025, 2, 23),
         calendar_df,
         trailing_weeks=8,
-        num_tiers=3,
         tier_labels=("low", "middle", "high"),
     )
     tier_map = result.set_index("unique_id")["tier"].astype(str).to_dict()
@@ -594,7 +617,6 @@ def test_assign_tiers_no_revenue_series_gets_tier_labels_0_with_custom_labels(
         calendar_df,
         trailing_weeks=8,
         tier_labels=("bottom", "mid", "top"),  # custom tiers different than default
-        num_tiers=3,
     )
     tier_map = result.set_index("unique_id")["tier"].astype(str).to_dict()
     assert tier_map["zero"] == "bottom"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import date
+from typing import get_args
 
 import numpy as np
 import pandas as pd
@@ -9,11 +10,49 @@ from pandas.api.types import is_datetime64_any_dtype
 
 from fcstnyctaxi.lib.column_checks import require_columns
 from fcstnyctaxi.lib.cross_validation_utils import sorted_origin_horizon_pairs
+from fcstnyctaxi.schemas.config.train import DampeningName
 
 # Canonical datetime unit for forecast origins in every artifact this project writes.
 # "ns" for conformity, not principle: a sidecar's other datetime columns are already
 # ns via pd.to_datetime, and for a join key agreement beats precision honesty.
 ORIGIN_TIME_UNIT = "ns"
+
+
+def _no_dampening(x: float) -> float:
+    """Identity, for the "none" entry in DAMPENING_FNS.
+
+    A named function rather than a lambda: it is greppable and names itself in a
+    traceback.
+    """
+    return x
+
+
+DAMPENING_FNS: dict[DampeningName, Callable[[float], float]] = {
+    "cbrt": np.cbrt,
+    "sqrt": np.sqrt,
+    "none": _no_dampening,
+}
+"""DampeningName (the contract, in schemas/config/train.py) -> its callable."""
+
+
+def _check_dampening_fns_match_schema() -> None:
+    """Fail the import when DAMPENING_FNS and DampeningName drift apart.
+
+    Raises rather than asserts, since python -O strips asserts. Checked at import
+    rather than on the data path: the invariant is a property of the source, so
+    every test and every process start is a detector.
+    """
+    mapped = set(DAMPENING_FNS)
+    declared = set(get_args(DampeningName))
+    if mapped != declared:
+        raise ValueError(
+            "DAMPENING_FNS and DampeningName have drifted apart. Declared with no "
+            f"callable here: {sorted(declared - mapped)}. Mapped here but not "
+            f"declared in schemas/config/train.py: {sorted(mapped - declared)}."
+        )
+
+
+_check_dampening_fns_match_schema()
 
 
 def _get_trailing_dates(
@@ -392,7 +431,6 @@ def assign_tiers(
     id_col: str = "unique_id",
     time_col: str = "ds",
     target_col: str = "y",
-    num_tiers: int = 5,
     tier_labels: tuple[str, ...] = ("very_low", "low", "middle", "high", "very_high"),
 ) -> pd.DataFrame:
     """Assign a revenue tier to each series based on trailing training data.
@@ -406,10 +444,10 @@ def assign_tiers(
         id_col: Series identifier column. Default "unique_id".
         time_col: Date column in train_df. Default "ds".
         target_col: Revenue column. Default "y".
-        num_tiers: Number of quantile bins. Default 5.
-        tier_labels: Tier label names ordered lowest to highest. Must match num_tiers.
-            tier_labels[0] is assigned to series with no positive revenue in the
-            trailing window. Default ("very_low", "low", "middle", "high", "very_high").
+        tier_labels: Tier label names ordered lowest to highest; len(tier_labels)
+            sets the number of quantile bins. tier_labels[0] is assigned to series
+            with no positive revenue in the trailing window. Default
+            ("very_low", "low", "middle", "high", "very_high").
 
     Returns:
         DataFrame with columns (id_col, "tier").
@@ -429,7 +467,7 @@ def assign_tiers(
     if mean_pos.empty:
         return pd.DataFrame({id_col: train_df[id_col].unique(), "tier": tier_labels[0]})
 
-    effective_tiers = min(num_tiers, mean_pos.nunique())
+    effective_tiers = min(len(tier_labels), mean_pos.nunique())
     effective_labels = tier_labels[:effective_tiers]
 
     return (
