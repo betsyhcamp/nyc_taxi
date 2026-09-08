@@ -10,13 +10,19 @@ _VALID_SHA256 = "deadbeef" * 8  # 64 lowercase hex, the shape hexdigest() return
 
 @pytest.fixture
 def valid_train_identity() -> dict:
-    """A complete, valid TrainRunIdentity dict. Each test gets a fresh copy."""
+    """A complete, valid TrainRunIdentity dict. Each test gets a fresh copy.
+
+    The URIs are deliberately layout-neutral. TrainRunIdentity constrains only
+    ^gs://, so any path segment here would assert a storage convention this
+    schema does not own — and Feature's layout is not this project's to fix.
+    Resist making them look production-shaped.
+    """
     return {
         "git_hash": "a1b2c3d",
         "feature_run_id": "UTC20260905T120000000000Z",
         "train_run_id": "UTC20260905T130000000000Z",
-        "panel_uri": "gs://b/dev/feature/f1/data_prep/time_series.parquet",
-        "calendar_uri": "gs://b/dev/feature/f1/data_prep/fiscal_calendar.parquet",
+        "panel_uri": "gs://b/panel.parquet",
+        "calendar_uri": "gs://b/calendar.parquet",
     }
 
 

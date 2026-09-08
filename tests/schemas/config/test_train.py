@@ -14,10 +14,6 @@ def valid_infra_dict() -> dict:
     """A complete, valid TrainInfraConfig dict. Each test gets a fresh copy."""
     return {
         "display_name_prefix": "fcst-train-pipeline",
-        "feature_source": {
-            "panel_filename": "time_series.parquet",
-            "calendar_filename": "fiscal_calendar.parquet",
-        },
         "model_registry": {"display_name": "fcst-monthly-revenue"},
     }
 
@@ -50,17 +46,24 @@ def test_valid_dict_constructs_train_infra_config(valid_infra_dict: dict) -> Non
     """A complete dict constructs TrainInfraConfig and its nested models."""
     config = TrainInfraConfig(**valid_infra_dict)
 
-    assert config.feature_source.panel_filename == "time_series.parquet"
+    assert config.display_name_prefix == "fcst-train-pipeline"
     assert config.model_registry.display_name == "fcst-monthly-revenue"
 
 
-def test_feature_source_rejects_a_root_key(valid_infra_dict: dict) -> None:
-    """feature_source carries filenames only; the directory is derived.
+def test_train_infra_rejects_an_unknown_key(valid_infra_dict: dict) -> None:
+    """extra="forbid" is what makes a stray key here fail at composition.
 
-    A `root` key would be a second source of a fact build_feature_uri already
-    derives from the env selector and the feature_run_id.
+    Without it the key is accepted and silently discarded — the failure the
+    round-trip drop check exists to catch on the tsbricks-owned side, which a
+    project-owned destination should never need because it refuses the key
+    outright.
+
+    A block that once carried Feature's output filenames was deleted from this
+    schema, and its own test was the only thing exercising that strictness.
+    Asserting the refusal rather than the surviving field list keeps the test
+    about a hazard: adding a real third field must not break it.
     """
-    valid_infra_dict["feature_source"]["root"] = "dev/feature"
+    valid_infra_dict["output_bucket"] = "nyc-taxi-ehc--modeling"
 
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         TrainInfraConfig(**valid_infra_dict)

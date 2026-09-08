@@ -317,7 +317,7 @@ def test_the_shipped_tree_composes_every_phase_one_destination() -> None:
     modeling = compose_config(CONFIG_DIR, train_modeling_bindings())
 
     assert environment.config.storage.bucket_name == "nyc-taxi-ehc--modeling"
-    assert infra.config.feature_source.panel_filename == "time_series.parquet"
+    assert infra.config.display_name_prefix == "fcst-train-pipeline"
     assert model_names_from_roles(modeling.config.model_roles) == ("naive", "xgboost")
 
 

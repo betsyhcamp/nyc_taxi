@@ -63,10 +63,10 @@ class StorageSettings(BaseModel):
 
     **Deliberately carries no project_id or location, unlike every other plane
     in this file.** GCS bucket names are globally unique, so a ``gs://`` URI
-    addresses an object completely: ``build_run_prefix``, ``build_feature_uri``,
-    ``upload_to_gcs`` and ``download_from_gcs`` all take the bucket name and
-    nothing else. No API call in this codebase, present or planned, accepts a
-    project or a location for storage.
+    addresses an object completely: ``build_run_prefix``, ``upload_to_gcs`` and
+    ``download_from_gcs`` all take the bucket name and nothing else. No API call
+    in this codebase, present or planned, accepts a project or a location for
+    storage.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

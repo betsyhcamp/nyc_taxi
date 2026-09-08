@@ -27,21 +27,6 @@ forbidding the opposite direction.
 """
 
 
-class FeatureSource(BaseModel):
-    """Filenames only — the directory is derived.
-
-    ``<env>/feature/<feature_run_id>/data_prep/`` is built by ``lib/io.py``'s
-    ``build_feature_uri`` from the env selector and the ``feature_run_id``
-    parameter, so a ``root`` field would be a second source of a derived fact. Both
-    filenames here are **run-scoped**.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    panel_filename: str = Field(..., min_length=1)
-    calendar_filename: str = Field(..., min_length=1)
-
-
 class ModelRegistry(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -52,7 +37,6 @@ class TrainInfraConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     display_name_prefix: str = Field(..., min_length=1)
-    feature_source: FeatureSource
     model_registry: ModelRegistry
 
 

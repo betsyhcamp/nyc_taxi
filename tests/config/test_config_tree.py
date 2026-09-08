@@ -76,11 +76,18 @@ def test_dev_environment_validates() -> None:
 
 
 def test_train_infra_validates() -> None:
-    """config/train/infra.yaml is a complete TrainInfraConfig."""
+    """config/train/infra.yaml is a complete TrainInfraConfig.
+
+    display_name_prefix is also asserted in tests/lib/config/test_bindings.py,
+    and that is not duplication to be tidied away: this file asks whether the
+    shipped file validates and carries the intended value, that one asks whether
+    the binding composes it into the intended destination. An edit to infra.yaml
+    should fail both.
+    """
     config = TrainInfraConfig(**_load_config_file(CONFIG_DIR / "train/infra.yaml"))
 
-    assert config.feature_source.panel_filename.endswith(".parquet")
-    assert config.feature_source.calendar_filename.endswith(".parquet")
+    assert config.display_name_prefix == "fcst-train-pipeline"
+    assert config.model_registry.display_name == "fcst-monthly-revenue"
 
 
 def test_train_modeling_validates() -> None:
