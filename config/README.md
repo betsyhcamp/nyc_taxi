@@ -74,7 +74,7 @@ defines it. Schema paths are relative to `src/fcstnyctaxi/`.
 config/
   README.md                       this file
 
-  base/data.yaml                  → BacktestConfig.data       (tsbricks)
+  base/data.yaml                  → BacktestConfig, keys {data}    (tsbricks)
   environments/dev.yaml           → EnvironmentConfig         schemas/config/environment.py
   train/infra.yaml                → TrainInfraConfig          schemas/config/train.py
   train/modeling.yaml             → TrainModelingConfig       schemas/config/train.py
@@ -118,6 +118,30 @@ fragment may legitimately omit a required field that arrives from a later layer
 or at runtime. They are checked at fragment level instead: the file parses into a
 non-empty mapping, and its top-level keys are within the set that fragment is
 allowed to declare.
+
+**That allowed set is usually the destination's whole field list, but two
+fragments narrow it.** The rule that decides which:
+
+> A fragment narrows when it is **defined by the block it carries**.
+
+`base/data.yaml` is the data contract and nothing else, so `{data}`.
+`train/models/<name>.yaml` is one model and nothing else, so `{model}`.
+`train/backtest.yaml` does **not** narrow: its set would have to be everything
+`BacktestConfig` declares minus what the other two layers own — a definition by
+subtraction that goes stale the moment tsbricks adds a field, and then rejects a
+valid fragment. Narrowing by what a file positively *is* cannot rot that way;
+narrowing by what it is not can.
+
+**`base/data.yaml`'s narrowing is load-bearing, not tidy.** `BacktestConfig` does
+not set `extra="forbid"`, so without a narrower set this fragment may legally
+declare *any* field of that schema. A stray `model:` block there would apply to
+every model — and silently, because `base/data.yaml` is the **first** layer and
+each model file merges on top, so it would surface only through whichever keys no
+model happened to override. That is the same failure the round-trip drop check
+exists for, arriving one layer earlier and with no error at all.
+
+The narrower sets live in `src/fcstnyctaxi/lib/config/bindings.py` as data on the
+binding, not as a branch inside a check, so relaxing one later is an edit.
 
 **One value is injected at runtime**: `cross_validation.forecast_origins`,
 derived from the panel's last complete month. Nothing else is.

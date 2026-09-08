@@ -28,6 +28,8 @@ The same three tokens name every place a slice appears:
 No consumer yet. ``SliceImages`` declares its three fields explicitly rather than
 keying a dict by this type, so that a missing slice is a validation error at
 composition rather than a KeyError at submit time; and ``lib/config/bindings``
-exposes one function per slice rather than a registry. The expected first
-consumer is per-slice env-var construction — ``FCST_{SLICE}_SERVICE_ACCOUNT``.
+exposes a named function per destination rather than a registry keyed by this
+type — three for Training, one each for Feature and Inference, plus the
+``environment_bindings`` all three share. The expected first consumer is
+per-slice env-var construction — ``FCST_{SLICE}_SERVICE_ACCOUNT``.
 """

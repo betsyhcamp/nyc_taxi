@@ -106,32 +106,105 @@ query job must run in its dataset's location.
    `src/<project_package_name>/schemas/config_schemas.py`. It is a flat schema mixing project settings, an image URI, Vertex settings, and one step's
    parameters, and the rename is owed once this tree replaces it.
 
-## If Feature publishes a latest-run pointer
+## How Training finds Feature's output — and a decision you own but there's a recommended design below
 
-Training resolves the panel and calendar by `feature_run_id`, deriving
-`gs://<bucket>/<env>/feature/<feature_run_id>/data_prep/<filename>`. That is rung 2
-of a three-rung resolution ladder — rung 1 is explicit `--panel-uri` /
-`--calendar-uri` overrides, deferred; rung 2 is the derivation above; rung 3 is the
-pointer below. Rung 2 works whenever the caller already knows an id, which Cloud
-Workflows does because it minted it.
+**Today, Training is told.** The local runner takes explicit `--panel-uri` and
+`--calendar-uri`, which the Feature stand-in prints when it runs. That is rung 1 of a
+three-rung ladder, and it is the only rung that can be built without deciding
+something on your behalf.
 
-Rung 3 is a `_latest.json` pointer that Feature rewrites after each successful run,
-naming its newest `feature_run_id`. It serves the case where **nobody knows an id** —
-a scheduled Training run not chained to a specific Feature run, or a developer who
-wants whatever is current. The `_latest.json` pointer is unbuilt because it needs a commitment from Feature,
-not from Training.
+**Rung 2 is yours to design, and it is the reason this section exists.** Training must
+eventually resolve the panel, calendar, and other input data from a `feature_run_id` alone — that is what
+Cloud Workflows can pass, because it minted the id and should not be
+string-concatenating GCS paths. The question is *how*.
 
-**If you build it, the pointer must live at a fixed, non-run-scoped path** — something
-like `gs://<bucket>/<env>/feature/_latest.json`. It cannot use `build_feature_uri`'s
-convention, because you would need the `feature_run_id` to find the file whose only
-job is naming the `feature_run_id`. A pointer and the artifacts it points at cannot
-share a path convention, since that convention is exactly what the pointer shortcuts.
+### The rule that constrains it
+
+> **Training must not need to know Feature's internal step names.**
+
+An earlier design had Training derive
+`gs://<bucket>/<env>/feature/<feature_run_id>/data_prep/<filename>`. Two things are
+wrong with that, and they are worth stating because they will look like nitpicks until
+you hit them:
+
+- `data_prep` is not a Feature step name. It is named after `notebooks/data_prep.py`,
+  the notebook the stand-in imitates. Training would have been coupled to a token that
+  never described your pipeline.
+- A path template makes Training's correctness depend on your layout. Rename a step,
+  split calendar derivation into its own step, and Training breaks — with a 404, at
+  runtime, in someone else's code.
+
+So the derived-path design was dropped rather than handed to you half-built. Training
+ships with rung 1, and `config/train/infra.yaml` carries **no** `feature_source` block
+and no filenames.
+
+### The design we recommend: a run-root outputs file
+
+Feature writes one small file per run, at the **run root**:
+
+```
+gs://<bucket>/<env>/feature/<feature_run_id>/run_outputs.json
+```
+
+Training constructs that one path from `<bucket>`, `<env>`, `feature`, and the
+`feature_run_id` it was given, reads it, and takes the URIs by name. It learns no step
+name and no filename. Four properties make this work, and each one was a mistake we
+made first:
+
+1. **It is written as the pipeline's final act, never at step 1.** A URI stamped by the
+   first step is a *promise*, not a record: if a later step fails, the file names an
+   object that does not exist, and a consumer gets a dangling pointer that looks
+   authoritative. Written last, it is a record.
+1. **Its presence is the completion signal.** Absent means the run did not finish.
+   Which means a pipeline that completes must write it **even when it has nothing to
+   declare** — otherwise absence is ambiguous between *failed* and *nothing to say*.
+1. **It sits at the run root, not inside a step directory.** Put it under a step and it
+   inherits the problem it exists to solve: you would need the step name to find the
+   file whose job is telling you the step name.
+1. **It carries its own `feature_run_id`.** Training compares that against the id it
+   was given, which catches a file copied between run directories or a wrong id passed.
+
+Keys should be role names — `panel_uri`, `calendar_uri` — matching what
+`TrainRunIdentity` already calls them. **The schema is yours to choose**; if you define
+it as a pydantic model, `src/<project_package_name>/schemas/run_identity.py` is the
+pattern to follow, since a file read back across a pipeline boundary is an input
+contract.
+
+### Where this fits the placement rule
+
+The convention that decides where any run artifact goes:
+
+> A file belongs at the **run root** iff a reader **outside this pipeline** must find it
+> with only `<bucket>`, `<env>`, `<slice>`, and `<run_id>`. Everything else lives in the
+> directory of the step that produced it.
+
+`run_outputs.json` qualifies — its reader is the next pipeline. `run_identity.json` does
+not: its readers are downstream steps *inside* the same pipeline, which receive it as an
+orchestrator artifact rather than by constructing a path. The rule also predicts where
+`run_metadata.json` already sits, since its reader is the submission script.
+
+Note this means `run_identity.json` and `run_outputs.json` are **different files with
+different jobs**: identity is what a run *is* and what it *read*, true at step 1;
+outputs are what it *produced*, true only at the end. Do not merge them — a failed run
+should still record its identity.
+
+### Rung 3, if you also publish a pointer
+
+Rung 3 is a `_latest.json` that Feature rewrites after each successful run, naming its
+newest `feature_run_id`. It serves the case where **nobody knows an id** — a scheduled
+Training run not chained to a specific Feature run, or a developer who wants whatever is
+current. It is unbuilt because it needs a commitment from Feature, not from Training.
+
+It must live at a fixed, non-run-scoped path — something like
+`gs://<bucket>/<env>/feature/_latest.json`.
 
 An earlier draft of `config/train/infra.yaml` carried `pointer_filename: _latest.json`
-inside `feature_source`, beside the two run-scoped filenames. It was removed: its
-placement implied `build_feature_uri` would construct its URI, which run-scopes it.
-When Feature commits to writing a pointer, Training gains rung 3 and a config entry
-naming **both** the fixed prefix and the filename.
+inside `feature_source`, and it was removed on the grounds that a pointer and the
+artifacts it points at cannot share a path convention, since that convention is exactly
+what the pointer shortcuts. **Under the outputs-file design that objection no longer
+applies**: the pointer names only `{"feature_run_id": "…"}` and no artifact at all, so it
+shares no convention with anything. Rung 3 is still deferred — but pending your
+commitment, not because it could not be built.
 
 One property worth preserving: a pointer is mutable, and it would be the only mutable
 object in a storage layout that is otherwise immutable by construction. Runs stay
