@@ -25,11 +25,13 @@ The same three tokens name every place a slice appears:
     <slice>_run_id                         the run-id prefix
     artifact_registry.images.<slice>       image references
 
-No consumer yet. ``SliceImages`` declares its three fields explicitly rather than
-keying a dict by this type, so that a missing slice is a validation error at
-composition rather than a KeyError at submit time; and ``lib/config/bindings``
-exposes a named function per destination rather than a registry keyed by this
-type — three for Training, one each for Feature and Inference, plus the
-``environment_bindings`` all three share. The expected first consumer is
-per-slice env-var construction — ``FCST_{SLICE}_SERVICE_ACCOUNT``.
+``lib/io.build_run_prefix`` is the first consumer: it types the slice segment of
+the storage convention and checks membership with ``get_args``, since no type
+checker runs in CI. Elsewhere the type is deliberately not used as a key.
+``SliceImages`` declares its three fields explicitly rather than keying a dict by
+this type, so that a missing slice is a validation error at composition rather
+than a KeyError at submit time; and ``lib/config/bindings`` exposes a named
+function per destination rather than a registry keyed by this type — three for
+Training, one each for Feature and Inference, plus the ``environment_bindings``
+all three share.
 """
