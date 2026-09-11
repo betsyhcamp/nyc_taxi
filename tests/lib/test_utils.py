@@ -10,6 +10,7 @@ from fcstnyctaxi.lib.utils import (
     find_root_project_dir,
     generate_run_id,
     get_project_root_dir,
+    require_path_safe_run_id,
 )
 
 # ================================================
@@ -91,3 +92,31 @@ def test_get_project_root_dir_falls_back_when_env_not_set(
     monkeypatch.delenv("PROJECT_ROOT", raising=False)
     result = get_project_root_dir(start_path=Path(__file__).resolve())
     assert (result / "pyproject.toml").exists()
+
+
+# ================================================
+# require_path_safe_run_id tests
+# ================================================
+
+
+@pytest.mark.parametrize("run_id", ["f1\n", "..", ".hidden", "-x", ""])
+def test_require_path_safe_run_id_rejects_unsafe_ids(run_id: str) -> None:
+    """Test that an id which would build a malformed path or line raises.
+
+    Each case is a distinct hazard rather than a variation. ".." escapes the
+    scratch container the runner recursively deletes; ".hidden" and "-x" give a
+    segment that hides from a listing or reads as a flag; "" leaves a doubled
+    slash in the prefix; and the trailing newline is what $(cat run_id.txt)
+    supplies, which is the case re.match with "$" accepts.
+    """
+    with pytest.raises(ValueError, match="--run-id"):
+        require_path_safe_run_id(run_id, "--run-id")
+
+
+def test_require_path_safe_run_id_accepts_a_generated_id() -> None:
+    """Test that the shared minter's output satisfies its inverse.
+
+    generate_run_id supplies the id whenever --run-id is absent, so a guard that
+    rejected it would fail every run that did not name one.
+    """
+    require_path_safe_run_id(generate_run_id(), "--run-id")

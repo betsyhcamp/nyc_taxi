@@ -13,13 +13,16 @@ these artifacts.
 from __future__ import annotations
 
 import argparse
-import re
 
 import pandas as pd
 
 from fcstnyctaxi.core.train.compose_configs_impl import compose_train_static_configs
 from fcstnyctaxi.lib.io import build_run_prefix
-from fcstnyctaxi.lib.utils import generate_run_id, get_project_root_dir
+from fcstnyctaxi.lib.utils import (
+    generate_run_id,
+    get_project_root_dir,
+    require_path_safe_run_id,
+)
 
 # Hardcoded because they are the pre-convention locations this script migrates
 # away from, and they exist only under dev whatever --env says.
@@ -56,15 +59,6 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _require_path_safe_run_id(feature_run_id: str) -> None:
-    """Reject an id that would build a malformed path or an unpasteable line."""
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", feature_run_id):
-        raise ValueError(
-            f"feature_run_id {feature_run_id!r} must start with a letter or digit "
-            "and contain only letters, digits, '.', '_' or '-'."
-        )
-
-
 def _with_lineage_column(frame: pd.DataFrame, feature_run_id: str) -> pd.DataFrame:
     """Return `frame` carrying `feature_run_id` as dtype "string", never null.
 
@@ -88,7 +82,7 @@ def main() -> None:
     feature_run_id = (
         generate_run_id() if args.feature_run_id is None else args.feature_run_id
     )
-    _require_path_safe_run_id(feature_run_id)
+    require_path_safe_run_id(feature_run_id, "--feature-run-id")
 
     environment, _, _ = compose_train_static_configs(
         get_project_root_dir() / "config", args.env

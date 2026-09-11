@@ -1,12 +1,7 @@
 """IO for pipeline artifacts: SQL preparation, GCS URI construction, and transfer.
 
-Prefixes end in "/", objects do not which is fsspec's own rule, and an upload's layout
-depends on that slash. build_run_prefix returns a prefix, as upload_to_gcs
-requires; build_run_scoped_uri returns an object URI, as download_from_gcs and
-write_text_to_gcs take.
-
-write_<thing>_to_gcs serialises an in-memory value. download_from_gcs and
-upload_to_gcs move bytes that already exist, without interpreting them.
+Prefixes end in "/" and objects do not, which is fsspec's rule and decides an
+upload's layout. write_<thing>_to_gcs serialises a value; the rest move bytes.
 
 build_run_scoped_uri is transitional and serves an older layout temporarily; delete
 when ingress pipeline conforms.
@@ -55,6 +50,9 @@ def prepare_sql(sql_path: Path, sql_params: Mapping[str, object]) -> PreparedSql
 def build_run_scoped_uri(bucket: str, prefix: str, run_id: str, filename: str) -> str:
     """Construct a run-scoped GCS URI for a pipeline artifact where URI has
     format: gs://<bucket>/<prefix>/<run_id>/<filename>.
+
+    Transitional: this serves the ingress pipeline's older prefix-first layout.
+    Delete it when that pipeline adopts build_run_prefix.
 
     Args:
         bucket: GCS bucket name, without the gs:// scheme.
@@ -108,19 +106,22 @@ def build_run_prefix(bucket: str, env: str, slice_name: SliceName, run_id: str) 
 def _require_gcs_uri(gcs_uri: str) -> None:
     """Reject any URI that is not gs://, at the call site rather than downstream.
 
-    fsspec is protocol-agnostic, but this project's contracts are GCP-specific.
-    Without this guard an s3:// URI  works here and fails later inside a
-    Pydantic pattern check. Follows tsbricks' _check_storage_uri_str.
-
-    Args:
-        gcs_uri: The URI to validate. Both an object URI and a prefix ending
-            in "/" are accepted; this checks the scheme only.
-
-    Raises:
-        ValueError: gcs_uri does not start with "gs://".
+    fsspec is protocol-agnostic; an s3:// URI otherwise fails inside pydantic.
     """
     if not gcs_uri.startswith("gs://"):
         raise ValueError(f"gcs_uri must be a gs://... string, got {gcs_uri!r}.")
+
+
+def _require_gcs_prefix(gcs_uri: str) -> None:
+    """Reject a destination that is not a gs:// prefix ending in "/".
+
+    The slash marks a prefix, not an object name; normalising hides the error.
+    """
+    _require_gcs_uri(gcs_uri)
+    if not gcs_uri.endswith("/"):
+        raise ValueError(
+            f"gcs_uri must be a destination prefix ending in '/', got {gcs_uri!r}."
+        )
 
 
 def write_text_to_gcs(text: str, gcs_uri: str) -> None:
@@ -199,11 +200,7 @@ def upload_to_gcs(local_path: Path, gcs_uri: str) -> int:
             missing slash is rejected rather than normalised because the
             mistake is otherwise invisible.
     """
-    _require_gcs_uri(gcs_uri)
-    if not gcs_uri.endswith("/"):
-        raise ValueError(
-            f"gcs_uri must be a destination prefix ending in '/', got {gcs_uri!r}."
-        )
+    _require_gcs_prefix(gcs_uri)
 
     fs, path = fsspec.url_to_fs(gcs_uri)
     if not local_path.is_dir():
@@ -212,3 +209,85 @@ def upload_to_gcs(local_path: Path, gcs_uri: str) -> int:
 
     fs.put(f"{local_path}/", path, recursive=True)
     return sum(1 for child in local_path.rglob("*") if child.is_file())
+
+
+def sync_to_gcs(
+    local_dir: Path, gcs_uri: str, completion_marker: str | None = None
+) -> tuple[int, int]:
+    """Publish a directory to a GCS prefix so the prefix holds exactly its contents.
+
+    Unlike upload_to_gcs it deletes: uploads, then removes remote objects the
+    directory lacks, by relative path so nested trees reconcile. The marker goes
+    alone and last, so its presence means complete rather than merely written.
+
+    Args:
+        local_dir: Directory to publish. Its contents are placed under gcs_uri;
+            its basename is not repeated.
+        gcs_uri: Destination prefix, ending in "/", e.g.
+            "gs://bucket/dev/train/RUNID/compose_configs/".
+        completion_marker: Name of the file in local_dir whose presence means
+            the prefix is complete. None publishes no marker.
+
+    Returns:
+        (objects uploaded, remote objects removed). The marker counts as an
+        upload; deleting it in order to republish it is not a removal.
+
+    Raises:
+        ValueError: gcs_uri is not a gs:// prefix ending in "/", or
+            completion_marker holds a path rather than a filename, which would
+            key the marker differently from every body object.
+        NotADirectoryError: local_dir is not a directory. An absent one lists
+            empty, which would reconcile the prefix to nothing.
+        FileNotFoundError: completion_marker names no file in local_dir, which
+            would otherwise publish the real marker inside the batch.
+    """
+    # Ordered ahead of every remote call: this deletes before it writes, and a
+    # bare local path resolves to LocalFileSystem.
+    _require_gcs_prefix(gcs_uri)
+    if not local_dir.is_dir():
+        raise NotADirectoryError(
+            f"local_dir must be an existing directory, got {str(local_dir)!r}."
+        )
+    if completion_marker and Path(completion_marker).name != completion_marker:
+        raise ValueError(
+            f"completion_marker {completion_marker!r} must be a filename in "
+            "local_dir, not a path."
+        )
+    marker = None if completion_marker is None else local_dir / completion_marker
+    if marker is not None and not marker.is_file():
+        raise FileNotFoundError(
+            f"completion_marker {completion_marker!r} names no file in {local_dir}."
+        )
+
+    fs, remote_root = fsspec.url_to_fs(gcs_uri)
+    remote_root = remote_root.rstrip("/")
+    prefix = f"{remote_root}/"
+    if marker is not None and fs.exists(f"{prefix}{completion_marker}"):
+        fs.rm_file(f"{prefix}{completion_marker}")
+
+    local_files = sorted(p for p in local_dir.rglob("*") if p.is_file())
+    body = [p for p in local_files if p != marker]
+    # Explicit destinations rather than a prefix: fsspec takes matching lists
+    # verbatim, so nesting needs no path arithmetic and no basename is appended.
+    fs.put(
+        [str(p) for p in body],
+        [f"{prefix}{p.relative_to(local_dir).as_posix()}" for p in body],
+    )
+
+    published = {p.relative_to(local_dir).as_posix() for p in local_files}
+    # startswith: fs.find can return an object named exactly like remote_root,
+    # which is a sibling of the prefix rather than something under it.
+    stale = [
+        obj
+        for obj in fs.find(remote_root)
+        if obj.startswith(prefix) and obj.removeprefix(prefix) not in published
+    ]
+    if stale:
+        fs.rm(stale)
+
+    if marker is not None:
+        # Alone, after the reconcile: a batch upload runs concurrently, so a
+        # marker sent with the body can land while a sibling is still missing.
+        fs.put_file(str(marker), f"{prefix}{completion_marker}")
+
+    return len(local_files), len(stale)
