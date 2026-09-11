@@ -71,6 +71,17 @@ tasks:
       - uv run pytest --cov --cov-report=term-missing --cov-report=html
 
   # ===========================================
+  # LOCAL SCRATCH
+  # ===========================================
+  scratch-clean:
+    desc: Delete the local pipeline scratch mirror
+    vars:
+      SCRATCH:
+        sh: uv run python -c "import tempfile, pathlib; print(pathlib.Path(tempfile.gettempdir()) / 'fcstnyctaxi')"
+    cmds:
+      - rm -rf '{{.SCRATCH}}'
+
+  # ===========================================
   # DOCKER UTILS
   # ===========================================
   verify-image:
