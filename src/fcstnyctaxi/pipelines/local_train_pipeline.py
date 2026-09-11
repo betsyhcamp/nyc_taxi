@@ -1,9 +1,7 @@
-"""Run Training's `compose_configs` step locally against real GCS artifacts.
-
-The local half of the two execution modes: it resolves placement, stages the
-Feature artifacts to a scratch directory, calls `compose_configs_impl` with the
+"""
+The local half of the two execution modes calls `compose_configs_impl` with the
 arguments a KFP wrapper will pass, and publishes the step directory. On Vertex
-the mount removes the staging; the impl call is the same either way.
+the mount removes the staging.
 
 Permanent, not a prototype. It coexists with the Vertex pipeline as the mode that
 runs without an image, and it is the mode in which the emitted configs are read.
@@ -18,6 +16,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from typing import cast
 
 from fcstnyctaxi.core.train.compose_configs_impl import (
     SourcedPath,
@@ -30,6 +29,7 @@ from fcstnyctaxi.lib.utils import (
     get_project_root_dir,
     require_path_safe_run_id,
 )
+from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,17 @@ def _mirror_path(gcs_uri: str, root: Path) -> Path:
 
     Derived from the URI, so two objects sharing a basename cannot alias locally.
     """
-    return root / gcs_uri.removeprefix("gs://")
+    if not gcs_uri.startswith("gs://"):
+        raise ValueError(f"gcs_uri must be a gs://... string, got {gcs_uri!r}.")
+    key = gcs_uri.removeprefix("gs://")
+    # "", "." and ".." are legal GCS key segments that the filesystem collapses
+    # or resolves away, so two distinct objects would mirror to one path.
+    if any(segment in ("", ".", "..") for segment in key.rstrip("/").split("/")):
+        raise ValueError(
+            f"gcs_uri {gcs_uri!r} has an empty, '.' or '..' segment, which the "
+            "local mirror cannot represent as a distinct path."
+        )
+    return root / key
 
 
 def _require_git_hash(repo_dir: Path) -> str:
@@ -103,25 +113,23 @@ def _require_git_hash(repo_dir: Path) -> str:
         sha = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=repo_dir,
-            capture_output=True,
+            stdout=subprocess.PIPE,
             text=True,
             check=True,
         ).stdout.strip()
-    # Wrapped because git's own exit status names the command that failed, not
-    # what this run needed it for.
+    # git's own stderr reaches the terminal, so this adds only what git cannot
+    # know: which directory the run required a hash from.
     except (OSError, subprocess.CalledProcessError) as err:
         raise RuntimeError(
-            "git rev-parse HEAD failed, so this run cannot record the commit that "
-            "produced it. Run from inside the repository, with git installed."
+            f"git rev-parse HEAD failed in {repo_dir}, so this run cannot record "
+            "the commit that produced it."
         ) from err
 
-    # Tracked-only: notes/, memory/ and notebooks/eda_figs/ are untracked and not
-    # ignored, so git status --porcelain would read dirty on every run.
+    # git status --porcelain would read dirty on every run due to untracked files
     completed = subprocess.run(
         ["git", "diff", "--quiet", "HEAD", "--"], cwd=repo_dir, check=False
     )
-    # 0 clean, 1 dirty, 128 git failed — and 128 is truthy, so an unguarded check
-    # stamps -dirty on a failure.
+
     if completed.returncode not in (0, 1):
         raise RuntimeError(
             f"git diff --quiet HEAD -- exited {completed.returncode}, so a clean "
@@ -134,9 +142,10 @@ def main() -> None:
     """Compose one Training run's configs and publish them to its run prefix.
 
     Raises:
-        ValueError: If either run id is not path-safe, if the two input URIs are
-            identical, if `--env` has no `environments/<env>.yaml`, on a failed
-            lineage check, or on any composition failure.
+        ValueError: If either run id is not path-safe, if an input URI cannot be
+            mirrored to a distinct local path, if `--env` has no
+            `environments/<env>.yaml`, on a failed lineage check, or on any
+            composition failure.
         RuntimeError: If the git hash cannot be determined, since a run whose
             commit is unknown cannot be reproduced from its own record.
         ValidationError: If an identity field is malformed.
@@ -154,21 +163,17 @@ def main() -> None:
     run_id = generate_run_id() if args.run_id is None else args.run_id
     require_path_safe_run_id(args.feature_run_id, "--feature-run-id")
     require_path_safe_run_id(run_id, "--run-id")
-    if args.panel_uri == args.calendar_uri:
-        raise ValueError(
-            "--panel-uri and --calendar-uri name the same object; the lineage "
-            "check and the origin guard both pass when the frames are one file."
-        )
 
     project_root = get_project_root_dir()
     config_dir = project_root / "config"
     git_hash = _require_git_hash(project_root)
 
     environment, _, _ = compose_train_static_configs(config_dir, args.env)
+    environment_config = cast(EnvironmentConfig, environment.config)
     # Held as a value rather than folded into step_uri: backtest, evaluate, and
     # final_fit each append their own step name to this same prefix next PR.
     run_prefix = build_run_prefix(
-        bucket=environment.config.storage.bucket_name,
+        bucket=environment_config.storage.bucket_name,
         env=args.env,
         slice_name="train",
         run_id=run_id,
@@ -177,6 +182,16 @@ def main() -> None:
 
     mirror_root = args.scratch_dir
     out_dir = _mirror_path(step_uri, mirror_root)
+    # Resolved before the clear below, so a URI the mirror rejects cannot cost
+    # the previous attempt's output.
+    panel_path = _mirror_path(args.panel_uri, mirror_root)
+    calendar_path = _mirror_path(args.calendar_uri, mirror_root)
+    if panel_path == calendar_path:
+        raise ValueError(
+            f"--panel-uri and --calendar-uri both stage to {panel_path}; the "
+            "lineage check and the origin guard pass when the frames are one file."
+        )
+
     logger.info(
         "compose_configs starting: run_id=%s feature_run_id=%s out_dir=%s uri=%s",
         run_id,
@@ -193,15 +208,11 @@ def main() -> None:
     out_dir.mkdir(parents=True)
 
     panel = SourcedPath(
-        path=download_from_gcs(
-            args.panel_uri, _mirror_path(args.panel_uri, mirror_root).parent
-        ),
+        path=download_from_gcs(args.panel_uri, panel_path.parent),
         uri=args.panel_uri,
     )
     calendar = SourcedPath(
-        path=download_from_gcs(
-            args.calendar_uri, _mirror_path(args.calendar_uri, mirror_root).parent
-        ),
+        path=download_from_gcs(args.calendar_uri, calendar_path.parent),
         uri=args.calendar_uri,
     )
 
