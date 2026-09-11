@@ -9,11 +9,11 @@ def test_fcst_data_ingress_pipeline_compiles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv(
-        "FCSTNYCTAXI_EXTRACT_IMAGE",
+        "FCST_EXTRACT_IMAGE",
         "us-central1-docker.pkg.dev/test-project/test-repo/test:test",
     )
 
-    # Import here (not at module level) so FCSTNYCTAXI_EXTRACT_IMAGE is set before
+    # Import here (not at module level) so FCST_EXTRACT_IMAGE is set before
     # the wrapper's @dsl.component decorator captures _IMAGE at import time.
     from fcstnyctaxi.pipelines.fcst_data_ingress_pipeline import (
         fcst_data_ingress_pipeline,

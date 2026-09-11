@@ -87,7 +87,7 @@ The newly pushed tag should appear in the list.
 If the image change is meant to become the new default (the SHA in config drives both `verify_kfp_local.py` and future Cycle 4 submission scripts), bump:
 
 - `config/configs_zone_demand_pipeline.yaml` — set `docker.extract_db_to_bucket` to the new tag.
-- `src/fcstnyctaxi/components/feature/extract_db_to_bucket_component.py` — update the fallback string in `os.environ.get("FCSTNYCTAXI_EXTRACT_IMAGE", ...)`.
+- `src/fcstnyctaxi/components/feature/extract_db_to_bucket_component.py` — update the fallback string in `os.environ.get("FCST_EXTRACT_IMAGE", ...)`.
 
 Commit these changes.
 
@@ -97,7 +97,7 @@ Commit these changes.
 uv run python scripts/verify_kfp_local.py
 ```
 
-Reads the config, sets the `FCSTNYCTAXI_EXTRACT_IMAGE` env var, imports the wrapper, and invokes the component via `kfp.local.DockerRunner`. The container hits real BigQuery and writes both a Parquet snapshot and a SQL sidecar to GCS under a run-scoped prefix.
+Reads the config, sets the `FCST_EXTRACT_IMAGE` env var, imports the wrapper, and invokes the component via `kfp.local.DockerRunner`. The container hits real BigQuery and writes both a Parquet snapshot and a SQL sidecar to GCS under a run-scoped prefix.
 
 Expected output (abridged):
 

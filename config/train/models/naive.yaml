@@ -1,0 +1,9 @@
+# BacktestConfig, third layer. Allowed keys: {model}.
+#
+# freq is load-bearing and real: naive_weekly needs it, and a tsbricks default of
+# freq=1 once silently cast datetime64[ns] to integers. It is cross-checked
+# against data.freq at composition.
+model:
+  fit_predict_callable: fcstnyctaxi.models.naive.naive_weekly
+  hyperparameters:
+    freq: W-SUN

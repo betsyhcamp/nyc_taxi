@@ -5,7 +5,7 @@ from pathlib import Path
 from google.cloud import bigquery
 
 from fcstnyctaxi.core.feature.extract_db_to_bucket_impl import extract_db_to_bucket_impl
-from fcstnyctaxi.lib.config import load_pipeline_config
+from fcstnyctaxi.lib.config.loading import load_pipeline_config
 from fcstnyctaxi.lib.io import (
     PreparedSql,
     build_run_scoped_uri,

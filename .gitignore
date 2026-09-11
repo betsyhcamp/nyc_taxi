@@ -25,3 +25,8 @@ local_outputs/
 
 # exclude directory for built pipeline YAML artifacts
 build/
+
+# local environment variables; .env.example is committed as the key-name reference
+.env
+.env.*
+!.env.example

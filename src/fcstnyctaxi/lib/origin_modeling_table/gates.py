@@ -912,7 +912,9 @@ def assert_all_horizon_1(
     )
 
 
-def assert_tier_categorical(monthly_series: pd.DataFrame, num_tiers: int = 5) -> None:
+def assert_tier_categorical(
+    monthly_series: pd.DataFrame, expected_tiers: int = 5
+) -> None:
     """Assert tier is categorical and carries the full set of tiers, not a subset.
 
     Label-agnostic on purpose: nothing downstream requires particular tier names.
@@ -927,15 +929,18 @@ def assert_tier_categorical(monthly_series: pd.DataFrame, num_tiers: int = 5) ->
     exception type for a suite that expects AssertionError.
 
     They also catch different failures. assign_tiers computes
-    effective_tiers = min(num_tiers, mean_pos.nunique()) and slices the labels, so a
-    fold with too few distinct means truncates. Folds whose ladders disagree concat
-    to object dtype — the first assertion. Every fold truncating identically stays
-    categorical and short — the second.
+    effective_tiers = min(len(tier_labels), mean_pos.nunique()) and slices the
+    labels, so a fold with too few distinct means truncates. Folds whose ladders
+    disagree concat to object dtype — the first assertion. Every fold truncating
+    identically stays categorical and short — the second.
 
     Args:
         monthly_series: Requires a tier column.
-        num_tiers: How many tiers assign_tiers was asked for. Defaults to its own
-            default, so a framing using standard tiering states nothing.
+        expected_tiers: How many labels the tier vocabulary declares. Defaults to
+            the length of assign_tiers' default tier_labels, so a framing using
+            standard tiering states nothing — but that makes it a second copy of
+            a number owned elsewhere, which PR 3 closes by passing
+            len(cfg.tiering.tier_labels) from config at the call site.
     """
     require_columns(monthly_series, ["tier"], "monthly_series")
 
@@ -946,8 +951,8 @@ def assert_tier_categorical(monthly_series: pd.DataFrame, num_tiers: int = 5) ->
     )
 
     categories = list(dtype.categories)
-    assert len(categories) == num_tiers, (
-        f"tier carries {len(categories)} categories, expected {num_tiers}: "
+    assert len(categories) == expected_tiers, (
+        f"tier carries {len(categories)} categories, expected {expected_tiers}: "
         f"{categories}. Every fold truncated to the same short ladder, which the "
         "dtype check cannot see and the leaderboard would read as the complete set"
     )

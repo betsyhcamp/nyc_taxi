@@ -1,0 +1,5 @@
+# TrainInfraConfig — values that do not change the forecast numbers.
+display_name_prefix: fcst-train-pipeline
+
+model_registry:
+  display_name: fcst-monthly-revenue

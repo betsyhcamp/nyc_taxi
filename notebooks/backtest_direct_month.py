@@ -22,7 +22,7 @@ from lightgbm import LGBMRegressor
 from mlforecast.lag_transforms import RollingMean
 from tsbricks.blocks.metadata import get_git_hash, get_uv_lock_info
 
-from fcstnyctaxi.lib.config_utils import save_config
+from fcstnyctaxi.lib.config.composition import save_config
 from fcstnyctaxi.lib.fold_metrics import compute_wrmae_by_progress
 from fcstnyctaxi.lib.io import write_text_to_gcs
 from fcstnyctaxi.lib.monthly_aggregation import (
