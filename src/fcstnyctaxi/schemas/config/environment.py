@@ -59,14 +59,10 @@ class ComputeSettings(BaseModel):
 
 
 class StorageSettings(BaseModel):
-    """Where this system writes its own artifacts.
+    """Where this system writes its own artifacts, addressed by bucket name alone.
 
-    **Deliberately carries no project_id or location, unlike every other plane
-    in this file.** GCS bucket names are globally unique, so a ``gs://`` URI
-    addresses an object completely: ``build_run_prefix``, ``upload_to_gcs`` and
-    ``download_from_gcs`` all take the bucket name and nothing else. No API call
-    in this codebase, present or planned, accepts a project or a location for
-    storage.
+    No ``project_id`` or ``location``, unlike every other plane here — bucket names
+    are globally unique, so ``build_run_prefix`` and the GCS helpers take nothing else.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -75,14 +71,10 @@ class StorageSettings(BaseModel):
 
 
 class VertexSettings(BaseModel):
-    """Vertex-specific settings.
+    """Vertex-specific settings — ``pipeline_root`` is KFP's own scratch.
 
-    ``pipeline_root`` is where KFP writes component outputs, caches, and
-    execution metadata. It stays here rather than under storage because the
-    block name says who consumes it, which ``pipeline_root`` alone does not
-     and it is deliberately not derived from ``bucket_name``, so orchestration
-    scratch can be given its own bucket and lifecycle policy without a schema
-    change.
+    Its own block rather than a field under storage, because the block name says who
+    consumes it; not derived from ``bucket_name``, so scratch keeps its own lifecycle.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -91,11 +83,11 @@ class VertexSettings(BaseModel):
 
 
 class ImageRef(BaseModel):
-    """One image's stable identity with no tag, no digest.
+    """One image's stable identity: repository plus one flat image segment.
 
-    The tag is the git hash, resolved at build and submit time, so committing one
-    here would put a second source of truth for a value the release process owns
-    into a file that is itself baked into the image.
+    No tag or digest: the release process owns those. The flat segment matters —
+    the compile step derives the repository by stripping the last segment, so a
+    nested name quietly narrows what counts as project-owned instead of failing.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -122,19 +114,10 @@ class SliceImages(BaseModel):
 class ArtifactRegistrySettings(BaseModel):
     """Where the code image is pulled from — independent of compute.
 
-    A shared registry might live in a separate project, and registry region
-    could then diverge from compute region more often than project does. The decisive
-    case is image promotion: the whole config tree is baked into the image and the tag
-    is the git hash, so one tag identifies code and config together and prod
-    should pull the **same bytes** dev ran. Deriving this project from compute's
-    would force a rebuild per environment, which produces a different image for
-    one git hash. See ``config/README.md``.
-
-    Stored in parts rather than as a full URI, because a URI would duplicate
-    ``location`` and ``project_id`` from this same file. The host is composed
-    where used:
-
-        f"{ar.location}-docker.pkg.dev/{ar.project_id}/{img.repository}/{img.image}"
+    Prod must pull the same bytes dev ran, and the config tree is baked in under the
+    git-hash tag, so deriving this from compute would force a rebuild per environment
+    and give one git hash two images. Parts rather than a URI, composed where used as
+    f"{location}-docker.pkg.dev/{project_id}/{repository}/{image}".
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -145,22 +128,11 @@ class ArtifactRegistrySettings(BaseModel):
 
 
 class SourceDataSettings(BaseModel):
-    """Where the BigQuery source tables live which are upstream of Feature which are
-    initially queried by Feature.
+    """Where the BigQuery source tables Feature queries live.
 
-    Separate from compute because the two are separately assignable: source
-    tables commonly live in data-platform or domain-owned projects with their
-    own governance, and ML compute reads them cross-project.
-
-    ``location`` is **not a free choice** — a BigQuery job must run in its
-    dataset's location, so this value is determined by where the data is. It may
-    be regional (``us-central1``) or multi-regional (``US``), which is why the
-    field is spelled ``location`` rather than ``region`` across every plane here.
-
-    Unread right now: Training and Inference never touch BigQuery. It lives in
-    EnvironmentConfig rather than ``config/feature/`` because the parity rule
-    makes Feature's own fragments environment-independent, and this varies by
-    environment when dev and prod read different datasets.
+    Separate from compute because the two are separately assignable. ``location``
+    is not a free choice: a BigQuery job runs in its dataset's location, and may be
+    multi-regional (``US``) — which is why every plane says ``location``, not region.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

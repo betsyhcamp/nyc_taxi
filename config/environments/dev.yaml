@@ -49,15 +49,25 @@ artifact_registry:
   project_id: nyc-taxi-ehc
   location: us-central1
   images:
+    # One Docker repository, flat per-slice image names. Training is one image
+    # for five components, so a step-shaped name would be structurally wrong.
+    #
+    # `image` MUST stay a single segment. The compile step derives the
+    # repository by stripping the last segment of FCST_TRAIN_IMAGE, so a nested
+    # name does not fail that check — it silently narrows which images count as
+    # project-owned, and cross-slice coverage stops working.
+    #
+    # `repository` is repeated rather than hoisted: the three will not always
+    # agree.
     feature:
-      repository: fcst-data-ingress-pipeline
-      image: extract-db-to-bucket
+      repository: fcst-ml-containers
+      image: feature
     train:
-      repository: fcst-train-pipeline
-      image: fcst-train
+      repository: fcst-ml-containers
+      image: train
     inference:
-      repository: fcst-inference-pipeline
-      image: fcst-inference
+      repository: fcst-ml-containers
+      image: inference
 
 source_data:
   # Feature's BigQuery source. Training and Inference never

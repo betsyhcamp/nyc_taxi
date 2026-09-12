@@ -36,6 +36,16 @@ forecasting = [
 
 ]
 
+train = [
+    # compose_configs needs only the common set: pandas + pyarrow (via tsbricks),
+    # pydantic, pyyaml (via kfp), tsbricks. Declared-and-empty is forced, not
+    # preferred: `uv sync --group train` errors outright on an undeclared group,
+    # so the alternative is putting model and forecasting dependencies into the
+    # build recipe instead of here. It grows when model fitting lands (xgboost)
+    # and when backtesting needs the forecasting stack (likely via
+    # {include-group = "forecasting"}).
+]
+
 dev = [
     "ruff>=0.12.1",
     "ipykernel>=6.29.5",
@@ -64,6 +74,11 @@ dev = [
     "types-pyyaml>=6.0.12.20260408",
     "docker>=7.1.0",
     "google-cloud-aiplatform>=1.130.0",
+    # Submitter-side, like google-cloud-aiplatform above: the submit scripts run
+    # outside the image, and the image never reads .env. load_dotenv() is called
+    # only by the submitters — never by the compile step, whose one variable
+    # arrives from the task environment and must have no second source.
+    "python-dotenv>=1.0.0",
     "pandas-gbq>=0.31.0",
     "tsbricks[matplotlib]==0.4.0",
 ]
@@ -147,6 +162,7 @@ select = [
     "I",   # isort — ruff format does not sort imports
     "UP",  # pyupgrade — modern Python syntax for 3.11+
     "B",   # flake8-bugbear — common design bugs, mutable defaults
+    "TID251",  # banned-api only; the TID family adds relative-import rules
 ]
 ignore = []
 
@@ -156,6 +172,21 @@ unfixable = []
 
 # Allow unused variables when underscore-prefixed.
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+# runtime_paths names a container filesystem path, so only the layer that runs
+# inside the container may import it. The quiet mistake this catches is a
+# default argument — `config_dir: Path = CONFIG_DIR` passes every test that
+# supplies the parameter, then resolves to /app/config for any caller that does
+# not. The loud form already fails with FileNotFoundError.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"fcstnyctaxi.runtime_paths".msg = "Only components/ may know container paths. core/ and lib/ take config_dir: Path."
+
+# The only exemption. tests/ needs none: a wrapper test patches
+# "fcstnyctaxi.runtime_paths.CONFIG_DIR" as a string target, which ruff never
+# sees as an import — and that works because the component imports the constant
+# inside the function body, as KFP requires anyway.
+[tool.ruff.lint.per-file-ignores]
+"src/fcstnyctaxi/components/**" = ["TID251"]
 
 [tool.ruff.format]
 # Like Black, use double quotes for strings.
