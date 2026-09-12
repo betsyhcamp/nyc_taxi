@@ -186,11 +186,6 @@ def main() -> None:
     # the previous attempt's output.
     panel_path = _mirror_path(args.panel_uri, mirror_root)
     calendar_path = _mirror_path(args.calendar_uri, mirror_root)
-    if panel_path == calendar_path:
-        raise ValueError(
-            f"--panel-uri and --calendar-uri both stage to {panel_path}; the "
-            "lineage check and the origin guard pass when the frames are one file."
-        )
 
     logger.info(
         "compose_configs starting: run_id=%s feature_run_id=%s out_dir=%s uri=%s",

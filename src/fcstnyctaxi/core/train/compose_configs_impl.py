@@ -228,10 +228,7 @@ def compose_configs_impl(
 ) -> ComposeConfigsSummary:
     """Compose and emit every Training destination for one run.
 
-    Keyword-only: `panel` and `calendar` are adjacent parameters of one type, and
-    three interchangeable `str` identity values follow them, so a transposition
-    raises nothing and writes a wrong value to storage.
-
+    Keyword-only to address possible transposition inherent in large num inputs.
     `expected_feature_run_id` is a claim, checked and then discarded; the
     observed frame value is what `TrainRunIdentity` stamps.
 
@@ -248,14 +245,18 @@ def compose_configs_impl(
             if missing.
 
     Raises:
-        ValueError: On a failed lineage check, before anything is written, or on
-            any composition failure.
-        ValidationError: If an identity field is malformed — also before any
-            write, so no partial artifact set is left behind.
+        ValueError: If `panel` and `calendar` name one file, on a failed lineage
+            check, before anything is written, or on any composition failure.
+        ValidationError: If an identity field is malformed; before anything is written.
 
     Returns:
         ComposeConfigsSummary: What this run composed, for a UI node or a log.
     """
+    # Simple check for input arg miswiring causing duplication downstream
+    if panel.path == calendar.path:
+        raise ValueError(
+            f"Miswiring error: panel and calendar are the same filepath {panel.path};"
+        )
     environment, infra, modeling = compose_train_static_configs(config_dir, env)
     panel_df = pd.read_parquet(panel.path)
     calendar_df = pd.read_parquet(calendar.path)

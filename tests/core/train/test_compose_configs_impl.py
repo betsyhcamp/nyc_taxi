@@ -334,3 +334,24 @@ def test_nothing_is_written_when_an_identity_field_is_invalid(tmp_path: Path) ->
         )
 
     assert not (tmp_path / "out").exists()
+
+
+def test_one_artifact_passed_as_both_panel_and_calendar_raises(
+    tmp_path: Path,
+) -> None:
+    """The calendar in both slots would write seven artifacts past the last actual."""
+    _, calendar = _write_inputs(tmp_path, _panel_frame(), _calendar_frame())
+
+    with pytest.raises(ValueError, match="same file"):
+        compose_configs_impl(
+            config_dir=CONFIG_DIR,
+            env="dev",
+            panel=calendar,
+            calendar=calendar,
+            expected_feature_run_id=FEATURE_RUN_ID,
+            train_run_id=TRAIN_RUN_ID,
+            git_hash=GIT_HASH,
+            out_dir=tmp_path / "out",
+        )
+
+    assert not (tmp_path / "out").exists()
