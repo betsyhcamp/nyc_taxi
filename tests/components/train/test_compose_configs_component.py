@@ -55,6 +55,8 @@ GIT_HASH = "abc1234-dirty"
 PANEL_URI = "gs://sentinel-bucket/feature/f-sentinel/panel.parquet"
 CALENDAR_URI = "gs://sentinel-bucket/feature/f-sentinel/calendar.parquet"
 
+_REPO = "us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers"
+
 VALID_IMAGE = (
     "us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers/train@sha256:"
     + "b" * 64
@@ -245,28 +247,48 @@ def test_the_generated_container_module_defines_the_named_output() -> None:
     exec(compile(generated, "<generated>", "exec"), {"__name__": "__generated__"})
 
 
-def test_require_digest_ref_accepts_a_digest_pinned_flat_reference() -> None:
-    """Test that a well-formed reference is returned unchanged."""
-    assert _require_digest_ref(VALID_IMAGE) == VALID_IMAGE
+@pytest.mark.parametrize(
+    "image",
+    [
+        VALID_IMAGE,
+        # Nested names are legal in Artifact Registry, and the repository is the
+        # first three segments whatever the depth, so banning them bought nothing.
+        "us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers/team/train"
+        "@sha256:" + "c" * 64,
+    ],
+    ids=["flat", "nested"],
+)
+def test_require_digest_ref_accepts_a_digest_pinned_reference(image: str) -> None:
+    """Test that a well-formed reference is returned unchanged, nesting included."""
+    assert _require_digest_ref(image) == image
 
 
 @pytest.mark.parametrize(
     ("image", "expected_message"),
     [
-        (None, "is not set"),
-        ("", "is not set"),
-        (
-            "us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers/train:abc1234",
-            "digest-pinned",
-        ),
-        (
-            "us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers/sub/train"
-            "@sha256:" + "c" * 64,
-            "flat image name",
-        ),
+        (None, "not set"),
+        ("", "not set"),
+        (_REPO + "/train:abc1234", "64 hex"),
+        (_REPO + "/train@sha256:zz", "64 hex"),
+        (_REPO + "/train@sha256:", "64 hex"),
+        (_REPO + "/@sha256:" + "c" * 64, "64 hex"),
+        ("a/b/c@sha256:" + "c" * 64, "64 hex"),
+    ],
+    ids=[
+        "unset",
+        "empty",
+        "tag",
+        "digest-not-hex",
+        "digest-empty",
+        "no-name",
+        "no-host",
     ],
 )
 def test_require_digest_ref_rejects(image: str | None, expected_message: str) -> None:
-    """Test that an unset, tag-pinned, or nested reference is refused by name."""
+    """Test that anything but a digest-pinned registry reference is refused.
+
+    The tag case is the likely mistake; the rest are malformed references the old
+    substring test for "@sha256:" waved through.
+    """
     with pytest.raises(ValueError, match=expected_message):
         _require_digest_ref(image)
