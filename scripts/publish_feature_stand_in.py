@@ -10,8 +10,6 @@ Disposable by construction: delete it the day the Feature pipeline publishes
 these artifacts.
 """
 
-from __future__ import annotations
-
 import argparse
 
 import pandas as pd

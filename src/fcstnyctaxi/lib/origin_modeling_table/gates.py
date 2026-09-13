@@ -4,8 +4,6 @@ Gates raise AssertionError and return None. The single exception is
 assert_benchmark_key_parity, which returns its counts for display.
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable, Sequence
 
 import numpy as np

@@ -1,4 +1,4 @@
-# No `from __future__ import annotations` here, though 40 other modules carry it
+# No `__future__.annotations` import here, though 40 other modules carry it
 # as house style. KFP reads annotations as objects at decoration time and PEP 563
 # makes them strings, so the failure names artifacts rather than the import.
 
@@ -77,7 +77,13 @@ def compose_configs(
         compose_train_static_configs,
     )
     from fcstnyctaxi.lib.io import build_run_prefix
-    from fcstnyctaxi.runtime_paths import CONFIG_DIR
+
+    # The one sanctioned reader of the banned module. Scoped to this line rather
+    # than to components/ because per-file-ignores keys on the rule code, and a
+    # directory-wide TID251 waiver would also waive the __future__ ban here.
+    # tests/ needs no waiver: a wrapper test patches the constant by string
+    # target, which ruff never sees as an import.
+    from fcstnyctaxi.runtime_paths import CONFIG_DIR  # noqa: TID251
     from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 
     # The container has no .git and no git binary, so get_git_hash() would return

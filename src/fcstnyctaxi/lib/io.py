@@ -7,8 +7,6 @@ build_run_scoped_uri is transitional and serves an older layout temporarily; del
 when ingress pipeline conforms.
 """
 
-from __future__ import annotations
-
 import hashlib
 from collections.abc import Mapping
 from pathlib import Path

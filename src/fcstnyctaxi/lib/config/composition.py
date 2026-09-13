@@ -12,8 +12,6 @@ This module is generic and carries no knowledge of this project's own config
 files; `bindings.py` holds those.
 """
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path

@@ -5,8 +5,6 @@ build_backtest_results; lives here until the API is validated through use in
 this project
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import pandas as pd

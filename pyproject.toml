@@ -180,13 +180,9 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 # not. The loud form already fails with FileNotFoundError.
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "fcstnyctaxi.runtime_paths".msg = "Only components/ may know container paths. core/ and lib/ take config_dir: Path."
-
-# The only exemption. tests/ needs none: a wrapper test patches
-# "fcstnyctaxi.runtime_paths.CONFIG_DIR" as a string target, which ruff never
-# sees as an import — and that works because the component imports the constant
-# inside the function body, as KFP requires anyway.
-[tool.ruff.lint.per-file-ignores]
-"src/fcstnyctaxi/components/**" = ["TID251"]
+# PEP 563 makes annotations strings; KFP reads them as objects at decoration time
+# and then reports a bogus artifact-type error. Removed repo-wide, banned here.
+"__future__.annotations".msg = "KFP reads annotations as objects at decoration time; PEP 563 makes them strings and kfp reports a bogus artifact-type error. Quote a forward reference instead."
 
 [tool.ruff.format]
 # Like Black, use double quotes for strings.

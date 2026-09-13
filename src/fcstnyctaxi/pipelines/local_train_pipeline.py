@@ -7,8 +7,6 @@ Permanent, not a prototype. It coexists with the Vertex pipeline as the mode tha
 runs without an image, and it is the mode in which the emitted configs are read.
 """
 
-from __future__ import annotations
-
 import argparse
 import logging
 import shutil

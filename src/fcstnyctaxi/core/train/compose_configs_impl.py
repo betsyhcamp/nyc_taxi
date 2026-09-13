@@ -3,8 +3,6 @@ Composing and recording are one step because they share a panel read to derive o
 Derived origins injected as runtime override. Artifacts & lineage in `run_identity.json`
 """
 
-from __future__ import annotations
-
 import json
 from dataclasses import dataclass
 from hashlib import sha256
