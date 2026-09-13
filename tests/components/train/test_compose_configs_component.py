@@ -201,7 +201,7 @@ def test_impl_failure_propagates_and_leaves_metadata_unstamped(
 
 def test_the_generated_container_module_defines_the_named_output() -> None:
     """Test that the generated container code resolves its annotation, output named
-    run_prefix as PR 4's tasks consume it."""
+    run_prefix as downstream tasks consume it."""
     # run_prefix, not KFP's default "Output": a bare `-> str` compiles, runs, and
     # renames what downstream wrappers ask for.
     outputs = COMPONENT.component_spec.outputs

@@ -165,7 +165,7 @@ def main() -> None:
     git_hash = _require_git_hash(project_root)
 
     # Held as a value rather than folded into step_uri: backtest, evaluate, and
-    # final_fit each append their own step name to this same prefix next PR.
+    # final_fit will each append their own step name to this same prefix.
     run_prefix = resolve_run_prefix(config_dir, args.env, "train", run_id)
     step_uri = f"{run_prefix}{_STEP}/"
 

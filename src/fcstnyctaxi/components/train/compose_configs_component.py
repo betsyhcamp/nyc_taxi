@@ -55,7 +55,7 @@ def compose_configs(
     which composes configs.
 
     Returns:
-        Outputs: run_prefix, the run root each PR 4 step appends its name to.
+        Outputs: run_prefix, the run root each Training step appends its name to.
 
     Raises:
         RuntimeError: If the image carries no FCST_GIT_HASH.
