@@ -1,14 +1,13 @@
 # TODO: Once conventions are understood by the team, trim down comments
 """Concepts shared by more than one slice's configuration schemas.
 
-Only genuinely shared *concepts* belong here. Three blocks of ``EnvironmentConfig``
-each declare a ``project_id`` and a ``location``, and that is deliberately **not**
-factored into a shared base: a compute region, a registry region, and a dataset
-location are three different facts that share a spelling, and inheritance would imply
-a substitutability they do not have.
+Only genuinely shared *concepts*. ``EnvironmentConfig``'s three ``project_id`` and
+``location`` pairs are deliberately **not** factored into a base: a compute region, a
+registry region, and a dataset location share a spelling, not a meaning, and a base
+class would imply they are substitutable.
 
-tsbricks classes stay in tsbricks; its hierarchy is not mirrored. The rules this
-config tree follows are in ``config/README.md``.
+tsbricks classes stay in tsbricks. The rules this config tree follows are in
+``config/README.md``.
 """
 
 from typing import Literal
@@ -25,13 +24,11 @@ The same three tokens name every place a slice appears:
     <slice>_run_id                         the run-id prefix
     artifact_registry.images.<slice>       image references
 
-``lib/io.build_run_prefix`` is the first consumer: it types the slice segment of
-the storage convention and checks membership with ``get_args``, since no type
-checker runs in CI. Elsewhere the type is deliberately not used as a key.
-``SliceImages`` declares its three fields explicitly rather than keying a dict by
-this type, so that a missing slice is a validation error at composition rather
-than a KeyError at submit time; and ``lib/config/bindings`` exposes a named
-function per destination rather than a registry keyed by this type — three for
-Training, one each for Feature and Inference, plus the ``environment_bindings``
-all three share.
+``lib/storage_layout._build_run_prefix`` is the first consumer: it types the slice
+segment and checks membership with ``get_args``, since no type checker runs in CI.
+
+Elsewhere the type is deliberately not a key. ``SliceImages`` declares three fields
+rather than keying a dict by it, so a missing slice is a validation error at
+composition rather than a KeyError at submit time; ``lib/config/bindings`` exposes a
+named function per destination rather than a registry keyed by it.
 """

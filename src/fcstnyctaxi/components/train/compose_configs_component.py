@@ -50,9 +50,9 @@ def compose_configs(
 ) -> NamedTuple("Outputs", [("run_prefix", str)]):  # type: ignore[valid-type]
     """Compose and emit every Training destination for one run.
 
-    Composes EnvironmentConfig itself: run_prefix needs bucket_name before the impl
-    runs. The caller places the work, the impl records it, so both modes build the
-    URI from the same inputs.
+    Resolves run_prefix itself, before the impl runs, because Artifact.path
+    recomputes from .uri and the impl cannot supply it. Acts as a wrapper for impl func
+    which composes configs.
 
     Returns:
         Outputs: run_prefix, the run root each PR 4 step appends its name to.
@@ -64,34 +64,23 @@ def compose_configs(
     """
     import os
     from pathlib import Path
-    from typing import cast
 
     from fcstnyctaxi.core.train.compose_configs_impl import (
         SourcedPath,
         compose_configs_impl,
-        compose_train_static_configs,
     )
-    from fcstnyctaxi.lib.io import build_run_prefix
+    from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
     from fcstnyctaxi.runtime_paths import CONFIG_DIR  # noqa: TID251
-    from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 
     # The container has no .git and no git binary, so get_git_hash() returns None
     git_hash = os.environ.get("FCST_GIT_HASH")
     if not git_hash:
         raise RuntimeError(
-            "FCST_GIT_HASH is unset; the image was built without "
-            "--build-arg GIT_HASH, so this run cannot record the commit that "
-            "produced it."
+            "FCST_GIT_HASH is unset; the image was built without --build-arg GIT_HASH, "
+            "so this run cannot record the commit that produced it."
         )
 
-    environment, _, _ = compose_train_static_configs(CONFIG_DIR, env)
-    environment_config = cast(EnvironmentConfig, environment.config)
-    run_prefix = build_run_prefix(
-        bucket=environment_config.storage.bucket_name,
-        env=env,
-        slice_name="train",
-        run_id=train_run_id,
-    )
+    run_prefix = resolve_run_prefix(CONFIG_DIR, env, "train", train_run_id)
     # Artifact.path recomputes from self.uri on every access, so this MUST precede
     # the .path read below. Reversed, the run succeeds at KFP's own prefix.
     composed_configs.uri = f"{run_prefix}compose_configs/"
@@ -106,8 +95,7 @@ def compose_configs(
         git_hash=git_hash,
         out_dir=Path(composed_configs.path),
     )
-    # Every value is one the wrapper already holds, so stamping reads no artifact
-    # payload. panel_uri and calendar_uri are omitted: dsl.importer records them.
+
     composed_configs.metadata.update(
         {
             **summary.as_dict(),

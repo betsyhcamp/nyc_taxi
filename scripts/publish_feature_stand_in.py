@@ -3,7 +3,7 @@
 The Training pipeline needs a panel and a fiscal calendar carrying
 `feature_run_id` at run-scoped paths, and the Feature pipeline that will write
 them does not exist yet. This reads the two artifacts `notebooks/data_prep.py`
-already wrote, adds the column, writes them under `build_run_prefix`'s
+already wrote, adds the column, writes them under `resolve_run_prefix`'s
 convention, and prints the flags the local training runner takes.
 
 Disposable by construction: delete it the day the Feature pipeline publishes
@@ -14,8 +14,7 @@ import argparse
 
 import pandas as pd
 
-from fcstnyctaxi.core.train.compose_configs_impl import compose_train_static_configs
-from fcstnyctaxi.lib.io import build_run_prefix
+from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
 from fcstnyctaxi.lib.utils import (
     generate_run_id,
     get_project_root_dir,
@@ -82,14 +81,8 @@ def main() -> None:
     )
     require_path_safe_run_id(feature_run_id, "--feature-run-id")
 
-    environment, _, _ = compose_train_static_configs(
-        get_project_root_dir() / "config", args.env
-    )
-    run_prefix = build_run_prefix(
-        bucket=environment.config.storage.bucket_name,
-        env=args.env,
-        slice_name="feature",
-        run_id=feature_run_id,
+    run_prefix = resolve_run_prefix(
+        get_project_root_dir() / "config", args.env, "feature", feature_run_id
     )
     panel_uri = f"{run_prefix}{_STEP}/{_PANEL_FILENAME}"
     calendar_uri = f"{run_prefix}{_STEP}/{_CALENDAR_FILENAME}"

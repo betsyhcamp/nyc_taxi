@@ -62,7 +62,7 @@ class StorageSettings(BaseModel):
     """Where this system writes its own artifacts, addressed by bucket name alone.
 
     No ``project_id`` or ``location``, unlike every other plane here — bucket names
-    are globally unique, so ``build_run_prefix`` and the GCS helpers take nothing else.
+    are globally unique, so ``storage_layout`` and the GCS helpers take nothing else.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
