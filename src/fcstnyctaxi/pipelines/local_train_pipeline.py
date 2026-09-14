@@ -19,7 +19,7 @@ from fcstnyctaxi.core.train.compose_configs_impl import (
     compose_configs_impl,
     compose_train_static_configs,
 )
-from fcstnyctaxi.lib.io import download_from_gcs, sync_to_gcs
+from fcstnyctaxi.lib.io import download_from_gcs, sync_to_gcs, upload_to_gcs
 from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
 from fcstnyctaxi.lib.utils import (
     generate_run_id,
@@ -213,19 +213,26 @@ def main() -> None:
         git_hash=git_hash,
         out_dir=out_dir,
     )
-    # The impl writes run_identity.json last, so publishing it alone and last
-    # makes its presence at the prefix mean complete rather than started.
+    # First, so a failed step publish still leaves a record of what the run read.
+    # Not sync_to_gcs here: at the run prefix it deletes every sibling step's output.
+    upload_to_gcs(
+        out_dir.parent / "run_identity.json", f"{run_prefix}run_identity.json"
+    )
+
+    # The impl writes manifest.json last, so publishing it alone and last makes its
+    # presence at the prefix mean complete rather than started.
     uploaded, removed = sync_to_gcs(
-        out_dir, step_uri, completion_marker="run_identity.json"
+        out_dir, step_uri, completion_marker="manifest.json"
     )
 
     logger.info(
-        "compose_configs complete: uploaded=%d removed=%d uri=%s run_id=%s "
-        "models=%s n_origins=%d origins=%s..%s last_complete_actual_month=%d "
-        "start_months=%s out_dir=%s",
+        "compose_configs complete: uploaded=%d removed=%d uri=%s identity=%s "
+        "run_id=%s models=%s n_origins=%d origins=%s..%s "
+        "last_complete_actual_month=%d start_months=%s out_dir=%s",
         uploaded,
         removed,
         step_uri,
+        f"{run_prefix}run_identity.json",
         run_id,
         summary.model_names,
         summary.n_origins,

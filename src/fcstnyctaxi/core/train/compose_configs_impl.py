@@ -228,7 +228,8 @@ def compose_configs_impl(
 
     Keyword-only to address possible transposition inherent in large num inputs.
     `expected_feature_run_id` is a claim, checked and then discarded; the
-    observed frame value is what `TrainRunIdentity` stamps.
+    observed frame value is what `TrainRunIdentity` stamps. Every failure below
+    raises before the first write, so a failed run leaves no partial output.
 
     Args:
         config_dir (Path): Root of the config tree.
@@ -239,13 +240,15 @@ def compose_configs_impl(
             compared against both frames and then discarded.
         train_run_id (str): This run's own identifier.
         git_hash (str): The commit that produced this run.
-        out_dir (Path): Directory the emitted artifacts are written into, created
-            if missing.
+        out_dir (Path): Step directory the emitted configs are written into,
+            created if missing. Must sit under the run root, since
+            `run_identity.json` is written to its parent.
 
     Raises:
-        ValueError: If `panel` and `calendar` name one file, on a failed lineage
-            check, before anything is written, or on any composition failure.
-        ValidationError: If an identity field is malformed; before anything is written.
+        ValueError: If `panel` and `calendar` name one file; if `out_dir` is not a
+            step directory under `train_run_id`; on a failed lineage check; or on
+            any composition failure.
+        ValidationError: If an identity field is malformed.
 
     Returns:
         ComposeConfigsSummary: What this run composed, for a UI node or a log.
@@ -297,6 +300,15 @@ def compose_configs_impl(
         calendar_uri=calendar.uri,
     )
 
+    # run_identity.json describes the run, not this step. Derived, not passed:
+    # a second parameter could disagree with out_dir about the same directory.
+    run_dir = out_dir.parent
+    if run_dir.name != train_run_id:
+        raise ValueError(
+            f"out_dir {out_dir} must be a step directory under the run root "
+            f"{train_run_id!r}, since run_identity.json is written beside it."
+        )
+
     # All four dumped with save_config's model-branch flags; exclude_none drops nulls.
     out_dir.mkdir(parents=True, exist_ok=True)
     for filename, composed in files.items():
@@ -305,10 +317,11 @@ def compose_configs_impl(
             out_dir / filename,
         )
 
+    (run_dir / "run_identity.json").write_text(
+        identity.model_dump_json(indent=2) + "\n"
+    )
+    # `manifest.json` written is the step's completion marker. Keep this write last.
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    identity_json = identity.model_dump_json(indent=2)
-    # `run_identity.json` written is the completion marker. Keep this write last.
-    (out_dir / "run_identity.json").write_text(identity_json + "\n")
 
     return ComposeConfigsSummary(
         n_origins=len(origins),

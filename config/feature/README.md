@@ -178,10 +178,21 @@ The convention that decides where any run artifact goes:
 > with only `<bucket>`, `<env>`, `<slice>`, and `<run_id>`. Everything else lives in the
 > directory of the step that produced it.
 
-`run_outputs.json` qualifies — its reader is the next pipeline. `run_identity.json` does
-not: its readers are downstream steps *inside* the same pipeline, which receive it as an
-orchestrator artifact rather than by constructing a path. The rule also predicts where
-`run_metadata.json` already sits, since its reader is the submission script.
+`run_outputs.json` qualifies: its reader is the next pipeline, which knows only the
+`feature_run_id` it was handed.
+
+`run_identity.json` qualifies too, and Training already writes it this way:
+
+```
+gs://<bucket>/<env>/train/<train_run_id>/run_identity.json
+gs://<bucket>/<env>/train/<train_run_id>/compose_configs/   the first step's own outputs
+```
+
+Its outside reader is the submission script, which compares a run about to be resubmitted
+against the record of the last one and knows only the bucket, env, slice and run id. Note
+that the rule is about **readers, not content**: this file was always run-level, and it
+belonged in the step directory for as long as its only readers were downstream steps
+receiving it as an orchestrator artifact. Gaining one outside reader is what moved it.
 
 Note this means `run_identity.json` and `run_outputs.json` are **different files with
 different jobs**: identity is what a run *is* and what it *read*, true at step 1;

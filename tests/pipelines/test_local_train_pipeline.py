@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from pytest_mock import MockerFixture
 
+from fcstnyctaxi.core.train.compose_configs_impl import ComposeConfigsSummary
 from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.pipelines import local_train_pipeline
@@ -90,3 +91,74 @@ def test_a_malformed_train_config_raises_before_out_dir_is_cleared(
 
     assert rmtree.call_count == 0
     assert (out_dir / "run_identity.json").read_text() == PREVIOUS_OUTPUT
+
+
+def test_the_identity_is_published_before_the_step_and_manifest_marks_it_complete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+) -> None:
+    """Test the publish order and which file marks the step complete.
+
+    run_identity.json sits outside `out_dir`, so `sync_to_gcs` no longer carries it
+    and the step needs a different marker. Published second, a failed step sync
+    would leave the run with no record of what it read.
+    """
+    root = tmp_path / "project"
+    shutil.copytree(get_project_root_dir() / "config", root / "config")
+    monkeypatch.setenv("PROJECT_ROOT", str(root))
+    mocker.patch.object(
+        local_train_pipeline, "_require_git_hash", return_value="abc1234"
+    )
+    mocker.patch.object(
+        local_train_pipeline, "download_from_gcs", side_effect=lambda uri, d: d / "f"
+    )
+    mocker.patch.object(
+        local_train_pipeline,
+        "compose_configs_impl",
+        return_value=ComposeConfigsSummary(
+            n_origins=1,
+            first_origin="2025-05-18",
+            last_origin="2025-05-18",
+            last_complete_actual_month=202505,
+            start_months=[202505],
+            model_names=["naive"],
+        ),
+    )
+    # One manager, so the assertion is about order between the two calls rather
+    # than each in isolation.
+    publishes = mocker.MagicMock()
+    publishes.attach_mock(
+        mocker.patch.object(local_train_pipeline, "upload_to_gcs"), "upload"
+    )
+    publishes.attach_mock(
+        mocker.patch.object(local_train_pipeline, "sync_to_gcs", return_value=(7, 0)),
+        "sync",
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "local_train_pipeline",
+            "--env",
+            ENV,
+            "--feature-run-id",
+            FEATURE_RUN_ID,
+            "--panel-uri",
+            f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/data_prep/time_series.parquet",
+            "--calendar-uri",
+            f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/data_prep/fiscal_calendar.parquet",
+            "--run-id",
+            RUN_ID,
+            "--scratch-dir",
+            str(tmp_path / "scratch"),
+        ],
+    )
+
+    local_train_pipeline.main()
+
+    run_prefix = resolve_run_prefix(root / "config", ENV, "train", RUN_ID)
+    assert [call[0] for call in publishes.mock_calls] == ["upload", "sync"]
+    assert publishes.mock_calls[0].args[1] == f"{run_prefix}run_identity.json"
+    assert publishes.mock_calls[1].kwargs["completion_marker"] == "manifest.json"

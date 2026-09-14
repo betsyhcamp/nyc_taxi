@@ -213,7 +213,9 @@ uv run python -m fcstnyctaxi.pipelines.local_train_pipeline --help
 The submitter logs the console URL for the run. The artifacts land under the run prefix it also logs:
 
 ```{bash}
-gsutil ls gs://nyc-taxi-ehc--modeling/dev/train/<run_id>/compose_configs/
+gsutil ls -r gs://nyc-taxi-ehc--modeling/dev/train/<run_id>/
 ```
+
+`run_identity.json` sits at the run root rather than inside a step directory, because its reader is outside the pipeline and can construct only `<bucket>/<env>/train/<run_id>`. The step's own outputs, the five configs plus `manifest.json`, are under `compose_configs/`.
 
 `task build-clean` removes compiled templates; `task scratch-clean` removes the local scratch mirror, `.last_run_id` included.

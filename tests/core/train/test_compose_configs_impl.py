@@ -81,13 +81,27 @@ def _write_inputs(
     )
 
 
+def _run_dir(tmp_path: Path) -> Path:
+    """This run's root, where run_identity.json lands beside the step directory."""
+    return tmp_path / TRAIN_RUN_ID
+
+
+def _step_dir(tmp_path: Path) -> Path:
+    """The step directory under this run's root, the shape the impl requires.
+
+    Not a flat `tmp_path / "out"`: the impl writes run_identity.json to the parent,
+    so a directory with no run-id level would put it wherever tmp_path happens to be.
+    """
+    return _run_dir(tmp_path) / "compose_configs"
+
+
 def _run(
     tmp_path: Path,
     panel_df: pd.DataFrame | None = None,
     calendar_df: pd.DataFrame | None = None,
     expected_feature_run_id: str = FEATURE_RUN_ID,
 ) -> ComposeConfigsSummary:
-    """Compose one run into `tmp_path/out`, defaulting to a consistent frame pair."""
+    """Compose one run into its step directory, defaulting to a consistent pair."""
     panel, calendar = _write_inputs(
         tmp_path,
         _panel_frame() if panel_df is None else panel_df,
@@ -101,14 +115,14 @@ def _run(
         expected_feature_run_id=expected_feature_run_id,
         train_run_id=TRAIN_RUN_ID,
         git_hash=GIT_HASH,
-        out_dir=tmp_path / "out",
+        out_dir=_step_dir(tmp_path),
     )
 
 
 @pytest.fixture
 def composed(tmp_path: Path) -> tuple[ComposeConfigsSummary, Path]:
-    """One successful run, returning its summary and its output directory."""
-    return _run(tmp_path), tmp_path / "out"
+    """One successful run, returning its summary and its step directory."""
+    return _run(tmp_path), _step_dir(tmp_path)
 
 
 # ================================================
@@ -164,7 +178,7 @@ def test_run_identity_reloads_and_stamps_what_was_read(
     _, out_dir = composed
 
     identity = TrainRunIdentity(
-        **json.loads((out_dir / "run_identity.json").read_text())
+        **json.loads((out_dir.parent / "run_identity.json").read_text())
     )
 
     assert identity.feature_run_id == FEATURE_RUN_ID
@@ -172,6 +186,44 @@ def test_run_identity_reloads_and_stamps_what_was_read(
     assert identity.git_hash == GIT_HASH
     assert identity.panel_uri.endswith("time_series.parquet")
     assert identity.calendar_uri.endswith("fiscal_calendar.parquet")
+
+
+def test_run_identity_lands_at_the_run_root_not_in_the_step_directory(
+    composed: tuple[ComposeConfigsSummary, Path],
+) -> None:
+    """Test the placement a reader outside this pipeline depends on.
+
+    A restart guard knows the bucket, env, slice and run id and nothing else, so
+    a file it must find cannot sit behind a step name.
+    """
+    _, out_dir = composed
+
+    assert (out_dir.parent / "run_identity.json").is_file()
+    assert not (out_dir / "run_identity.json").exists()
+
+
+def test_a_step_directory_outside_its_run_root_is_refused(tmp_path: Path) -> None:
+    """Test that the impl refuses to write the identity somewhere unintended.
+
+    The run root is derived from out_dir rather than passed, so without this a
+    caller handing over a flat directory silently scatters run_identity.json.
+    """
+    panel, calendar = _write_inputs(tmp_path, _panel_frame(), _calendar_frame())
+
+    with pytest.raises(ValueError, match="must be a step directory under the run root"):
+        compose_configs_impl(
+            config_dir=CONFIG_DIR,
+            env="dev",
+            panel=panel,
+            calendar=calendar,
+            expected_feature_run_id=FEATURE_RUN_ID,
+            train_run_id=TRAIN_RUN_ID,
+            git_hash=GIT_HASH,
+            out_dir=tmp_path / "flat",
+        )
+
+    assert not (tmp_path / "flat").exists()
+    assert not (tmp_path / "run_identity.json").exists()
 
 
 def test_manifest_hashes_a_shared_fragment_once_but_keeps_per_destination_order(
@@ -308,7 +360,7 @@ def test_nothing_is_written_when_the_lineage_check_fails(tmp_path: Path) -> None
     with pytest.raises(ValueError):
         _run(tmp_path, expected_feature_run_id="a-different-run")
 
-    assert not (tmp_path / "out").exists()
+    assert not _run_dir(tmp_path).exists()
 
 
 def test_nothing_is_written_when_an_identity_field_is_invalid(tmp_path: Path) -> None:
@@ -328,10 +380,10 @@ def test_nothing_is_written_when_an_identity_field_is_invalid(tmp_path: Path) ->
             expected_feature_run_id=FEATURE_RUN_ID,
             train_run_id=TRAIN_RUN_ID,
             git_hash=GIT_HASH,
-            out_dir=tmp_path / "out",
+            out_dir=_step_dir(tmp_path),
         )
 
-    assert not (tmp_path / "out").exists()
+    assert not _run_dir(tmp_path).exists()
 
 
 def test_one_artifact_passed_as_both_panel_and_calendar_raises(
@@ -349,7 +401,7 @@ def test_one_artifact_passed_as_both_panel_and_calendar_raises(
             expected_feature_run_id=FEATURE_RUN_ID,
             train_run_id=TRAIN_RUN_ID,
             git_hash=GIT_HASH,
-            out_dir=tmp_path / "out",
+            out_dir=_step_dir(tmp_path),
         )
 
-    assert not (tmp_path / "out").exists()
+    assert not _run_dir(tmp_path).exists()
