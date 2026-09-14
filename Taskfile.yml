@@ -254,6 +254,21 @@ tasks:
     cmds:
       - uv run python scripts/compile_train_pipeline.py
 
+  submit-train:
+    desc: "Submit an existing template. Run: task submit-train -- --help"
+    cmds:
+      - uv run python scripts/submit_train_pipeline.py {{.CLI_ARGS}}
+
+  run-train:
+    desc: Compile fresh and submit what was just compiled
+    requires:
+      vars: [IMAGE_REF]
+    cmds:
+      - task: compile-train
+        vars: {IMAGE_REF: "{{.IMAGE_REF}}"}
+      # --template-path last: argparse is last-wins, so a caller-supplied one cannot win.
+      - uv run python scripts/submit_train_pipeline.py {{.CLI_ARGS}} --template-path build/fcst-train-pipeline.yaml
+
   # ===========================================
   # COMPOSITE TASKS
   # ===========================================
