@@ -7,17 +7,13 @@ build_run_scoped_uri is transitional and serves an older layout temporarily; del
 when ingress pipeline conforms.
 """
 
-from __future__ import annotations
-
 import hashlib
 from collections.abc import Mapping
 from pathlib import Path
-from typing import NamedTuple, get_args
+from typing import NamedTuple
 
 import fsspec
 from tsbricks.blocks.dataio import read_sql, render_sql_template
-
-from fcstnyctaxi.schemas.config.common import SliceName
 
 
 class PreparedSql(NamedTuple):
@@ -52,7 +48,7 @@ def build_run_scoped_uri(bucket: str, prefix: str, run_id: str, filename: str) -
     format: gs://<bucket>/<prefix>/<run_id>/<filename>.
 
     Transitional: this serves the ingress pipeline's older prefix-first layout.
-    Delete it when that pipeline adopts build_run_prefix.
+    Delete it when that pipeline adopts storage_layout.resolve_run_prefix.
 
     Args:
         bucket: GCS bucket name, without the gs:// scheme.
@@ -66,41 +62,6 @@ def build_run_scoped_uri(bucket: str, prefix: str, run_id: str, filename: str) -
         Fully-qualified GCS URI
     """
     return f"gs://{bucket}/{prefix}/{run_id}/{filename}"
-
-
-def build_run_prefix(bucket: str, env: str, slice_name: SliceName, run_id: str) -> str:
-    """Construct the run root gs://<bucket>/<env>/<slice_name>/<run_id>/.
-
-    The single place the storage convention is written. It returns the run
-    *root*, ending in "/", because each component appends its own step name and
-    never accepts a full output path since no step can write into another's
-    directory.
-
-    Now that the slice segment is typed, the notebooks' dev/experiments/<run_id>/
-    root is out of reach. The function guaranteeing the production convention
-    should not also mint disposable namespaces.
-
-    Args:
-        bucket: GCS bucket name, without the gs:// scheme.
-        env: Deployment environment, e.g. "dev". Not checked here —
-            require_known_environment validates it in the config layer.
-        slice_name: The pipeline that produced the artifacts.
-        run_id: Per-run identifier, giving each run its own directory.
-
-    Returns:
-        Fully-qualified GCS prefix, ending in "/".
-
-    Raises:
-        ValueError: slice_name is not a SliceName. Raises rather than asserts,
-            since python -O strips asserts and no type checker runs in CI;
-            "training" for "train" would give a well-formed wrong path.
-    """
-    known_slices = get_args(SliceName)
-    if slice_name not in known_slices:
-        raise ValueError(
-            f"slice_name must be one of {known_slices}, got {slice_name!r}."
-        )
-    return f"gs://{bucket}/{env}/{slice_name}/{run_id}/"
 
 
 def _require_gcs_uri(gcs_uri: str) -> None:

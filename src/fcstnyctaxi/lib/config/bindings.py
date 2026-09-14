@@ -52,8 +52,6 @@ functions here that touch the filesystem, and the only ones that take
 declaration.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 from tsbricks.backtesting.schema import BacktestConfig

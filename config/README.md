@@ -200,14 +200,20 @@ schemas/config/<slice>.py           destination schemas
 artifact_registry.images.<slice>    image references
 ```
 
-`train`, not `training`. GCP resource names follow the vocabulary too —
-`fcst-train-pipeline`, `fcst-train`, and the matching Vertex
-`display_name_prefix`.
+`train`, not `training`. GCP resource names follow the vocabulary too: the Vertex
+pipeline and its `display_name_prefix` are `fcst-train-pipeline`, and the
+container images are the flat names `feature`, `train`, `inference` inside one
+Docker repository, `fcst-ml-containers`. One repository rather than one per
+slice, because Training is a single image serving five components — a
+step-shaped image name would be structurally wrong for it.
 
-**One grandfathered exception**: Feature's `fcst-data-ingress-pipeline` and
-`extract-db-to-bucket` name a repository and image that already exist with a
-pushed tag, so renaming them would mean a new registry repository and a re-push.
-Everything else here was documentation when the vocabulary was settled.
+**One grandfathered exception, and it no longer lives in this tree**: the ingress
+code still names `fcst-data-ingress-pipeline` and `extract-db-to-bucket` — a
+repository and image that already exist with a pushed tag, so renaming them would
+mean a new registry repository and a re-push. Those names survive in the
+Taskfile's build and push targets, the extract component's hardcoded fallback,
+and `configs_zone_demand_pipeline.yaml`; the Feature rebuild replaces that code.
+`environments/*.yaml` no longer carries them.
 
 Ordinary English prose is outside the vocabulary as well — a training panel,
 training rows. The canonical declaration is `SliceName` in
@@ -227,6 +233,7 @@ training rows. The canonical declaration is `SliceName` in
   tag is the git hash, resolved at build and submit time, so committing one here
   would put a second source of truth for a value the release process owns into a
   file that is itself baked into the image.
+- **The registry is independent of compute**, so prod pulls the bytes dev ran and one git hash cannot mean two images.
 - **Service accounts are not in this tree.** They are supplied at submit time via
   `FCST_{FEATURE,TRAIN,INFERENCE}_SERVICE_ACCOUNT`; see `.env.example`. This is an
   interim pending an infosec determination on whether identifiers may live in

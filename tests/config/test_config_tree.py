@@ -27,8 +27,6 @@ arrives in commit 7a (unit tests), commit 9 (emitted under tmp_path), and
 commit 11 (landed in GCS).
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest

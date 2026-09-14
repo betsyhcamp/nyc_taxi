@@ -11,8 +11,6 @@ There: do the shipped files still satisfy their schemas. Here: does
 sets — and is every tuple it returns a legal `compose_config` argument.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest

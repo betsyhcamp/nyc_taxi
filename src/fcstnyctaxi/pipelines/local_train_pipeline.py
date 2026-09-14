@@ -1,13 +1,10 @@
 """
-The local half of the two execution modes calls `compose_configs_impl` with the
-arguments a KFP wrapper will pass, and publishes the step directory. On Vertex
-the mount removes the staging.
+The local execution mode: calls `compose_configs_impl` with the arguments the KFP
+wrapper passes, and publishes the step directory. Vertex's mount removes the staging.
 
-Permanent, not a prototype. It coexists with the Vertex pipeline as the mode that
-runs without an image, and it is the mode in which the emitted configs are read.
+Permanent, not a prototype: the mode that runs without an image, and where the
+emitted configs are read.
 """
-
-from __future__ import annotations
 
 import argparse
 import logging
@@ -16,20 +13,19 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import cast
 
 from fcstnyctaxi.core.train.compose_configs_impl import (
     SourcedPath,
     compose_configs_impl,
     compose_train_static_configs,
 )
-from fcstnyctaxi.lib.io import build_run_prefix, download_from_gcs, sync_to_gcs
+from fcstnyctaxi.lib.io import download_from_gcs, sync_to_gcs, upload_to_gcs
+from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
 from fcstnyctaxi.lib.utils import (
     generate_run_id,
     get_project_root_dir,
     require_path_safe_run_id,
 )
-from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 
 logger = logging.getLogger(__name__)
 
@@ -168,16 +164,9 @@ def main() -> None:
     config_dir = project_root / "config"
     git_hash = _require_git_hash(project_root)
 
-    environment, _, _ = compose_train_static_configs(config_dir, args.env)
-    environment_config = cast(EnvironmentConfig, environment.config)
     # Held as a value rather than folded into step_uri: backtest, evaluate, and
-    # final_fit each append their own step name to this same prefix next PR.
-    run_prefix = build_run_prefix(
-        bucket=environment_config.storage.bucket_name,
-        env=args.env,
-        slice_name="train",
-        run_id=run_id,
-    )
+    # final_fit will each append their own step name to this same prefix.
+    run_prefix = resolve_run_prefix(config_dir, args.env, "train", run_id)
     step_uri = f"{run_prefix}{_STEP}/"
 
     mirror_root = args.scratch_dir
@@ -186,11 +175,6 @@ def main() -> None:
     # the previous attempt's output.
     panel_path = _mirror_path(args.panel_uri, mirror_root)
     calendar_path = _mirror_path(args.calendar_uri, mirror_root)
-    if panel_path == calendar_path:
-        raise ValueError(
-            f"--panel-uri and --calendar-uri both stage to {panel_path}; the "
-            "lineage check and the origin guard pass when the frames are one file."
-        )
 
     logger.info(
         "compose_configs starting: run_id=%s feature_run_id=%s out_dir=%s uri=%s",
@@ -200,9 +184,12 @@ def main() -> None:
         step_uri,
     )
 
-    # Scratch persists, so a retry under the same --run-id finds the previous
-    # attempt's files. Clearing gives out_dir exactly this run's output and
-    # sync_to_gcs gives the prefix exactly out_dir; neither implies the other.
+    # Validate every Training destination before the rmtree below destroys the previous
+    # attempt's output. This call raises, not to create a value the runner uses.
+    compose_train_static_configs(config_dir, args.env)
+
+    # Scratch persists, so a retry under the same --run-id finds stale files.
+    # sync_to_gcs matches the prefix to out_dir; it does not clean out_dir.
     if out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True)
@@ -226,19 +213,26 @@ def main() -> None:
         git_hash=git_hash,
         out_dir=out_dir,
     )
-    # The impl writes run_identity.json last, so publishing it alone and last
-    # makes its presence at the prefix mean complete rather than started.
+    # First, so a failed step publish still leaves a record of what the run read.
+    # Not sync_to_gcs here: at the run prefix it deletes every sibling step's output.
+    upload_to_gcs(
+        out_dir.parent / "run_identity.json", f"{run_prefix}run_identity.json"
+    )
+
+    # The impl writes manifest.json last, so publishing it alone and last makes its
+    # presence at the prefix mean complete rather than started.
     uploaded, removed = sync_to_gcs(
-        out_dir, step_uri, completion_marker="run_identity.json"
+        out_dir, step_uri, completion_marker="manifest.json"
     )
 
     logger.info(
-        "compose_configs complete: uploaded=%d removed=%d uri=%s run_id=%s "
-        "models=%s n_origins=%d origins=%s..%s last_complete_actual_month=%d "
-        "start_months=%s out_dir=%s",
+        "compose_configs complete: uploaded=%d removed=%d uri=%s identity=%s "
+        "run_id=%s models=%s n_origins=%d origins=%s..%s "
+        "last_complete_actual_month=%d start_months=%s out_dir=%s",
         uploaded,
         removed,
         step_uri,
+        f"{run_prefix}run_identity.json",
         run_id,
         summary.model_names,
         summary.n_origins,

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 
 import fsspec
@@ -7,7 +5,6 @@ import pytest
 from fsspec.implementations.local import LocalFileSystem
 
 from fcstnyctaxi.lib.io import (
-    build_run_prefix,
     build_run_scoped_uri,
     download_from_gcs,
     prepare_sql,
@@ -39,13 +36,10 @@ def sql_file_with_params(tmp_path: Path) -> Path:
 def fake_gcs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Resolve gs:// URIs onto a LocalFileSystem under tmp_path; return its root.
 
-    Runs the transfer functions' real fsspec calls in CI with no credentials.
-    Two details are load-bearing: auto_mkdir=True *is* the implicit-parents
-    clause, since without it a put into an absent prefix raises FileNotFoundError
-    where GCS would not; and the path is built by string substitution because
-    LocalFileSystem._strip_protocol strips the trailing "/" that gcsfs preserves,
-    and that "/" is what tells fsspec the destination is a prefix rather than the
-    name of the object to write.
+    Runs the real fsspec calls in CI with no credentials. Two details are
+    load-bearing: auto_mkdir=True is GCS's implicit-parents behaviour, and the path
+    is built by string substitution because _strip_protocol strips the trailing "/"
+    that marks a prefix rather than an object name.
     """
     remote_root = tmp_path / "remote"
     remote_root.mkdir()
@@ -144,34 +138,6 @@ def test_build_run_scoped_id_constructs_expected_string() -> None:
 
 
 # ================================================
-# build_run_prefix tests
-# ================================================
-
-
-def test_build_run_prefix_constructs_expected_string() -> None:
-    """Test that build_run_prefix writes the convention and returns a run root.
-
-    The trailing "/" is load-bearing: upload_to_gcs rejects a destination
-    without one, so the prefix must compose with a step name by concatenation.
-    """
-    prefix = build_run_prefix(
-        bucket="BUCKET", env="dev", slice_name="train", run_id="RUNID"
-    )
-    assert prefix == "gs://BUCKET/dev/train/RUNID/"
-
-
-def test_build_run_prefix_raises_on_unknown_slice() -> None:
-    """Test that a slice token outside SliceName raises instead of building a path."""
-    with pytest.raises(ValueError, match="slice_name"):
-        build_run_prefix(
-            bucket="BUCKET",
-            env="dev",
-            slice_name="training",  # type: ignore[arg-type]
-            run_id="RUNID",
-        )
-
-
-# ================================================
 # write_text_to_gcs tests
 # ================================================
 
@@ -206,8 +172,8 @@ def test_write_text_to_gcs_writes_text_at_uri() -> None:
 def test_download_from_gcs_rejects_non_gcs_uri(download_dir: Path, uri: str) -> None:
     """Test that a non-gs:// URI raises rather than resolving to another backend.
 
-    Without the guard, file:// and a bare path both resolve to LocalFileSystem
-    and copy the bytes successfully -- a wrong-provenance download, no error.
+    Without the guard, file:// and a bare path copy the bytes successfully: a
+    wrong-provenance download with no error.
     """
     with pytest.raises(ValueError, match="must be a gs://"):
         download_from_gcs(uri, download_dir)
@@ -220,8 +186,8 @@ def test_download_from_gcs_returns_the_local_path_it_wrote(
 ) -> None:
     """Test that the object lands at destination_dir / the URI's final segment.
 
-    destination_dir is created if missing. The impl is handed this Path
-    directly, so a wrong return value misdirects the caller instead of raising.
+    Created if missing. The caller is handed this Path, so a wrong return value
+    misdirects rather than raises.
     """
     remote = fake_gcs / "BUCKET" / "inputs"
     remote.mkdir(parents=True)
@@ -238,9 +204,8 @@ def test_download_from_gcs_raises_on_a_prefix_uri(
 ) -> None:
     """Test that a URI naming a prefix raises rather than downloading nothing.
 
-    download_from_gcs deliberately handles a single object only. Inbound
-    directory support needs prefix listing and relative-path reconstruction;
-    add it -- and drop this test -- when a caller first needs a directory.
+    Single objects only. Add directory support, and drop this test, when a caller
+    first needs one.
     """
     prefix = fake_gcs / "BUCKET" / "dev" / "train" / "RUNID" / "compose_configs"
     prefix.mkdir(parents=True)
@@ -276,8 +241,8 @@ def uploaded_prefix(fake_gcs: Path) -> Path:
 def test_upload_to_gcs_rejects_non_gcs_uri(composed_dir: Path, uri: str) -> None:
     """Test that a non-gs:// destination raises before anything is transferred.
 
-    Every case ends in "/" so that only the scheme guard can raise; a URI
-    missing the slash would trip the prefix check and pass for the wrong reason.
+    Every case ends in "/", so only the scheme guard can raise and none passes for
+    the wrong reason.
     """
     with pytest.raises(ValueError, match="must be a gs://"):
         upload_to_gcs(composed_dir, uri)
@@ -288,8 +253,8 @@ def test_upload_to_gcs_places_directory_contents_under_prefix(
 ) -> None:
     """Test that a directory's contents land under the prefix, basename dropped.
 
-    Repeating the basename would give .../compose_configs/compose_configs/, which
-    raises nothing and leaves every artifact one level below where readers look.
+    Repeating it gives .../compose_configs/compose_configs/, which raises nothing and
+    puts every artifact one level below where readers look.
     """
     upload_to_gcs(composed_dir, PREFIX_URI)
 
@@ -310,10 +275,9 @@ def test_upload_to_gcs_rejects_destination_without_trailing_slash(
 ) -> None:
     """Test that a destination prefix missing its trailing "/" raises, writing nothing.
 
-    Rejected rather than normalised because the mistake is otherwise invisible:
-    every object is written and a plausible count comes back. fsspec forgives the
-    omission once the prefix exists, so only a fresh run_id would surface the
-    mistake.
+    Rejected, not normalised: every object is written and a plausible count comes
+    back, and fsspec forgives the omission once the prefix exists, so only a fresh
+    run_id would surface it.
     """
     with pytest.raises(ValueError, match="ending in"):
         upload_to_gcs(composed_dir, PREFIX_URI.rstrip("/"))
@@ -324,10 +288,9 @@ def test_upload_to_gcs_rejects_destination_without_trailing_slash(
 def test_upload_to_gcs_overwrites_existing_objects(
     uploaded_prefix: Path, composed_dir: Path
 ) -> None:
-    """Test that a second upload replaces the objects the first one wrote.
+    """Test that a second upload replaces the objects the first wrote.
 
-    Retrying with the same run_id must neither need a manual delete nor keep the
-    earlier attempt's bytes.
+    A retry under the same run_id must not need a manual delete or keep stale bytes.
     """
     upload_to_gcs(composed_dir, PREFIX_URI)
     (composed_dir / "manifest.json").write_text('{"attempt": 2}')
@@ -341,8 +304,8 @@ def test_upload_to_gcs_returns_one_for_a_file(
 ) -> None:
     """Test that uploading a single file reports one object written.
 
-    The destination prefix has no existing parents, which GCS treats as
-    implicit; a local filesystem would raise FileNotFoundError instead.
+    The prefix has no existing parents, which GCS treats as implicit and a local
+    filesystem does not.
     """
     source = tmp_path / "scratch" / "manifest.json"
     source.parent.mkdir(parents=True)
@@ -357,9 +320,8 @@ def test_upload_to_gcs_returns_file_count_for_a_directory(
 ) -> None:
     """Test that a directory upload counts objects, not filesystem entries.
 
-    composed_dir holds three files and one subdirectory. fsspec's own transfer
-    callback counts the directory entries too and would answer five, so the count
-    cannot come from the library.
+    composed_dir holds three files and one subdirectory, and fsspec's own transfer
+    callback counts the directory entries too, so the count cannot come from it.
     """
     assert upload_to_gcs(composed_dir, PREFIX_URI) == 3
 
@@ -368,9 +330,8 @@ def test_upload_to_gcs_returns_file_count_for_a_directory(
 # sync_to_gcs tests
 # ================================================
 
-# Sorts before every other name in sync_dir on purpose. A marker that sorted last
-# would let this fake's ordered upload satisfy the ordering test for a reason that
-# does not transfer to gcsfs, which uploads a batch concurrently.
+# Sorts first on purpose: a marker sorting last would let this fake's ordered upload
+# satisfy the ordering test for a reason that does not transfer to gcsfs.
 MARKER = "_run_identity.json"
 
 
@@ -434,10 +395,8 @@ def test_sync_to_gcs_rejects_a_bad_destination_before_deleting_anything(
 ) -> None:
     """Test that an unusable destination raises with the prior run still intact.
 
-    Where the guard sits matters here in a way it does not for upload_to_gcs,
-    whose first remote act is a write. This deletes first, and a bare local path
-    resolves to LocalFileSystem, so a guard left to the upload would object only
-    after a real file had gone.
+    Unlike upload_to_gcs, this deletes before it writes, so a guard left to the
+    upload would object only after a real file had gone.
     """
     uploaded_prefix.mkdir(parents=True)
     (uploaded_prefix / MARKER).write_text('{"run": 0}')
@@ -451,11 +410,10 @@ def test_sync_to_gcs_rejects_a_bad_destination_before_deleting_anything(
 def test_sync_to_gcs_raises_rather_than_reconciling_an_absent_local_dir(
     uploaded_prefix: Path, tmp_path: Path
 ) -> None:
-    """Test that a local_dir which does not exist raises instead of emptying the prefix.
+    """Test that an absent local_dir raises instead of emptying the prefix.
 
-    rglob on a missing directory yields nothing rather than raising, so without
-    the guard every remote object would look unaccounted for and the reconcile
-    would delete the lot.
+    rglob on a missing directory yields nothing rather than raising, so the reconcile
+    would find every remote object unaccounted for and delete the lot.
     """
     uploaded_prefix.mkdir(parents=True)
     (uploaded_prefix / "modeling.yaml").write_text("modeling")
@@ -471,10 +429,9 @@ def test_sync_to_gcs_raises_before_mutating_when_the_marker_is_absent(
 ) -> None:
     """Test that a completion_marker naming no local file raises, touching nothing.
 
-    Skipping instead would not leave an obviously incomplete prefix. The
-    exclusion would match nothing, so the real marker would upload inside the
-    concurrent batch and a partial failure could publish it over a missing
-    sibling -- the ordering off, with nothing announcing it.
+    Skipping would leave the ordering off with nothing announcing it: the real marker
+    would upload inside the concurrent batch, and a partial failure could publish it
+    over a missing sibling.
     """
     uploaded_prefix.mkdir(parents=True)
     (uploaded_prefix / MARKER).write_text('{"run": 0}')
@@ -491,11 +448,10 @@ def test_sync_to_gcs_refreshes_content_and_removes_stale_objects(
 ) -> None:
     """Test that the prefix ends up holding exactly local_dir, nested files included.
 
-    The stale config is a model dropped from model_roles between two runs under
-    one id: upload_to_gcs would overwrite its siblings and leave it durable, and
-    a composed_config_*.yaml glob would then report a run that never happened.
-    The stale nested object shares a basename with a live top-level one, so a
-    reconcile comparing basenames would keep it and this would fail.
+    The stale config is a model dropped between two runs under one id, which
+    upload_to_gcs would leave durable for a glob to report as a run that never
+    happened. The stale nested object shares a basename with a live top-level one,
+    so a reconcile comparing basenames would keep it.
     """
     uploaded_prefix.mkdir(parents=True)
     (uploaded_prefix / "modeling.yaml").write_text("stale modeling")
@@ -521,10 +477,9 @@ def test_sync_to_gcs_leaves_a_prefix_with_no_extras_unchanged(
 ) -> None:
     """Test that re-publishing an unchanged directory removes nothing.
 
-    The reconcile has to recognise the objects this function itself just wrote.
-    Were the relative path derived wrongly -- an unstripped root, or a basename
-    comparison -- every object would look like an extra, and the second publish
-    would delete the run the first one had written.
+    The reconcile must recognise what this function itself just wrote; a wrongly
+    derived relative path makes every object an extra, and the second publish deletes
+    the run the first one wrote.
     """
     sync_to_gcs(sync_dir, PREFIX_URI, completion_marker=MARKER)
     uploaded, removed = sync_to_gcs(sync_dir, PREFIX_URI, completion_marker=MARKER)
@@ -539,9 +494,8 @@ def test_sync_to_gcs_uploads_the_completion_marker_last(
 ) -> None:
     """Test that the marker is written after every other object, exactly once.
 
-    A marker carried along in the batch would satisfy "present" without meaning
-    "complete", since gcsfs uploads a batch concurrently. MARKER sorts first, so
-    a batch upload could not produce this order by accident.
+    Carried in the batch it would satisfy "present" without meaning "complete", since
+    gcsfs uploads concurrently. MARKER sorts first, so this order is no accident.
     """
     sync_to_gcs(sync_dir, PREFIX_URI, completion_marker=MARKER)
 
@@ -554,10 +508,8 @@ def test_sync_to_gcs_leaves_no_marker_when_an_upload_fails(
 ) -> None:
     """Test that a partial upload publishes no marker and drops the previous one.
 
-    The prefix is left holding a mix of two runs, which is what a concurrent
-    batch does on failure whatever this function chooses. What it can choose is
-    whether the token claiming the run is complete survives: it does not, so the
-    prefix reads unfinished, which is true.
+    A mix of two runs is what a concurrent batch leaves on failure regardless. What
+    is chosen is that no token claims completeness, so the prefix reads unfinished.
     """
     uploaded_prefix.mkdir(parents=True)
     (uploaded_prefix / MARKER).write_text('{"run": 0}')
@@ -576,9 +528,7 @@ def test_sync_to_gcs_rejects_a_completion_marker_that_is_not_a_filename(
     """Test that a path-shaped completion_marker raises with the prefix untouched.
 
     The absolute form defeats every other guard: local_dir / <absolute> discards
-    local_dir, so the file resolves and is_file() passes, while the remote key
-    comes from the raw string and lands nowhere near the prefix -- leaving the
-    previous run's marker in place over a new run's objects.
+    local_dir, so is_file() passes while the remote key lands nowhere near the prefix.
     """
     uploaded_prefix.mkdir(parents=True)
     (uploaded_prefix / MARKER).write_text('{"run": 0}')
@@ -601,10 +551,8 @@ def test_sync_to_gcs_leaves_an_object_named_like_the_prefix_alone(
 ) -> None:
     """Test that a sibling object named exactly like the prefix is not reconciled.
 
-    GCS has no directories, so gs://.../compose_configs and
-    gs://.../compose_configs/manifest.json can both exist -- the first a sibling
-    of the prefix rather than something under it. A local filesystem cannot hold
-    both, so local_dir is empty here, which still exercises the reconcile.
+    GCS has no directories, so an object and a prefix can share a name. A local
+    filesystem cannot hold both, so local_dir is empty here and still reconciles.
     """
     sibling = fake_gcs / PREFIX_URI.removeprefix("gs://").rstrip("/")
     sibling.parent.mkdir(parents=True)
@@ -621,9 +569,8 @@ def test_sync_to_gcs_publishes_without_a_marker_when_none_is_named(
 ) -> None:
     """Test that completion_marker=None still uploads and reconciles.
 
-    The guarantee narrows to "the prefix holds exactly local_dir": nothing is
-    deleted first, nothing is written last, and MARKER becomes an ordinary file
-    with no special handling.
+    The guarantee narrows to "the prefix holds exactly local_dir", and MARKER becomes
+    an ordinary file.
     """
     uploaded_prefix.mkdir(parents=True)
     (uploaded_prefix / "composed_config_lightgbm.yaml").write_text("dropped model")

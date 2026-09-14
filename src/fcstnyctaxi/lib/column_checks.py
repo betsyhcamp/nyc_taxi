@@ -8,8 +8,6 @@ Flat module by design: it holds one check family. If a duplicated dtype or key
 check ever appears, this becomes checks/columns.py alongside them.
 """
 
-from __future__ import annotations
-
 import pandas as pd
 
 

@@ -71,7 +71,7 @@ tasks:
       - uv run pytest --cov --cov-report=term-missing --cov-report=html
 
   # ===========================================
-  # LOCAL SCRATCH
+  # LOCAL ARTIFACTS
   # ===========================================
   scratch-clean:
     desc: Delete the local pipeline scratch mirror
@@ -80,6 +80,11 @@ tasks:
         sh: uv run python -c "import tempfile, pathlib; print(pathlib.Path(tempfile.gettempdir()) / 'fcstnyctaxi')"
     cmds:
       - rm -rf '{{.SCRATCH}}'
+
+  build-clean:
+    desc: Delete compiled pipeline templates
+    cmds:
+      - rm -rf build
 
   # ===========================================
   # DOCKER UTILS
@@ -131,6 +136,139 @@ tasks:
       IMAGE: "{{.REGION}}-docker.pkg.dev/{{.PROJECT_ID}}/fcst-data-ingress-pipeline/extract-db-to-bucket:{{.SHA}}{{.DIRTY}}"
     cmds:
       - docker push {{.IMAGE}}
+
+  # ===========================================
+  # TRAINING IMAGE
+  # ===========================================
+  # Training-specific, not generalised past the extract targets: with ingress
+  # dead and due for rebuild, only the buildx shape is shared.
+
+  verify-train-image:
+    desc: "Verify a built Training image: baked config tree, composition, deps"
+    requires:
+      vars: [IMAGE]
+    cmds:
+      # Real newlines, not `;`: `if c: raise X; print(y)` puts print inside the if.
+      # pyarrow is imported because undeclared; without the guard an empty loop passes.
+      - |
+        docker run --rm --platform linux/amd64 {{.IMAGE}} python -c '
+        import os, pyarrow
+        from fcstnyctaxi.runtime_paths import CONFIG_DIR
+        from fcstnyctaxi.lib.config.bindings import available_environments
+        from fcstnyctaxi.core.train.compose_configs_impl import compose_train_static_configs
+        if not os.environ.get("FCST_GIT_HASH"):
+            raise SystemExit("FCST_GIT_HASH is unset; rebuild with --build-arg GIT_HASH=...")
+        envs = available_environments(CONFIG_DIR)
+        if not envs:
+            raise SystemExit(f"No environments under {CONFIG_DIR}/environments — is COPY config in the runtime stage?")
+        for env in envs:
+            compose_train_static_configs(CONFIG_DIR, env)
+        print(f"image OK: {envs} compose")
+        '
+
+  build-verify-train-image:
+    desc: Build the Training image and run the verification probe
+    vars:
+      # One yaml call, not four. artifact_registry, not compute: the registry is
+      # independent of where jobs run, so one image serves every environment.
+      REPO_PATH:
+        sh: |
+          uv run python -c "
+          import yaml
+          ar = yaml.safe_load(open('config/environments/dev.yaml'))['artifact_registry']
+          img = ar['images']['train']
+          print(f\"{ar['location']}-docker.pkg.dev/{ar['project_id']}/{img['repository']}/{img['image']}\")
+          "
+      # Short sha tags the image (which build?); full sha is baked (which source?).
+      SHA:
+        sh: git rev-parse --short HEAD
+      FULL_SHA:
+        sh: git rev-parse HEAD
+      # `HEAD --`, not the extract targets' bare `git diff --quiet`, which misses
+      # staged changes. Matches _require_git_hash so both modes stamp one tree alike.
+      DIRTY:
+        sh: git diff --quiet HEAD -- || echo "-dirty"
+      IMAGE: "{{.REPO_PATH}}:{{.SHA}}{{.DIRTY}}"
+    cmds:
+      - docker buildx build --platform linux/amd64 -f docker/Dockerfile.train --build-arg GIT_HASH={{.FULL_SHA}}{{.DIRTY}} -t {{.IMAGE}} --load .
+      - task: verify-train-image
+        vars:
+          IMAGE: "{{.IMAGE}}"
+      # Belongs here, not in verify-train-image: the image came from this tree
+      # seconds ago, so a mismatch can only be a build fault. File names only.
+      - |
+        uv run python -c 'import pathlib; r=pathlib.Path("config"); print("\n".join(sorted(str(p.relative_to(r)) for p in r.rglob("*") if p.is_file())))' \
+        | docker run --rm -i --platform linux/amd64 {{.IMAGE}} python -c '
+        import sys
+        from fcstnyctaxi.runtime_paths import CONFIG_DIR
+        want = set(sys.stdin.read().split())
+        have = {str(p.relative_to(CONFIG_DIR)) for p in CONFIG_DIR.rglob("*") if p.is_file()}
+        if want != have:
+            raise SystemExit(f"baked config tree != config/: missing {sorted(want - have)} extra {sorted(have - want)}; check COPY config and .dockerignore")
+        print(f"config tree OK: {len(have)} files")
+        '
+
+  push-train-image:
+    desc: Push the verified Training image and print the digest compile-train needs
+    vars:
+      REPO_PATH:
+        sh: |
+          uv run python -c "
+          import yaml
+          ar = yaml.safe_load(open('config/environments/dev.yaml'))['artifact_registry']
+          img = ar['images']['train']
+          print(f\"{ar['location']}-docker.pkg.dev/{ar['project_id']}/{img['repository']}/{img['image']}\")
+          "
+      SHA:
+        sh: git rev-parse --short HEAD
+      DIRTY:
+        sh: git diff --quiet HEAD -- || echo "-dirty"
+      IMAGE: "{{.REPO_PATH}}:{{.SHA}}{{.DIRTY}}"
+    cmds:
+      # Run build-verify-train-image first. Don't build here: GIT_HASH is recomputed
+      # per invocation, so a push-time build could ship bytes nothing probed.
+      - docker push {{.IMAGE}}
+      # docker push reports no digest; RepoDigests has one per repo — filter, not [0].
+      - |
+        DIGEST=$(docker image inspect --format '{{`{{range .RepoDigests}}{{println .}}{{end}}`}}' {{.IMAGE}} \
+          | grep "^{{.REPO_PATH}}@" | head -n 1)
+        if [ -z "$DIGEST" ]; then
+          echo "No RepoDigest for {{.REPO_PATH}}; the push recorded none." >&2
+          exit 1
+        fi
+        echo ""
+        echo "  pushed tag : {{.IMAGE}}"
+        echo "  digest     : $DIGEST"
+        echo ""
+        echo "  next: task compile-train IMAGE_REF=$DIGEST"
+        echo ""
+
+  compile-train:
+    desc: Compile the Training pipeline against a digest-pinned image
+    requires:
+      vars: [IMAGE_REF]
+    # Set before the interpreter starts, so the script imports the pipeline at the
+    # top rather than assigning os.environ and deferring the import.
+    env:
+      FCST_TRAIN_IMAGE: "{{.IMAGE_REF}}"
+    cmds:
+      - uv run python scripts/compile_train_pipeline.py
+
+  submit-train:
+    desc: "Submit an existing template. Run: task submit-train -- --help"
+    cmds:
+      - uv run python scripts/submit_train_pipeline.py {{.CLI_ARGS}}
+
+  compile-submit-train:
+    desc: Compile fresh and submit what was just compiled
+    requires:
+      vars: [IMAGE_REF]
+    cmds:
+      - task: compile-train
+        vars: {IMAGE_REF: "{{.IMAGE_REF}}"}
+      # --template-path last: argparse is last-wins, so a caller-supplied one cannot win.
+      - uv run python scripts/submit_train_pipeline.py {{.CLI_ARGS}} --template-path build/fcst-train-pipeline.yaml
+
   # ===========================================
   # COMPOSITE TASKS
   # ===========================================

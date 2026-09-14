@@ -1,0 +1,61 @@
+# Dockerfile for Train image; multi-stage keeps image thin. For all Train components
+
+#The tag documents intent; digest resolves. A digest cannot be abbreviated like a SHA
+# uv version MUST equal the repo's [tool.uv] required-version, because this image runs
+#`uv sync --locked` against uv.lock that uv wrote, & the lock carries a format revision.
+ARG UV_BASE=ghcr.io/astral-sh/uv:0.11.33-python3.12-trixie-slim@sha256:7b5a3c8f80fb965911cf8f0c6690b30b39f10f691fc1e52cd6cc44bc509c3aeb
+# ==================================================================
+# Stage 1: Build environment (Alias: builder)
+# ==================================================================
+FROM ${UV_BASE} AS builder
+
+# build-essential for wheels built from source; git because tsbricks is
+# git-sourced; ca-certificates for HTTPS. None of these reach the runtime stage.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    git \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app/
+
+COPY pyproject.toml uv.lock README.md ./
+
+# --no-default-groups, NOT --no-dev. --no-dev disables only the dev group
+# The ensurepip needed since KFP's launcher uses pip even with packages_to_install=[]
+RUN uv sync --locked --no-cache --no-default-groups --group train \
+      --no-install-project --no-editable \
+ && /app/.venv/bin/python -m ensurepip --upgrade \
+ && /app/.venv/bin/python -m pip install --upgrade pip
+
+COPY src ./src
+
+# Non-editable wheel with no deps
+RUN uv pip install --no-deps --no-cache .
+
+# ==================================================================
+# Stage 2: Runtime definition (Alias: runtime)
+# ==================================================================
+FROM ${UV_BASE} AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app/
+
+COPY --from=builder /app/.venv /app/.venv
+
+# Set image's environment so the uv-managed venv is the default Python
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+
+# All three MUST be in the runtime stage — only /app/.venv crosses from the builder, so
+# anything else left there is silently discarded. ARG goes last: a changed ARG breaks
+# every layer after it and it changes every commit. Its value is the full SHA plus
+# -dirty, the only identity an image can hold, since a digest comes from the push.
+COPY config /app/config
+ARG GIT_HASH
+ENV FCST_GIT_HASH=${GIT_HASH}
+
+# No ENTRYPOINT or CMD: KFP provides the runtime command via base_image use.

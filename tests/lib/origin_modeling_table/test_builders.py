@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import pandas as pd
 import pytest
 from mlforecast.lag_transforms import RollingMean

@@ -135,3 +135,87 @@ Should list two objects:
 
 - `manhattan_daily_zone_pickups.parquet` — the source snapshot (size matches `file_size_bytes` in metadata).
 - `query.sql` — the rendered SQL text used to produce the snapshot.
+
+### Building, compiling, and submitting the Training pipeline
+
+End-to-end workflow for the Training pipeline: build the image, push it, compile a template against the pushed digest, then submit that template to Vertex AI Pipelines.
+
+Compiling and submitting are separate programs on purpose. The image reference is a compile-time input, since `@dsl.component` binds `base_image` when the module is imported, so a compiled template already names every image it will run. The submitter therefore takes a template and never sees a tag, a digest, or `FCST_TRAIN_IMAGE`. That is also what lets a production trigger, which submits a published template with no compiler anywhere, use the same shape.
+
+**Prerequisites:**
+
+- ADC configured: `gcloud auth application-default login`
+- `bash scripts/setup_train_iam.sh` run once per project. It creates the `fcst-ml-containers` repository, which Artifact Registry does not auto-create on push, and the Training runner service account.
+- `.env` filled in from `.env.example`, with `FCST_TRAIN_SERVICE_ACCOUNT` set. The submitter reads it with `python-dotenv`, so there is no sourcing step.
+- Working tree clean, so image tags do not include `-dirty`
+- A published Feature run. `uv run python scripts/publish_feature_stand_in.py --env dev` prints the `--feature-run-id`, `--panel-uri` and `--calendar-uri` values the submit step needs.
+
+**Step 1. Build and verify the image:**
+
+```{bash}
+task build-verify-train-image
+```
+
+Builds the `linux/amd64` image and probes it twice: every environment in the baked config tree composes, and that tree matches `config/` file for file. Expected last lines:
+
+```
+image OK: ['dev'] compose
+config tree OK: 14 files
+```
+
+**Step 2. Push the image:**
+
+```{bash}
+task push-train-image
+```
+
+Pushes the tag step 1 built, then prints the digest as a ready-to-run command:
+
+```
+  pushed tag : us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers/train:<short-sha>
+  digest     : us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers/train@sha256:<64 hex>
+
+  next: task compile-train IMAGE_REF=<the digest above>
+```
+
+This task deliberately does not build. `GIT_HASH` is recomputed on every invocation, so a push-time build could ship bytes that no probe ever saw.
+
+**Step 3. Compile and submit:**
+
+```{bash}
+task compile-submit-train IMAGE_REF=<digest from step 2> -- \
+  --env dev \
+  --feature-run-id <id from publish_feature_stand_in.py> \
+  --panel-uri gs://... \
+  --calendar-uri gs://...
+```
+
+`compile-submit-train` compiles a fresh template into `build/fcst-train-pipeline.yaml`, then appends its own `--template-path` after your arguments. Argparse is last-wins, so the run always submits what it just compiled.
+
+The compile step refuses to leave a template pinning anything other than the digest you named, and deletes the rejected file rather than leaving something submittable on disk.
+
+To submit a template that already exists, skip the compile:
+
+```{bash}
+task submit-train -- --template-path build/fcst-train-pipeline.yaml --env dev ...
+```
+
+`task submit-train -- --help` lists every flag, and works on a machine with no `.env`. Its five domain flags are the same ones the local execution mode takes, so the two modes differ only in orchestration:
+
+```{bash}
+uv run python -m fcstnyctaxi.pipelines.local_train_pipeline --help
+```
+
+`--run-id` is optional and generated when absent. Caching is on by default, so resubmitting under the same `--run-id` reuses completed tasks; pass `--no-caching` to re-execute everything. The submitter is fire and forget unless given `--wait`, and it writes the id it submitted to `<tmpdir>/fcstnyctaxi/.last_run_id`.
+
+**Step 4. Confirm the run and its artifacts:**
+
+The submitter logs the console URL for the run. The artifacts land under the run prefix it also logs:
+
+```{bash}
+gsutil ls -r gs://nyc-taxi-ehc--modeling/dev/train/<run_id>/
+```
+
+`run_identity.json` sits at the run root rather than inside a step directory, because its reader is outside the pipeline and can construct only `<bucket>/<env>/train/<run_id>`. The step's own outputs, the five configs plus `manifest.json`, are under `compose_configs/`.
+
+`task build-clean` removes compiled templates; `task scratch-clean` removes the local scratch mirror, `.last_run_id` included.
