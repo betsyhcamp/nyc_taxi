@@ -71,7 +71,7 @@ tasks:
       - uv run pytest --cov --cov-report=term-missing --cov-report=html
 
   # ===========================================
-  # LOCAL SCRATCH
+  # LOCAL ARTIFACTS
   # ===========================================
   scratch-clean:
     desc: Delete the local pipeline scratch mirror
@@ -80,6 +80,11 @@ tasks:
         sh: uv run python -c "import tempfile, pathlib; print(pathlib.Path(tempfile.gettempdir()) / 'fcstnyctaxi')"
     cmds:
       - rm -rf '{{.SCRATCH}}'
+
+  build-clean:
+    desc: Delete compiled pipeline templates
+    cmds:
+      - rm -rf build
 
   # ===========================================
   # DOCKER UTILS
@@ -237,6 +242,17 @@ tasks:
         echo ""
         echo "  next: task compile-train IMAGE_REF=$DIGEST"
         echo ""
+
+  compile-train:
+    desc: Compile the Training pipeline against a digest-pinned image
+    requires:
+      vars: [IMAGE_REF]
+    # Set before the interpreter starts, so the script imports the pipeline at the
+    # top rather than assigning os.environ and deferring the import.
+    env:
+      FCST_TRAIN_IMAGE: "{{.IMAGE_REF}}"
+    cmds:
+      - uv run python scripts/compile_train_pipeline.py
 
   # ===========================================
   # COMPOSITE TASKS
