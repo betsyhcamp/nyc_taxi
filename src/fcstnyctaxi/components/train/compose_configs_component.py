@@ -2,38 +2,15 @@
 # and PEP 563 makes them strings leading to an error in this KFP component at compile.
 
 import os
-import re
 from typing import NamedTuple
 
 from kfp import dsl
 from kfp.dsl import Artifact, Dataset, Input, Output
 
-# The Artifact Registry convention: `repository` is the first three segments whatever
-# the image name's depth and a nested name is legal rather than banned.
-_IMAGE_REF = re.compile(
-    r"^(?P<repository>[^/@]+/[^/@]+/[^/@]+)/(?P<name>[^@]+)@sha256:(?P<digest>[0-9a-f]{64})$"
-)
+from fcstnyctaxi.lib.container_images import require_digest_ref
 
-
-def _require_digest_ref(image: str | None) -> str:
-    """The image reference, or a ValueError naming the fault. Not inlined at
-    _IMAGE, so the checks are testable without importlib.reload."""
-    if not image:
-        raise ValueError(
-            "FCST_TRAIN_IMAGE not set. The compile step must set it to the "
-            "pushed digest reference (repo@sha256:...) before importing this module."
-        )
-    if not _IMAGE_REF.match(image):
-        raise ValueError(
-            "FCST_TRAIN_IMAGE must be "
-            f"<host>/<project>/<repository>/<image>@sha256:<64 hex>, got {image!r}. "
-            "A tag can be repointed, so one compiled spec would execute different "
-            "code over time."
-        )
-    return image
-
-
-_IMAGE = _require_digest_ref(os.environ.get("FCST_TRAIN_IMAGE"))
+# Module level: @dsl.component binds base_image at decoration time.
+_IMAGE = require_digest_ref(os.environ.get("FCST_TRAIN_IMAGE"), "FCST_TRAIN_IMAGE")
 
 
 # Inline, not a module-level NamedTuple: KFP copies only the body plus a fixed

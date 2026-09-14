@@ -14,10 +14,7 @@ from kfp.dsl import Artifact, Dataset
 from kfp.dsl.python_component import PythonComponent
 from pytest_mock import MockerFixture
 
-from fcstnyctaxi.components.train.compose_configs_component import (
-    _require_digest_ref,
-    compose_configs,
-)
+from fcstnyctaxi.components.train.compose_configs_component import compose_configs
 from fcstnyctaxi.core.train.compose_configs_impl import (
     ComposeConfigsSummary,
     SourcedPath,
@@ -40,13 +37,6 @@ GIT_HASH = "abc1234-dirty"
 # Distinct, so pairing assertions also prove panel and calendar were not swapped.
 PANEL_URI = "gs://sentinel-bucket/feature/f-sentinel/panel.parquet"
 CALENDAR_URI = "gs://sentinel-bucket/feature/f-sentinel/calendar.parquet"
-
-_REPO = "us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers"
-
-VALID_IMAGE = (
-    "us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers/train@sha256:"
-    + "b" * 64
-)
 
 # Real, not a Mock: the wrapper feeds as_dict() to metadata.update(), which raises
 # on a Mock for a reason unrelated to anything under test.
@@ -98,11 +88,8 @@ def _artifacts() -> tuple[Dataset, Dataset, Artifact]:
 
 
 def _expected_run_prefix() -> str:
-    """Derived, never a literal: a bucket change in dev.yaml must not fail this.
-
-    Pins that the wrapper resolves through one function; the convention itself is
-    pinned by tests/lib/test_storage_layout.py.
-    """
+    """Derived, never a literal, so a bucket change in dev.yaml cannot fail this: it
+    pins routing through one function, leaving the convention to test_storage_layout."""
     return resolve_run_prefix(CONFIG_DIR, ENV, "train", TRAIN_RUN_ID)
 
 
@@ -216,53 +203,6 @@ def test_the_generated_container_module_defines_the_named_output() -> None:
     generated = container.command[-1]
     assert isinstance(generated, str)
 
-    # Executing the definition is the assertion: KFP copies only the body and a fixed
-    # preamble, so a module-level NamedTuple raises NameError here, in the container,
-    # with every other test in this file still green.
+    # Executing the definition is the assertion: KFP copies only the body, so a
+    # module-level NamedTuple raises NameError in the container, CI still green.
     exec(compile(generated, "<generated>", "exec"), {"__name__": "__generated__"})
-
-
-@pytest.mark.parametrize(
-    "image",
-    [
-        VALID_IMAGE,
-        # Nested names are legal in Artifact Registry, and the repository is the
-        # first three segments whatever the depth.
-        "us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers/team/train"
-        "@sha256:" + "c" * 64,
-    ],
-    ids=["flat", "nested"],
-)
-def test_require_digest_ref_accepts_a_digest_pinned_reference(image: str) -> None:
-    """Test that a well-formed reference is returned unchanged, nesting included."""
-    assert _require_digest_ref(image) == image
-
-
-@pytest.mark.parametrize(
-    ("image", "expected_message"),
-    [
-        (None, "not set"),
-        ("", "not set"),
-        (_REPO + "/train:abc1234", "64 hex"),
-        (_REPO + "/train@sha256:zz", "64 hex"),
-        (_REPO + "/train@sha256:", "64 hex"),
-        (_REPO + "/@sha256:" + "c" * 64, "64 hex"),
-        ("a/b/c@sha256:" + "c" * 64, "64 hex"),
-    ],
-    ids=[
-        "unset",
-        "empty",
-        "tag",
-        "digest-not-hex",
-        "digest-empty",
-        "no-name",
-        "no-host",
-    ],
-)
-def test_require_digest_ref_rejects(image: str | None, expected_message: str) -> None:
-    """Test that anything but a digest-pinned registry reference is refused.
-
-    The tag is the likely mistake; the rest the old "@sha256:" substring test allowed.
-    """
-    with pytest.raises(ValueError, match=expected_message):
-        _require_digest_ref(image)
