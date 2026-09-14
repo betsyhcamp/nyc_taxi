@@ -13,7 +13,7 @@ dependencies = [
     "fsspec>=2025.12.0",
     "gcsfs>=2025.12.0",
     "google-cloud-storage>=3.6.0",
-    "kfp>=2.15.2",
+    "kfp==2.17.0", # Pinned, not floored: compiling version written into every template
     "pandas>=2.3.0",
     "pydantic>=2.12.5",
     "tsbricks==0.4.0",

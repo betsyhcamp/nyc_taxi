@@ -821,7 +821,7 @@ requires-dist = [
     { name = "fsspec", specifier = ">=2025.12.0" },
     { name = "gcsfs", specifier = ">=2025.12.0" },
     { name = "google-cloud-storage", specifier = ">=3.6.0" },
-    { name = "kfp", specifier = ">=2.15.2" },
+    { name = "kfp", specifier = "==2.17.0" },
     { name = "pandas", specifier = ">=2.3.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "tsbricks", git = "https://github.com/betsyhcamp/tsbricks.git?rev=v0.4.0" },
@@ -1723,7 +1723,7 @@ wheels = [
 
 [[package]]
 name = "kfp"
-version = "2.15.2"
+version = "2.17.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1737,30 +1737,31 @@ dependencies = [
     { name = "kubernetes" },
     { name = "protobuf" },
     { name = "pyyaml" },
+    { name = "requests" },
     { name = "requests-toolbelt" },
     { name = "tabulate" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/89/4b/2dd0352eb21aa8166ec0effe48c08e64f4eb05dc82cf7586e39dfd35f828/kfp-2.15.2.tar.gz", hash = "sha256:389933cbebdead61dd1eef538ff09d467048dc97edee2a70c80ca264506501cd", size = 297293, upload-time = "2025-12-03T21:35:30.168Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e9/e8/a14556188eb695055db4bfa7714ed84eb555637c97e4da77b67df573499b/kfp-2.17.0.tar.gz", hash = "sha256:92dd2fc0cca5b073f14860253e936cc9e6901f871dfae355be6a9f8ea9d580c5", size = 362373, upload-time = "2026-07-09T13:46:40.295Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/50/db/5ee012dafdaaf5981e2dfe9c990d78e4218d62c128ea743f5c2340d73329/kfp-2.15.2-py3-none-any.whl", hash = "sha256:5d522b522707d10fe1c2b42884f003a778794bb8d858e7a4e30545ab9dd7be97", size = 397542, upload-time = "2025-12-03T21:35:28.728Z" },
+    { url = "https://files.pythonhosted.org/packages/e9/c6/eab3e5ed59497c09e0aca3f1cf0fc7c9c7ceaa05be0db620787355ffb351/kfp-2.17.0-py3-none-any.whl", hash = "sha256:dff321b76b2be8a09748a1be805a88699b4919e13bb6a1bf67ebf3074ea8ce3f", size = 477920, upload-time = "2026-07-09T13:46:38.614Z" },
 ]
 
 [[package]]
 name = "kfp-pipeline-spec"
-version = "2.15.2"
+version = "2.17.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "protobuf" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/73/84/510f88de64ef4f0c2ff173f553fa4b038715617139a1cd41bed3ef677e09/kfp_pipeline_spec-2.15.2.tar.gz", hash = "sha256:a5979dd74d9bd02c7614bc372d58ab26929aa6677cd460b61f73a316cf7e04b4", size = 10527, upload-time = "2025-12-03T21:35:40.71Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/83/ba/61c1986a0724e146b745cac3006e4123dad6077084c5eeca43f5351d77ec/kfp_pipeline_spec-2.17.0.tar.gz", hash = "sha256:9ffe0a9a881d52ae867fd274d6b458a92d980bb368c15793d9f5e536c7f24521", size = 10621, upload-time = "2026-07-09T13:46:39.095Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d4/71/30886a62d9ffa7b5a4709e1d66e394eecbe0376877a313b31ab9cef46322/kfp_pipeline_spec-2.15.2-py3-none-any.whl", hash = "sha256:b906cca1400ca097967a6e66a10799dcf17703052264e4b0093bcb0e7f4ed380", size = 9848, upload-time = "2025-12-03T21:35:39.304Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/b3/15c2bf2a0063b1fe595cba12ce88e858a90861a166e966fc3d656a3ebbac/kfp_pipeline_spec-2.17.0-py3-none-any.whl", hash = "sha256:a2ae9f287ce69d72f2fc10a5dca30a5e32ab3b6975ad6ce9d4b54e0e02c54371", size = 9920, upload-time = "2026-07-09T13:46:38.132Z" },
 ]
 
 [[package]]
 name = "kfp-server-api"
-version = "2.15.2"
+version = "2.17.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
@@ -1768,7 +1769,7 @@ dependencies = [
     { name = "six" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3d/b6/130028135dc5a59fe7bca33d589f9ba55f86449edc32a3906d7cd8fd635d/kfp_server_api-2.15.2.tar.gz", hash = "sha256:e24493de35f56712bf0c9cdd3ce8df9b0c4f472a6f3b7111ee387b9f467c5c0e", size = 63454, upload-time = "2025-12-03T21:35:08.532Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4c/66/96e957346130828d5b8eaf9d3bea89fea5008680289c54f03be70cb745a3/kfp_server_api-2.17.0.tar.gz", hash = "sha256:12adfe269ca4758f01c687898f4471e786183e720fe5fa5aa4ad4fb0f3737d4f", size = 69867, upload-time = "2026-07-09T13:46:09.233Z" }
 
 [[package]]
 name = "kiwisolver"
@@ -3251,7 +3252,7 @@ wheels = [
 
 [[package]]
 name = "requests"
-version = "2.32.5"
+version = "2.33.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
@@ -3259,9 +3260,9 @@ dependencies = [
     { name = "idna" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c9/74/b3ff8e6c8446842c3f5c837e9c3dfcfe2018ea6ecef224c710c85ef728f4/requests-2.32.5.tar.gz", hash = "sha256:dbba0bac56e100853db0ea71b82b4dfd5fe2bf6d3754a8893c3af500cec7d7cf", size = 134517, upload-time = "2025-08-18T20:46:02.573Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/34/64/8860370b167a9721e8956ae116825caff829224fbca0ca6e7bf8ddef8430/requests-2.33.0.tar.gz", hash = "sha256:c7ebc5e8b0f21837386ad0e1c8fe8b829fa5f544d8df3b2253bff14ef29d7652", size = 134232, upload-time = "2026-03-25T15:10:41.586Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1e/db/4254e3eabe8020b458f1a747140d32277ec7a271daf1d235b70dc0b4e6e3/requests-2.32.5-py3-none-any.whl", hash = "sha256:2462f94637a34fd532264295e186976db0f5d453d1cdd31473c85a6a161affb6", size = 64738, upload-time = "2025-08-18T20:46:00.542Z" },
+    { url = "https://files.pythonhosted.org/packages/56/5d/c814546c2333ceea4ba42262d8c4d55763003e767fa169adc693bd524478/requests-2.33.0-py3-none-any.whl", hash = "sha256:3324635456fa185245e24865e810cecec7b4caf933d7eb133dcde67d48cee69b", size = 65017, upload-time = "2026-03-25T15:10:40.382Z" },
 ]
 
 [[package]]
@@ -4047,11 +4048,11 @@ wheels = [
 
 [[package]]
 name = "urllib3"
-version = "2.5.0"
+version = "2.7.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/15/22/9ee70a2574a4f4599c47dd506532914ce044817c7752a79b6a51286319bc/urllib3-2.5.0.tar.gz", hash = "sha256:3fc47733c7e419d4bc3f6b3dc2b4f890bb743906a30d56ba4a5bfa4bbff92760", size = 393185, upload-time = "2025-06-18T14:07:41.644Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/0c/06f8b233b8fd13b9e5ee11424ef85419ba0d8ba0b3138bf360be2ff56953/urllib3-2.7.0.tar.gz", hash = "sha256:231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c", size = 433602, upload-time = "2026-05-07T16:13:18.596Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a7/c2/fe1e52489ae3122415c51f387e221dd0773709bad6c6cdaa599e8a2c5185/urllib3-2.5.0-py3-none-any.whl", hash = "sha256:e6b01673c0fa6a13e374b50871808eb3bf7046c4b125b216f6bf1cc604cff0dc", size = 129795, upload-time = "2025-06-18T14:07:40.39Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/3e/5db95bcf282c52709639744ca2a8b149baccf648e39c8cc87553df9eae0c/urllib3-2.7.0-py3-none-any.whl", hash = "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897", size = 131087, upload-time = "2026-05-07T16:13:17.151Z" },
 ]
 
 [[package]]
