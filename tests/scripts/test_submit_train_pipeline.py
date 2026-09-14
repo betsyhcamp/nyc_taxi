@@ -13,6 +13,7 @@ import hashlib
 import logging
 from pathlib import Path
 from types import ModuleType
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,8 +21,16 @@ import yaml
 from kfp import compiler
 from pytest_mock import MockerFixture
 
+from fcstnyctaxi.lib.config.bindings import (
+    environment_bindings,
+    train_infra_bindings,
+)
+from fcstnyctaxi.lib.config.composition import compose_config
+from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.pipelines import local_train_pipeline
 from fcstnyctaxi.pipelines.train_pipeline import train_pipeline
+from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
+from fcstnyctaxi.schemas.config.train import TrainInfraConfig
 from scripts import submit_train_pipeline
 
 ENV = "dev"
@@ -78,6 +87,22 @@ def _argv(template: Path, overrides: dict[str, str] | None = None) -> list[str]:
     for flag, value in values.items():
         argv += [flag, value]
     return argv
+
+
+def _expected_control_plane() -> tuple[EnvironmentConfig, TrainInfraConfig]:
+    """Composed, never literals, so a project or bucket move in dev.yaml cannot fail
+    this: the test asserts routing, leaving the values to the config tests."""
+    config_dir = get_project_root_dir() / "config"
+    return (
+        cast(
+            EnvironmentConfig,
+            compose_config(config_dir, environment_bindings(ENV)).config,
+        ),
+        cast(
+            TrainInfraConfig,
+            compose_config(config_dir, train_infra_bindings()).config,
+        ),
+    )
 
 
 @pytest.fixture
@@ -139,6 +164,34 @@ def test_submitted_parameters_and_provenance_come_from_the_real_template(
     assert hashlib.sha256(template.read_bytes()).hexdigest() in caplog.text
 
 
+def test_the_control_plane_fields_are_routed_from_the_composed_config(
+    template: Path,
+    vertex: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test who the run submits as, where it lands, and which template it runs.
+
+    None of the four raises when dropped: without `service_account` the run
+    submits under whatever identity Vertex falls back to.
+    """
+    monkeypatch.setattr("sys.argv", _argv(template))
+    environment, infra = _expected_control_plane()
+
+    submit_train_pipeline.main()
+
+    init_kwargs = vertex.init.call_args.kwargs
+    assert init_kwargs["project"] == environment.compute.project_id
+    assert init_kwargs["location"] == environment.compute.location
+
+    job_kwargs = vertex.PipelineJob.call_args.kwargs
+    assert job_kwargs["display_name"] == f"{infra.display_name_prefix}-{RUN_ID}"
+    assert job_kwargs["template_path"] == str(template)
+    assert job_kwargs["pipeline_root"] == environment.vertex.pipeline_root
+
+    submit_kwargs = vertex.PipelineJob.return_value.submit.call_args.kwargs
+    assert submit_kwargs["service_account"] == SERVICE_ACCOUNT
+
+
 def test_a_missing_service_account_raises_before_the_sdk_is_touched(
     template: Path,
     vertex: MagicMock,
@@ -149,6 +202,21 @@ def test_a_missing_service_account_raises_before_the_sdk_is_touched(
     monkeypatch.setattr("sys.argv", _argv(template))
 
     with pytest.raises(RuntimeError, match="FCST_TRAIN_SERVICE_ACCOUNT"):
+        submit_train_pipeline.main()
+
+    assert vertex.mock_calls == []
+
+
+def test_an_unknown_env_is_refused_before_the_sdk_is_touched(
+    template: Path,
+    vertex: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test the message, not just the raise: without the guard an unknown env is a
+    FileNotFoundError on a missing fragment, two steps later."""
+    monkeypatch.setattr("sys.argv", _argv(template, {"--env": "nosuchenv"}))
+
+    with pytest.raises(ValueError, match="nosuchenv"):
         submit_train_pipeline.main()
 
     assert vertex.mock_calls == []
@@ -202,6 +270,23 @@ def test_a_failed_submit_records_no_run_id(
         submit_train_pipeline.main()
 
     assert not (tmp_path / ".last_run_id").exists()
+
+
+def test_an_interrupted_wait_still_leaves_the_run_id_recorded(
+    template: Path,
+    vertex: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Test the other half of the ordering: recorded before the wait, so an
+    interrupted `--wait` still leaves the id a restart needs."""
+    vertex.PipelineJob.return_value.wait.side_effect = KeyboardInterrupt
+    monkeypatch.setattr("sys.argv", _argv(template) + ["--wait"])
+
+    with pytest.raises(KeyboardInterrupt):
+        submit_train_pipeline.main()
+
+    assert (tmp_path / ".last_run_id").read_text() == f"{RUN_ID}\n"
 
 
 def test_a_malformed_feature_run_id_names_the_flag_it_arrived_on(

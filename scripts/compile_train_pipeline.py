@@ -12,8 +12,8 @@ _TEMPLATE = "fcst-train-pipeline.yaml"
 
 
 def _executor_images(spec: dict[str, Any]) -> set[str]:
-    """Every Docker image the compiled pipeline will actually run.Importer steps run no
-    image and are skipped.
+    """Every Docker image the compiled pipeline will actually run. Importer steps run
+    no image and are skipped.
     """
     executors = spec["deploymentSpec"]["executors"]
     return {ex["container"]["image"] for ex in executors.values() if "container" in ex}

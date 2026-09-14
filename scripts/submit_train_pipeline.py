@@ -46,8 +46,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--template-path",
         required=True,
-        # A str, not a Path: this flag also takes a published template URI,
-        # which Path would collapse to "https:/...".
+        # Local paths only: main() reads the file to hash it. A URI needs that
+        # read made URI-aware, which lands with template publishing.
         help="Compiled template to submit, as compile-train writes it.",
     )
     parser.add_argument(
@@ -91,8 +91,8 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _executor_images(spec: dict[str, Any]) -> set[str]:
-    """Every Docker image the compiled pipeline will actually run.Importer steps run no
-    image and are skipped.
+    """Every Docker image the compiled pipeline will actually run. Importer steps run
+    no image and are skipped.
     """
     executors = spec["deploymentSpec"]["executors"]
     return {ex["container"]["image"] for ex in executors.values() if "container" in ex}
