@@ -137,7 +137,7 @@ exclude_lines = [
 [tool.uv]
 required-version = "==0.11.33"
 default-groups = ["dev", "forecasting"]
-constraint-dependencies = ["setuptools<81"]
+constraint-dependencies = ["setuptools<81", "grpcio>=1.83.0"]
 
 [tool.uv.sources]
 tsbricks = { git = "https://github.com/betsyhcamp/tsbricks.git", rev = "v0.4.0" }
