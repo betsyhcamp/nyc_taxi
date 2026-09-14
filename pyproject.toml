@@ -73,11 +73,7 @@ dev = [
     "myst-parser>=3.0.0",
     "types-pyyaml>=6.0.12.20260408",
     "docker>=7.1.0",
-    "google-cloud-aiplatform>=1.130.0",
-    # Submitter-side, like google-cloud-aiplatform above: the submit scripts run
-    # outside the image, and the image never reads .env. load_dotenv() is called
-    # only by the submitters — never by the compile step, whose one variable
-    # arrives from the task environment and must have no second source.
+    "google-cloud-aiplatform>=1.165.1,<2", # 1.x verified; 2.x breaks only agent tooling
     "python-dotenv>=1.0.0",
     "pandas-gbq>=0.31.0",
     "tsbricks[matplotlib]==0.4.0",
