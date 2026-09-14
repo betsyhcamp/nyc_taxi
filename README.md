@@ -183,14 +183,14 @@ This task deliberately does not build. `GIT_HASH` is recomputed on every invocat
 **Step 3. Compile and submit:**
 
 ```{bash}
-task run-train IMAGE_REF=<digest from step 2> -- \
+task compile-submit-train IMAGE_REF=<digest from step 2> -- \
   --env dev \
   --feature-run-id <id from publish_feature_stand_in.py> \
   --panel-uri gs://... \
   --calendar-uri gs://...
 ```
 
-`run-train` compiles a fresh template into `build/fcst-train-pipeline.yaml`, then appends its own `--template-path` after your arguments. Argparse is last-wins, so the run always submits what it just compiled.
+`compile-submit-train` compiles a fresh template into `build/fcst-train-pipeline.yaml`, then appends its own `--template-path` after your arguments. Argparse is last-wins, so the run always submits what it just compiled.
 
 The compile step refuses to leave a template pinning anything other than the digest you named, and deletes the rejected file rather than leaving something submittable on disk.
 

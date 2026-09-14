@@ -259,7 +259,7 @@ tasks:
     cmds:
       - uv run python scripts/submit_train_pipeline.py {{.CLI_ARGS}}
 
-  run-train:
+  compile-submit-train:
     desc: Compile fresh and submit what was just compiled
     requires:
       vars: [IMAGE_REF]
