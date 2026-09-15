@@ -35,6 +35,13 @@ def broken_config_root(tmp_path: Path) -> Path:
     return root
 
 
+@pytest.mark.parametrize("uri", ["s3://bucket/panel.parquet", "/tmp/panel.parquet"])
+def test_mirror_path_rejects_a_non_gcs_uri(tmp_path: Path, uri: str) -> None:
+    """An absolute path absorbs the mirror root, landing outside the scratch tree."""
+    with pytest.raises(ValueError, match="must be a gs://"):
+        local_train_pipeline._mirror_path(uri, tmp_path)
+
+
 def test_a_malformed_train_config_raises_before_out_dir_is_cleared(
     broken_config_root: Path,
     tmp_path: Path,

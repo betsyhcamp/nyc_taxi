@@ -18,7 +18,12 @@ from fcstnyctaxi.core.train.compose_configs_impl import (
     compose_configs_impl,
     compose_train_static_configs,
 )
-from fcstnyctaxi.lib.io import download_from_gcs, sync_to_gcs, upload_to_gcs
+from fcstnyctaxi.lib.io import (
+    download_from_gcs,
+    require_gcs_uri,
+    sync_to_gcs,
+    upload_to_gcs,
+)
 from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
 from fcstnyctaxi.lib.utils import (
     generate_run_id,
@@ -87,8 +92,7 @@ def _mirror_path(gcs_uri: str, root: Path) -> Path:
 
     Derived from the URI, so two objects sharing a basename cannot alias locally.
     """
-    if not gcs_uri.startswith("gs://"):
-        raise ValueError(f"gcs_uri must be a gs://... string, got {gcs_uri!r}.")
+    require_gcs_uri(gcs_uri)
     key = gcs_uri.removeprefix("gs://")
     # "", "." and ".." are legal GCS key segments that the filesystem collapses
     # or resolves away, so two distinct objects would mirror to one path.

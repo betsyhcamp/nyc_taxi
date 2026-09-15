@@ -1,6 +1,5 @@
 from pathlib import Path
 
-import fsspec
 import pytest
 from fsspec.implementations.local import LocalFileSystem
 
@@ -142,18 +141,26 @@ def test_build_run_scoped_id_constructs_expected_string() -> None:
 # ================================================
 
 
-def test_write_text_to_gcs_writes_text_at_uri() -> None:
-    """Test that text file can be written to & read from fsspec memory system"""
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "s3://BUCKET/dev/train/RUNID/query.sql",
+        "file:///tmp/query.sql",
+        "/tmp/query.sql",
+    ],
+)
+def test_write_text_to_gcs_rejects_non_gcs_uri(uri: str) -> None:
+    """Unguarded, a bare path resolves to LocalFileSystem and the write succeeds."""
+    with pytest.raises(ValueError, match="must be a gs://"):
+        write_text_to_gcs("SELECT 1", uri)
 
-    uri = "memory://text_write_to_gcs/file.sql"
 
-    write_text_to_gcs("SELECT 1", uri)
+def test_write_text_to_gcs_writes_utf8_text_at_the_uri(fake_gcs: Path) -> None:
+    """Replaces the memory:// round trip the scheme guard invalidates."""
+    write_text_to_gcs("SELECT 'café' AS x", "gs://BUCKET/dev/train/RUNID/query.sql")
 
-    fs, path = fsspec.url_to_fs(uri)
-    with fs.open(path, "r") as f:
-        text = f.read()
-
-    assert text == "SELECT 1"
+    landed = fake_gcs / "BUCKET" / "dev" / "train" / "RUNID" / "query.sql"
+    assert landed.read_text(encoding="utf-8") == "SELECT 'café' AS x"
 
 
 # ================================================
