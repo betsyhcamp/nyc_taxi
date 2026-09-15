@@ -9,7 +9,6 @@ emitted configs are read.
 import argparse
 import logging
 import shutil
-import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -24,6 +23,7 @@ from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
 from fcstnyctaxi.lib.utils import (
     generate_run_id,
     get_project_root_dir,
+    require_git_hash,
     require_path_safe_run_id,
 )
 
@@ -100,40 +100,6 @@ def _mirror_path(gcs_uri: str, root: Path) -> Path:
     return root / key
 
 
-def _require_git_hash(repo_dir: Path) -> str:
-    """The commit this run reproduces from, refused rather than stamped as null.
-
-    Both commands run at repo_dir, since the process CWD can be a sibling repo.
-    """
-    try:
-        sha = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=repo_dir,
-            stdout=subprocess.PIPE,
-            text=True,
-            check=True,
-        ).stdout.strip()
-    # git's own stderr reaches the terminal, so this adds only what git cannot
-    # know: which directory the run required a hash from.
-    except (OSError, subprocess.CalledProcessError) as err:
-        raise RuntimeError(
-            f"git rev-parse HEAD failed in {repo_dir}, so this run cannot record "
-            "the commit that produced it."
-        ) from err
-
-    # git status --porcelain would read dirty on every run due to untracked files
-    completed = subprocess.run(
-        ["git", "diff", "--quiet", "HEAD", "--"], cwd=repo_dir, check=False
-    )
-
-    if completed.returncode not in (0, 1):
-        raise RuntimeError(
-            f"git diff --quiet HEAD -- exited {completed.returncode}, so a clean "
-            "tree cannot be told from a modified one."
-        )
-    return f"{sha}-dirty" if completed.returncode else sha
-
-
 def main() -> None:
     """Compose one Training run's configs and publish them to its run prefix.
 
@@ -162,7 +128,7 @@ def main() -> None:
 
     project_root = get_project_root_dir()
     config_dir = project_root / "config"
-    git_hash = _require_git_hash(project_root)
+    git_hash = require_git_hash(project_root)
 
     # Held as a value rather than folded into step_uri: backtest, evaluate, and
     # final_fit will each append their own step name to this same prefix.

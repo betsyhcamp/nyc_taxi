@@ -1,9 +1,7 @@
 """Tests for the local Training runner's ordering guarantees.
 
-`main()` is driven end to end rather than reshaped for injection. PROJECT_ROOT
-already redirects `get_project_root_dir`, so a copied config tree under
-`tmp_path` exercises the real function, and only `_require_git_hash` is patched
-since git cannot answer for a directory that is not a repository.
+`main()` runs end to end against a config tree copied under `tmp_path`, with only
+`require_git_hash` patched: git cannot answer for a directory that is not a repo.
 """
 
 import shutil
@@ -26,12 +24,9 @@ PREVIOUS_OUTPUT = "the previous attempt's output"
 
 @pytest.fixture
 def broken_config_root(tmp_path: Path) -> Path:
-    """A project root whose `train/modeling.yaml` no longer satisfies its schema.
+    """A real config tree corrupted so that only `train/modeling.yaml` fails.
 
-    Copied from the real tree and then corrupted, so every other destination
-    still composes: the preflight has to be what raises, not a missing file
-    somewhere upstream. An undeclared key rather than a wrong type, because it
-    names the fragment in the message without depending on any field's type.
+    An undeclared key rather than a wrong type: the message names the fragment.
     """
     root = tmp_path / "project"
     shutil.copytree(get_project_root_dir() / "config", root / "config")
@@ -46,15 +41,10 @@ def test_a_malformed_train_config_raises_before_out_dir_is_cleared(
     monkeypatch: pytest.MonkeyPatch,
     mocker: MockerFixture,
 ) -> None:
-    """Test that the preflight raises while the previous attempt's output survives.
-
-    `resolve_run_prefix` composes only EnvironmentConfig, so without the explicit
-    preflight the Training configs are first read by the impl, two steps after
-    the rmtree has already destroyed the directory this seeds.
-    """
+    """Without the explicit preflight the impl reads the configs after the rmtree."""
     monkeypatch.setenv("PROJECT_ROOT", str(broken_config_root))
     mocker.patch.object(
-        local_train_pipeline, "_require_git_hash", return_value="abc1234"
+        local_train_pipeline, "require_git_hash", return_value="abc1234"
     )
     rmtree = mocker.spy(local_train_pipeline.shutil, "rmtree")
 
@@ -98,17 +88,12 @@ def test_the_identity_is_published_before_the_step_and_manifest_marks_it_complet
     monkeypatch: pytest.MonkeyPatch,
     mocker: MockerFixture,
 ) -> None:
-    """Test the publish order and which file marks the step complete.
-
-    run_identity.json sits outside `out_dir`, so `sync_to_gcs` no longer carries it
-    and the step needs a different marker. Published second, a failed step sync
-    would leave the run with no record of what it read.
-    """
+    """Published second, a failed sync would leave no record of what the run read."""
     root = tmp_path / "project"
     shutil.copytree(get_project_root_dir() / "config", root / "config")
     monkeypatch.setenv("PROJECT_ROOT", str(root))
     mocker.patch.object(
-        local_train_pipeline, "_require_git_hash", return_value="abc1234"
+        local_train_pipeline, "require_git_hash", return_value="abc1234"
     )
     mocker.patch.object(
         local_train_pipeline, "download_from_gcs", side_effect=lambda uri, d: d / "f"

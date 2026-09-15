@@ -1,4 +1,5 @@
 import re
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from fcstnyctaxi.lib.utils import (
     find_root_project_dir,
     generate_run_id,
     get_project_root_dir,
+    require_git_hash,
     require_path_safe_run_id,
 )
 
@@ -99,22 +101,56 @@ def test_get_project_root_dir_falls_back_when_env_not_set(
 
 @pytest.mark.parametrize("run_id", ["f1\n", "..", ".hidden", "-x", ""])
 def test_require_path_safe_run_id_rejects_unsafe_ids(run_id: str) -> None:
-    """Test that an id which would build a malformed path or line raises.
-
-    Each case is a distinct hazard rather than a variation. ".." escapes the
-    scratch container the runner recursively deletes; ".hidden" and "-x" give a
-    segment that hides from a listing or reads as a flag; "" leaves a doubled
-    slash in the prefix; and the trailing newline is what $(cat run_id.txt)
-    supplies, which is the case re.match with "$" accepts.
-    """
+    """Each case is a distinct hazard, not a variation on one."""
     with pytest.raises(ValueError, match="--run-id"):
         require_path_safe_run_id(run_id, "--run-id")
 
 
 def test_require_path_safe_run_id_accepts_a_generated_id() -> None:
-    """Test that the shared minter's output satisfies its inverse.
-
-    generate_run_id supplies the id whenever --run-id is absent, so a guard that
-    rejected it would fail every run that did not name one.
-    """
+    """A guard rejecting generate_run_id's output would fail every unnamed run."""
     require_path_safe_run_id(generate_run_id(), "--run-id")
+
+
+# ================================================
+# require_git_hash tests
+# ================================================
+
+
+@pytest.fixture
+def git_repo(tmp_path: Path) -> Path:
+    """A real repo with one commit: git's own exit-code contract is what is tested."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "tracked.txt").write_text("original\n")
+    for command in (
+        ["git", "init", "-q"],
+        ["git", "add", "tracked.txt"],
+        # Identity per-command, so the suite needs no global git config.
+        ["git", "-c", "user.email=t@e.co", "-c", "user.name=T", "commit", "-qm", "i"],
+    ):
+        subprocess.run(command, cwd=repo, check=True)
+    return repo
+
+
+def test_require_git_hash_marks_a_modified_tree_but_not_a_clean_one(
+    git_repo: Path,
+) -> None:
+    """Test both halves: either alone is satisfiable by a constant."""
+    assert re.fullmatch(r"[0-9a-f]{40}", require_git_hash(git_repo))
+
+    (git_repo / "tracked.txt").write_text("modified\n")
+
+    assert re.fullmatch(r"[0-9a-f]{40}-dirty", require_git_hash(git_repo))
+
+
+def test_require_git_hash_ignores_an_untracked_file(git_repo: Path) -> None:
+    """Why the check is `git diff`: untracked files must not read as modified."""
+    (git_repo / "untracked.txt").write_text("scratch\n")
+
+    assert not require_git_hash(git_repo).endswith("-dirty")
+
+
+def test_require_git_hash_raises_rather_than_returning_null(tmp_path: Path) -> None:
+    """A run whose commit is unknown cannot be reproduced from its own record."""
+    with pytest.raises(RuntimeError, match="cannot record the commit"):
+        require_git_hash(tmp_path)
