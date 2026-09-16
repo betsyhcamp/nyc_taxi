@@ -91,6 +91,21 @@ def write_text_to_gcs(text: str, gcs_uri: str) -> None:
         f.write(text)
 
 
+def read_text_from_gcs(gcs_uri: str) -> str:
+    """Read a GCS object as utf-8 text. The mirror of `write_text_to_gcs`. Encoding
+    chosen to align with fsspec choice.
+
+    Raises:
+        ValueError: gcs_uri is not a gs:// URI.
+        FileNotFoundError: no object at gcs_uri. Callers reading a completion
+            marker treat this as a domain fact, not a transport failure.
+    """
+    require_gcs_uri(gcs_uri)
+    fs, path = fsspec.url_to_fs(gcs_uri)
+    with fs.open(path, mode="r", encoding="utf-8") as f:
+        return f.read()
+
+
 def download_from_gcs(gcs_uri: str, destination_dir: Path) -> Path:
     """Download a single GCS object into destination_dir, returning its local path.
 

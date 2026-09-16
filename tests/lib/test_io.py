@@ -7,6 +7,7 @@ from fcstnyctaxi.lib.io import (
     build_run_scoped_uri,
     download_from_gcs,
     prepare_sql,
+    read_text_from_gcs,
     sync_to_gcs,
     upload_to_gcs,
     write_text_to_gcs,
@@ -161,6 +162,42 @@ def test_write_text_to_gcs_writes_utf8_text_at_the_uri(fake_gcs: Path) -> None:
 
     landed = fake_gcs / "BUCKET" / "dev" / "train" / "RUNID" / "query.sql"
     assert landed.read_text(encoding="utf-8") == "SELECT 'café' AS x"
+
+
+# ================================================
+# read_text_from_gcs tests
+# ================================================
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "s3://BUCKET/dev/train/RUNID/query.sql",
+        "file:///tmp/query.sql",
+        "/tmp/query.sql",
+    ],
+)
+def test_read_text_from_gcs_rejects_non_gcs_uri(uri: str) -> None:
+    """Unguarded, a bare path reads a local file and reports it as a GCS object."""
+    with pytest.raises(ValueError, match="must be a gs://"):
+        read_text_from_gcs(uri)
+
+
+def test_read_text_from_gcs_round_trips_what_the_writer_wrote(fake_gcs: Path) -> None:
+    """The pair is documented as a mirror, so it has to survive its own round trip."""
+    uri = "gs://BUCKET/dev/feature/RUNID/run_outputs.json"
+    write_text_to_gcs("SELECT 'café' AS x", uri)
+
+    assert read_text_from_gcs(uri) == "SELECT 'café' AS x"
+
+
+def test_read_text_from_gcs_raises_file_not_found_for_a_missing_object(
+    fake_gcs: Path,
+) -> None:
+    """read_feature_run_outputs converts exactly this into a completion failure, so
+    a different exception type would slip past its except clause."""
+    with pytest.raises(FileNotFoundError):
+        read_text_from_gcs("gs://BUCKET/dev/feature/RUNID/run_outputs.json")
 
 
 # ================================================
