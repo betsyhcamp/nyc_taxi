@@ -140,7 +140,7 @@ def test_the_identity_is_published_before_the_step_and_manifest_marks_it_complet
     # than each in isolation.
     publishes = mocker.MagicMock()
     publishes.attach_mock(
-        mocker.patch.object(local_train_pipeline, "upload_to_gcs"), "upload"
+        mocker.patch.object(local_train_pipeline, "upload_to_gcs"), "identity"
     )
     publishes.attach_mock(
         mocker.patch.object(local_train_pipeline, "sync_to_gcs", return_value=(7, 0)),
@@ -170,9 +170,65 @@ def test_the_identity_is_published_before_the_step_and_manifest_marks_it_complet
     local_train_pipeline.main()
 
     run_prefix = resolve_run_prefix(root / "config", ENV, "train", RUN_ID)
-    assert [call[0] for call in publishes.mock_calls] == ["upload", "sync"]
-    assert publishes.mock_calls[0].args[1] == f"{run_prefix}run_identity.json"
+    assert [call[0] for call in publishes.mock_calls] == ["identity", "sync"]
+    assert publishes.mock_calls[0].args[1] == run_prefix
     assert publishes.mock_calls[1].kwargs["completion_marker"] == "manifest.json"
+
+
+def test_the_published_destinations_are_ones_the_transport_accepts(
+    fake_gcs: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+) -> None:
+    """The ordering test above patches both publishers, so it proves the calls are
+    made and never that the transport would accept what they name."""
+
+    def _impl_outputs(*, out_dir: Path, **_: object) -> ComposeConfigsSummary:
+        """Write what the patched impl would have, since the publish step sends it."""
+        (out_dir.parent / "run_identity.json").write_text('{"seeded": true}')
+        (out_dir / "manifest.json").write_text("{}")
+        return COMPOSE_SUMMARY
+
+    root = tmp_path / "project"
+    shutil.copytree(get_project_root_dir() / "config", root / "config")
+    monkeypatch.setenv("PROJECT_ROOT", str(root))
+    mocker.patch.object(
+        local_train_pipeline, "require_git_hash", return_value="abc1234"
+    )
+    mocker.patch.object(
+        local_train_pipeline, "download_from_gcs", side_effect=lambda uri, d: d / "f"
+    )
+    mocker.patch.object(
+        local_train_pipeline, "compose_configs_impl", side_effect=_impl_outputs
+    )
+    mocker.patch.object(
+        run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
+    )
+    # Neither publisher is patched: that is the whole point of this test.
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "local_train_pipeline",
+            "--env",
+            ENV,
+            "--feature-run-id",
+            FEATURE_RUN_ID,
+            "--run-id",
+            RUN_ID,
+            "--scratch-dir",
+            str(tmp_path / "scratch"),
+        ],
+    )
+
+    local_train_pipeline.main()
+
+    run_prefix = resolve_run_prefix(root / "config", ENV, "train", RUN_ID)
+    published = fake_gcs / run_prefix.removeprefix("gs://")
+    assert (published / "run_identity.json").is_file()
+    assert (published / "compose_configs" / "manifest.json").is_file()
 
 
 def test_the_local_runner_resolves_both_uris_from_the_feature_run_id_alone(

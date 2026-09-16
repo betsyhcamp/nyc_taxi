@@ -33,26 +33,6 @@ def sql_file_with_params(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def fake_gcs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Resolve gs:// URIs onto a LocalFileSystem under tmp_path; return its root.
-
-    Runs the real fsspec calls in CI with no credentials. Two details are
-    load-bearing: auto_mkdir=True is GCS's implicit-parents behaviour, and the path
-    is built by string substitution because _strip_protocol strips the trailing "/"
-    that marks a prefix rather than an object name.
-    """
-    remote_root = tmp_path / "remote"
-    remote_root.mkdir()
-    fs = LocalFileSystem(auto_mkdir=True)
-
-    def _fake_url_to_fs(url: str, **kwargs: object) -> tuple[LocalFileSystem, str]:
-        return fs, url.replace("gs://", f"{remote_root}/", 1)
-
-    monkeypatch.setattr("fsspec.url_to_fs", _fake_url_to_fs)
-    return remote_root
-
-
-@pytest.fixture
 def download_dir(tmp_path: Path) -> Path:
     """A destination path that deliberately does not exist yet."""
     return tmp_path / "scratch" / "inputs"

@@ -194,9 +194,7 @@ def main() -> None:
     )
     # First, so a failed step publish still leaves a record of what the run read.
     # Not sync_to_gcs here: at the run prefix it deletes every sibling step's output.
-    upload_to_gcs(
-        out_dir.parent / "run_identity.json", f"{run_prefix}run_identity.json"
-    )
+    upload_to_gcs(out_dir.parent / "run_identity.json", run_prefix)
 
     # The impl writes manifest.json last, so publishing it alone and last makes its
     # presence at the prefix mean complete rather than started.
