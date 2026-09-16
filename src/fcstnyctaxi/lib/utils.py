@@ -1,5 +1,6 @@
 import os
 import re
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -97,3 +98,47 @@ def require_path_safe_run_id(run_id: str, flag_name: str) -> None:
             f"{flag_name} {run_id!r} must start with a letter or digit and "
             "contain only letters, digits, '.', '_' or '-'."
         )
+
+
+def require_git_hash(repo_dir: Path) -> str:
+    """The commit this run reproduces from, refused rather than stamped as null.
+
+    Both commands run at repo_dir, since the process CWD can be a sibling repo.
+
+    Args:
+        repo_dir (Path): Repository the hash is required from.
+
+    Returns:
+        str: The HEAD sha, suffixed "-dirty" when tracked files are modified.
+
+    Raises:
+        RuntimeError: git could not answer for repo_dir, so a run whose commit is
+            unknown cannot be reproduced from its own record.
+    """
+    try:
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_dir,
+            stdout=subprocess.PIPE,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    # git's own stderr reaches the terminal, so this adds only what git cannot
+    # know: which directory the run required a hash from.
+    except (OSError, subprocess.CalledProcessError) as err:
+        raise RuntimeError(
+            f"git rev-parse HEAD failed in {repo_dir}, so this run cannot record "
+            "the commit that produced it."
+        ) from err
+
+    # git status --porcelain would read dirty on every run due to untracked files
+    completed = subprocess.run(
+        ["git", "diff", "--quiet", "HEAD", "--"], cwd=repo_dir, check=False
+    )
+
+    if completed.returncode not in (0, 1):
+        raise RuntimeError(
+            f"git diff --quiet HEAD -- exited {completed.returncode}, so a clean "
+            "tree cannot be told from a modified one."
+        )
+    return f"{sha}-dirty" if completed.returncode else sha

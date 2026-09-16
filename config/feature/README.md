@@ -1,16 +1,13 @@
 # TODO
 
-Once conventions are understood by the team, trim down comments and remove README's
-within directory `config/`.
+Once conventions are understood by the team, trim comments and remove the README's inside
+`config/`.
 
 # Feature pipeline configuration
 
-This directory is intentionally empty of fragments. It is reserved, and this
-file records what belongs here and why it was not written.
-
-Read `config/README.md` first for the rules this tree follows — the two axes, the
-parity rule, and why `environments/<env>.yaml` is the only environment-varying
-file. What's needed to build Feature's configuration is stated here.
+Intentionally empty of fragments. This file records what belongs here and why it is not
+written yet. Read `config/README.md` first for the rules this tree follows: the two axes,
+the parity rule, and why `environments/<env>.yaml` is the only environment-varying file.
 
 ## Destinations that belong here
 
@@ -19,78 +16,54 @@ file. What's needed to build Feature's configuration is stated here.
 | `FeatureInfraConfig`    | `feature/infra.yaml`    | `display_name_prefix`, `output` (`gcs_prefix` · `output_filename`) |
 | `FeatureModelingConfig` | `feature/modeling.yaml` | `source_query` (`filename` · `params`)                             |
 
-`EnvironmentConfig` is composed from `../environments/<env>.yaml`, shared with
-Training and Inference. Feature has no tsbricks-owned destination — it does not
-backtest.
-
-The schemas are stubbed, with their intended fields, in
+`EnvironmentConfig` is composed from `../environments/<env>.yaml`, shared with Training and
+Inference. Feature has no tsbricks-owned destination, since it does not backtest. The
+schemas are stubbed, with their intended fields, in
 `src/fcstnyctaxi/schemas/config/feature.py`.
-
-## Why nothing is written yet
-
-Both destinations encode the `ExtractDbToBucketConfig` split. Today
-`sql_filename`, `sql_params`, `gcs_prefix`, and `output_filename` live in one
-block in `config/configs_zone_demand_pipeline.yaml`. The first two are
-**modeling** configuration — a different query means different data means
-different numbers — and the last two are **infrastructure**. Splitting them is
-what gives Feature a modeling config at all.
-
-That split is assigned to the Feature pipeline's own build, and
-`ExtractOutput.gcs_prefix` is separately already scheduled to change with the
-object migration. Writing these fragments now would ship a known-stale value into a
-file nothing reads, creating a second live source for Feature's configuration
-alongside `config/configs_zone_demand_pipeline.yaml` — the exact duplication
-this tree exists to remove.
 
 ## What `modeling.yaml` is expected to collect
 
-`source_query` is the first member of this category, not the whole of it — and
-because it is SQL-shaped, it makes the category look narrower than it is.
-"Modeling" here is **Axis 1** — *would changing this value change the forecast
-numbers?* — not *is this about a model?* Feature has no model. The category is
-**the rules that decide what the numbers are before anyone models them**. Axis 1
-and Axis 2 are both defined in `config/README.md`.
+`source_query` is the first member of this category, not the whole of it, and being
+SQL-shaped it makes the category look narrower than it is. "Modeling" here is **Axis 1**,
+*would changing this value change the forecast numbers?*, not *is this about a model?*
+Feature has no model. The category is **the rules that decide what the numbers are before
+anyone models them**. Both axes are defined in `config/README.md`.
 
-Everything Feature derives is a candidate. The panel carries `ds` · `unique_id` ·
-`y`, and the fiscal calendar carries `fiscal_year_month`,
-`origin_month_fraction_elapsed`, `fiscal_week_of_month`, `fiscal_month`,
-`weeks_in_month`, and `count_workdays` — so every rule producing those columns
-belongs here:
+Everything Feature derives is a candidate, so every rule producing a column in the panel
+(`ds` · `unique_id` · `y`) or in the fiscal calendar belongs here:
 
-| candidate                                                                              | why it belongs, and where it lives today                                                                                                                    |
-| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Fiscal calendar rules** — year start, 4-4-5 vs 4-5-4, week start day                 | Changing the period boundaries changes every monthly total. Implicit in SQL today                                                                           |
-| **`weeks_in_month` derivation**                                                        | The observed-max derivation is correct only because of a `WHERE` clause in a different file that nothing states or checks. A stated rule is the durable fix |
-| **Calendar horizon** — how far past the panel the calendar extends                     | Training's `_build_future_calendar_df` and runtime assertion 2 both need it. This is a live entry condition for PR 3                                        |
-| **Workday and holiday definitions** — region, which days count                         | `count_workdays` ships today; the holiday source defining it is unstated                                                                                    |
-| **Panel scope** — zone or borough grain, Manhattan-only, the month cutoff              | Hardcoded in `queries/initial_daily_taxi_rides.sql`'s `month_cutoff_cte`                                                                                    |
-| **Series admission rules** — minimum history, first-active month, gap versus zero fill | Currently expressed in notebook code rather than config                                                                                                     |
-| **Exogenous feature toggles** — holiday flags, event calendars                         | Anything Feature precomputes and ships as extra columns                                                                                                     |
+| candidate                                                                             | why it belongs, and where it lives today                                                                                                                    |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Fiscal calendar rules**: year start, 4-4-5 vs 4-5-4, week start day                 | Changing the period boundaries changes every monthly total. Implicit in SQL today                                                                           |
+| **`weeks_in_month` derivation**                                                       | The observed-max derivation is correct only because of a `WHERE` clause in a different file that nothing states or checks. A stated rule is the durable fix |
+| **Calendar horizon**: how far past the panel the calendar extends                     | Training's `_build_future_calendar_df` and runtime assertion 2 both need it                                                                                 |
+| **Workday and holiday definitions**: region, which days count                         | `count_workdays` ships today; the holiday source defining it is unstated                                                                                    |
+| **Panel scope**: zone or borough grain, Manhattan-only, the month cutoff              | Hardcoded in `queries/initial_daily_taxi_rides.sql`'s `month_cutoff_cte`                                                                                    |
+| **Series admission rules**: minimum history, first-active month, gap versus zero fill | Currently expressed in notebook code rather than config                                                                                                     |
+| **Exogenous feature toggles**: holiday flags, event calendars                         | Anything Feature precomputes and ships as extra columns                                                                                                     |
 
-Judge the category name against this list rather than against `source_query`
-alone. If `FeatureModelingConfig` still reads wrong once these are real, that is
-the moment to rename it. The alternative under consideration is renaming the
-category across all three slices — `<Slice>MethodConfig` or
-`<Slice>DerivationConfig` — rather than renaming Feature's alone, which would
-leave no shared name for the second category at all.
+Judge the category name against this list rather than against `source_query` alone. If
+`FeatureModelingConfig` still reads wrong once these are real, rename it then. The
+alternative under consideration is renaming the category across all three slices, to
+`<Slice>MethodConfig` or `<Slice>DerivationConfig`, rather than Feature's alone, which
+would leave no shared name for the second category.
 
 ## Source-data configuration does not live here
 
-The BigQuery source project and location belong in
-`EnvironmentConfig.source_data`, in `config/environments/<env>.yaml`. Do **not**
-add a `source_data:` block to `infra.yaml` or `modeling.yaml` here, and do not
-add a corresponding field to `FeatureInfraConfig`.
+The BigQuery source project and location belong in `EnvironmentConfig.source_data`, in
+`config/environments/<env>.yaml`. Do **not** add a `source_data:` block to `infra.yaml` or
+`modeling.yaml` here, and do not add a corresponding field to `FeatureInfraConfig`.
 
-The reason is structural rather than stylistic. The parity rule gives each slice
-**exactly one environment-independent fragment** per category — there is no
-`feature/infra.dev.yaml` — so `config/environments/<env>.yaml` is the only file
-in the tree that can hold a value differing between dev and prod. A source
-dataset that differs by environment has nowhere else to go.
+The reason is structural. The parity rule gives each slice **exactly one
+environment-independent fragment** per category, so there is no `feature/infra.dev.yaml`,
+and `config/environments/<env>.yaml` is the only file in the tree that can hold a value
+differing between dev and prod. A source dataset that varies by environment has nowhere
+else to go.
 
-The BigQuery **job** project is a separate value and is already there too, as
-`compute.project_id` — the project that pays for the query, which need not be
-the project holding the tables. `source_data.location` is not a free choice: a
-query job must run in its dataset's location.
+The BigQuery **job** project is a separate value and is already there as
+`compute.project_id`: the project that pays for the query need not be the one holding the
+tables. `source_data.location` is not a free choice, since a query job must run in its
+dataset's location.
 
 ## What to do when you build Feature
 
@@ -98,47 +71,43 @@ query job must run in its dataset's location.
    `src/<project_package_name>/schemas/config/feature.py`, replacing the module docstring.
 1. Write `infra.yaml` and `modeling.yaml` here, one fragment per destination.
 1. Add `feature_bindings()` entries in `src/<project_package_name>/lib/config/bindings.py`,
-   which currently declares Feature as having no project-owned destinations.
-   Absence there is a deliberate fact, not an oversight.
-1. Retire the corresponding keys from upstream existing configs (if any) so
-   there is one live source.
+   which currently declares Feature as having no project-owned destinations. That absence
+   is deliberate, not an oversight.
+1. Retire the corresponding keys from existing upstream configs, so there is one live
+   source.
 1. Rename `PipelineConfig` to `FeaturePipelineConfig` in
-   `src/<project_package_name>/schemas/config_schemas.py`. It is a flat schema mixing project settings, an image URI, Vertex settings, and one step's
-   parameters, and the rename is owed once this tree replaces it.
+   `src/<project_package_name>/schemas/config_schemas.py`. It is a flat schema mixing
+   project settings, an image URI, Vertex settings and one step's parameters; the rename is
+   owed once this tree replaces it.
 
-## How Training finds Feature's output — and a decision you own but there's a recommended design below
+## How Training finds Feature's output
 
-**Today, Training is told.** The local runner takes explicit `--panel-uri` and
-`--calendar-uri`, which the Feature stand-in prints when it runs. That is rung 1 of a
-three-rung ladder, and it is the only rung that can be built without deciding
-something on your behalf.
+**Rung 1: Training is told.** Both training callers take explicit `--panel-uri` and
+`--calendar-uri`. They survive as optional overrides, required together.
 
-**Rung 2 is yours to design, and it is the reason this section exists.** Training must
-eventually resolve the panel, calendar, and other input data from a `feature_run_id` alone — that is what
-Cloud Workflows can pass, because it minted the id and should not be
-string-concatenating GCS paths. The question is *how*.
+**Rung 2: Training resolves, and this ships.** Given a `--feature-run-id` alone, both
+callers read the outputs file below and take the two URIs by role. Resolution is
+caller-side only, so the pipeline is still *told* where its inputs are; what changed is who
+computes the URIs. The reader is `src/<project_package_name>/lib/run_outputs.py`; the
+contract as a typed model is `src/<project_package_name>/schemas/run_outputs.py`.
 
 ### The rule that constrains it
 
 > **Training must not need to know Feature's internal step names.**
 
 An earlier design had Training derive
-`gs://<bucket>/<env>/feature/<feature_run_id>/data_prep/<filename>`. Two things are
-wrong with that, and they are worth stating because they will look like nitpicks until
-you hit them:
+`gs://<bucket>/<env>/feature/<feature_run_id>/data_prep/<filename>`. `data_prep` is not a
+Feature step name; it is named after `notebooks/data_prep.py`, the notebook the stand-in
+imitates, so Training would have been coupled to a token that never described your
+pipeline. More generally, a path template makes Training's correctness depend on your
+layout: rename a step, or split calendar derivation into its own step, and Training breaks
+with a 404, at runtime, in someone else's code.
 
-- `data_prep` is not a Feature step name. It is named after `notebooks/data_prep.py`,
-  the notebook the stand-in imitates. Training would have been coupled to a token that
-  never described your pipeline.
-- A path template makes Training's correctness depend on your layout. Rename a step,
-  split calendar derivation into its own step, and Training breaks — with a 404, at
-  runtime, in someone else's code.
+So that design was dropped rather than handed over half-built. `config/train/infra.yaml`
+still carries **no** `feature_source` block and no filenames, and the rule is now
+mechanically checked: `grep -rn "data_prep" src/ scripts/` returns only the stand-in.
 
-So the derived-path design was dropped rather than handed to you half-built. Training
-ships with rung 1, and `config/train/infra.yaml` carries **no** `feature_source` block
-and no filenames.
-
-### The design we recommend: a run-root outputs file
+### The design: a run-root outputs file
 
 Feature writes one small file per run, at the **run root**:
 
@@ -146,79 +115,115 @@ Feature writes one small file per run, at the **run root**:
 gs://<bucket>/<env>/feature/<feature_run_id>/run_outputs.json
 ```
 
-Training constructs that one path from `<bucket>`, `<env>`, `feature`, and the
-`feature_run_id` it was given, reads it, and takes the URIs by name. It learns no step
-name and no filename. Four properties make this work, and each one was a mistake we
-made first:
+Training builds that one path from `<bucket>`, `<env>`, `feature` and the `feature_run_id`
+it was given, reads it, and takes the URIs by name. It learns no step name and no filename.
+Four properties make this work, and each was a mistake we made first:
 
-1. **It is written as the pipeline's final act, never at step 1.** A URI stamped by the
-   first step is a *promise*, not a record: if a later step fails, the file names an
-   object that does not exist, and a consumer gets a dangling pointer that looks
-   authoritative. Written last, it is a record.
-1. **Its presence is the completion signal.** Absent means the run did not finish.
-   Which means a pipeline that completes must write it **even when it has nothing to
-   declare** — otherwise absence is ambiguous between *failed* and *nothing to say*.
-1. **It sits at the run root, not inside a step directory.** Put it under a step and it
-   inherits the problem it exists to solve: you would need the step name to find the
-   file whose job is telling you the step name.
-1. **It carries its own `feature_run_id`.** Training compares that against the id it
-   was given, which catches a file copied between run directories or a wrong id passed.
+1. **Written as the pipeline's final act, never at step 1.** A URI stamped by the first
+   step is a *promise*, not a record: if a later step fails, the file names an object that
+   does not exist and the consumer gets an authoritative-looking dangling pointer.
+1. **Its presence is the completion signal.** Absent means the run did not finish, so a
+   pipeline that completes must write it **even with nothing to declare**, or absence is
+   ambiguous between *failed* and *nothing to say*.
+1. **At the run root, not inside a step directory.** Under a step it inherits the problem
+   it exists to solve: you would need the step name to find the file whose job is telling
+   you the step name.
+1. **It carries its own `feature_run_id`.** Training compares that against the id it was
+   given, catching a file copied between run directories or a wrong id passed.
 
-Keys should be role names — `panel_uri`, `calendar_uri` — matching what
-`TrainRunIdentity` already calls them. **The schema is yours to choose**; if you define
-it as a pydantic model, `src/<project_package_name>/schemas/run_identity.py` is the
-pattern to follow, since a file read back across a pipeline boundary is an input
-contract.
+Properties 1 and 2 work only together. Training reports a missing manifest as *this run did
+not complete*, never as a missing object, and that reading is valid only if the file really
+is written last.
+
+### The schema, as chosen
+
+The schema was yours to choose and you chose it. What ships is recorded here so both sides
+have one statement of it. `src/<project_package_name>/schemas/run_outputs.py` is the same
+contract as a typed model, and is the authority if the two ever disagree.
+
+| key                                              | type                        | read by Training                            |
+| ------------------------------------------------ | --------------------------- | ------------------------------------------- |
+| `feature_run_id`                                 | string                      | guard, compared against the id it was given |
+| `published.panel_uri`                            | `gs://` string              | **load-bearing**                            |
+| `published.calendar_uri`                         | `gs://` string              | **load-bearing**                            |
+| `env`                                            | string                      | guard, compared when present                |
+| `git_hash`                                       | string, 7 characters        | no                                          |
+| `completed_at`                                   | ISO 8601 string with offset | no                                          |
+| `panel.rows` · `panel.series`                    | int                         | no                                          |
+| `panel.first_ds` · `panel.last_ds`               | date string                 | no                                          |
+| `panel.series_admitted` · `panel.series_dropped` | int                         | no                                          |
+| `panel.exogenous_columns`                        | list of strings             | no                                          |
+
+The keys under `published` are role names, matching what `TrainRunIdentity` already calls
+them. `env` was volunteered rather than asked for, and earns its place as a second
+copy-detector.
+
+**What Training reads, and what it merely tolerates.** Only the two load-bearing keys and
+the two guards are typed. Everything else is opaque and unvalidated, and unknown keys are
+ignored at both levels. **Adding a key is always safe.** The only change that breaks
+Training is renaming or removing something under `published`.
+
+**Two departures from the design above.**
+
+1. **No `sql_sha256`.** `FeatureRunIdentity` declares it and nothing writes it, so the
+   query that produced a run's data is captured nowhere. `source_query` is modeling
+   configuration because *a different query means different data means different numbers*,
+   which makes the query hash the field that says whether two Feature runs are comparable.
+   Still owed, and yours to add, as one field here rather than a second file.
+1. **A `panel` statistics block** this design never anticipated, and a real improvement.
+   Training reads nothing under it, ever, and types the whole block opaque rather than as a
+   mapping: a consumer comparing `exogenous_columns` against an expected list would turn
+   adding a feature to Feature into a failure in a Training step that never reads it.
+
+### One field asked for, with one rule
+
+`schema_version` is not in the file today. It is the single addition this project asks for,
+with one sentence scoping when it moves:
+
+> Bump when any key under `published` is added, removed or renamed. Changes to the `panel`
+> block do not need a bump.
+
+The narrow scope is what makes it cheap: no bump for statistics changes, and it protects
+exactly the keys resolution depends on. Training treats it as a diagnostic, never a gate.
+An unrecognized value warns and proceeds; only a missing load-bearing key fails, so the
+reader works whether or not the field ever arrives.
 
 ### Where this fits the placement rule
 
-The convention that decides where any run artifact goes:
-
 > A file belongs at the **run root** iff a reader **outside this pipeline** must find it
-> with only `<bucket>`, `<env>`, `<slice>`, and `<run_id>`. Everything else lives in the
+> with only `<bucket>`, `<env>`, `<slice>` and `<run_id>`. Everything else lives in the
 > directory of the step that produced it.
 
 `run_outputs.json` qualifies: its reader is the next pipeline, which knows only the
-`feature_run_id` it was handed.
-
-`run_identity.json` qualifies too, and Training already writes it this way:
+`feature_run_id` it was handed. `run_identity.json` qualifies too, and Training already
+writes it that way:
 
 ```
 gs://<bucket>/<env>/train/<train_run_id>/run_identity.json
 gs://<bucket>/<env>/train/<train_run_id>/compose_configs/   the first step's own outputs
 ```
 
-Its outside reader is the submission script, which compares a run about to be resubmitted
-against the record of the last one and knows only the bucket, env, slice and run id. Note
-that the rule is about **readers, not content**: this file was always run-level, and it
-belonged in the step directory for as long as its only readers were downstream steps
-receiving it as an orchestrator artifact. Gaining one outside reader is what moved it.
-
-Note this means `run_identity.json` and `run_outputs.json` are **different files with
-different jobs**: identity is what a run *is* and what it *read*, true at step 1;
-outputs are what it *produced*, true only at the end. Do not merge them — a failed run
+The rule is about **readers, not content**. `run_identity.json` was always run-level and
+belonged in the step directory for as long as its only readers were downstream steps;
+gaining one outside reader, the submission script, is what moved it. The two files still
+have **different jobs**: identity is what a run *is* and what it *read*, true at step 1;
+outputs are what it *produced*, true only at the end. Do not merge them, since a failed run
 should still record its identity.
 
 ### Rung 3, if you also publish a pointer
 
 Rung 3 is a `_latest.json` that Feature rewrites after each successful run, naming its
-newest `feature_run_id`. It serves the case where **nobody knows an id** — a scheduled
-Training run not chained to a specific Feature run, or a developer who wants whatever is
-current. It is unbuilt because it needs a commitment from Feature, not from Training.
+newest `feature_run_id`, at a fixed non-run-scoped path such as
+`gs://<bucket>/<env>/feature/_latest.json`. It serves the case where **nobody knows an
+id**: a scheduled Training run not chained to a specific Feature run, or a developer who
+wants whatever is current.
 
-It must live at a fixed, non-run-scoped path — something like
-`gs://<bucket>/<env>/feature/_latest.json`.
+It is deferred pending your commitment, not because it could not be built. The old
+objection, that a pointer and the artifacts it points at cannot share a path convention,
+does not apply under the outputs-file design: the pointer names only
+`{"feature_run_id": "…"}` and no artifact at all.
 
-An earlier draft of `config/train/infra.yaml` carried `pointer_filename: _latest.json`
-inside `feature_source`, and it was removed on the grounds that a pointer and the
-artifacts it points at cannot share a path convention, since that convention is exactly
-what the pointer shortcuts. **Under the outputs-file design that objection no longer
-applies**: the pointer names only `{"feature_run_id": "…"}` and no artifact at all, so it
-shares no convention with anything. Rung 3 is still deferred — but pending your
-commitment, not because it could not be built.
-
-One property worth preserving: a pointer is mutable, and it would be the only mutable
-object in a storage layout that is otherwise immutable by construction. Runs stay
-reproducible anyway, because whatever resolution produces is stamped into
-`run_identity.json` as `panel_uri`, `calendar_uri`, and `feature_run_id` — the run
-records what it read, not how it found it.
+One property worth preserving: a pointer is mutable, and would be the only mutable object
+in a layout that is otherwise immutable by construction. Runs stay reproducible anyway,
+because whatever resolution produces is stamped into `run_identity.json` as `panel_uri`,
+`calendar_uri` and `feature_run_id`. A run records what it read, not how it found it.

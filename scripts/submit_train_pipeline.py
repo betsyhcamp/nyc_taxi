@@ -14,6 +14,7 @@ from google.cloud import aiplatform
 
 from fcstnyctaxi.lib.config.bindings import environment_bindings, train_infra_bindings
 from fcstnyctaxi.lib.config.composition import compose_config
+from fcstnyctaxi.lib.run_outputs import resolve_feature_artifacts
 from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
 from fcstnyctaxi.lib.utils import (
     generate_run_id,
@@ -58,18 +59,20 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--feature-run-id",
         required=True,
-        help="The Feature run that produced the two artifacts, checked against "
+        help="The Feature run both artifact URIs resolve from, checked against "
         "the feature_run_id column in both.",
     )
     parser.add_argument(
         "--panel-uri",
-        required=True,
-        help="gs:// URI of the actuals, as publish_feature_stand_in.py prints it.",
+        default=None,
+        help="Override the actuals URI --feature-run-id resolves to; requires "
+        "--calendar-uri.",
     )
     parser.add_argument(
         "--calendar-uri",
-        required=True,
-        help="gs:// URI of the fiscal calendar, from the same Feature run.",
+        default=None,
+        help="Override the fiscal calendar URI --feature-run-id resolves to; "
+        "requires --panel-uri.",
     )
     parser.add_argument(
         "--run-id",
@@ -117,11 +120,12 @@ def main() -> None:
     Raises:
         RuntimeError: If FCST_TRAIN_SERVICE_ACCOUNT is unset or blank.
         ValueError: If either run id is not path-safe, if `--env` has no
-            `environments/<env>.yaml`, or on any composition failure.
+            `environments/<env>.yaml`, if exactly one URI override was given, if
+            the Feature run published no manifest, or on any composition failure.
         FileNotFoundError: If `--template-path` names no file.
+        ValidationError: If an override URI is malformed.
     """
-    # Never override=True: the task environment sets FCST_TRAIN_IMAGE before the
-    # interpreter starts, and a .env must not become a second source.
+    # No override=True: .env must not outrank the FCST_TRAIN_IMAGE the task env sets.
     load_dotenv()
     logging.Formatter.converter = time.gmtime
     logging.basicConfig(
@@ -139,18 +143,14 @@ def main() -> None:
             "submit as. Set it in .env or export it; see .env.example."
         )
 
-    # Both are argv, so both are checked. Only --run-id becomes a path; the
-    # other is checked so the two flags accept one vocabulary.
+    # Only --run-id becomes a path; the other is checked for one vocabulary.
     run_id = generate_run_id() if args.run_id is None else args.run_id
     require_path_safe_run_id(args.feature_run_id, "--feature-run-id")
     require_path_safe_run_id(run_id, "--run-id")
 
     config_dir = get_project_root_dir() / "config"
-    # First, because it carries the --env guard: an unknown selector names the
-    # available ones rather than surfacing as a missing fragment below.
+    # First, for the --env guard: an unknown selector names the available ones.
     run_prefix = resolve_run_prefix(config_dir, args.env, "train", run_id)
-    # EnvironmentConfig composed a second time, deliberately: the alternative is
-    # exposing the private prefix builder and losing one authority on layout.
     environment = cast(
         EnvironmentConfig,
         compose_config(config_dir, environment_bindings(args.env)).config,
@@ -159,12 +159,20 @@ def main() -> None:
         TrainInfraConfig, compose_config(config_dir, train_infra_bindings()).config
     )
 
-    # Also the missing-template guard: this raises FileNotFoundError, and
-    # PipelineJob refuses the path too. No third check.
+    # Also the missing-template guard, and PipelineJob refuses the path too.
     template = Path(args.template_path)
     template_bytes = template.read_bytes()
     images = _executor_images(yaml.safe_load(template_bytes))
     enable_caching = not args.no_caching
+
+    # Below the template read, so a missing manifest cannot mask a missing template.
+    artifacts = resolve_feature_artifacts(
+        config_dir=config_dir,
+        env=args.env,
+        feature_run_id=args.feature_run_id,
+        panel_uri=args.panel_uri,
+        calendar_uri=args.calendar_uri,
+    )
 
     logger.info(
         "submitting: template=%s sha256=%s mtime=%s images=%s run_prefix=%s "
@@ -197,8 +205,8 @@ def main() -> None:
             "env": args.env,
             "train_run_id": run_id,
             "feature_run_id": args.feature_run_id,
-            "panel_uri": args.panel_uri,
-            "calendar_uri": args.calendar_uri,
+            "panel_uri": artifacts.panel_uri,
+            "calendar_uri": artifacts.calendar_uri,
         },
         enable_caching=enable_caching,
     )

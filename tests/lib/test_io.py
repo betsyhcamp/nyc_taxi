@@ -1,6 +1,5 @@
 from pathlib import Path
 
-import fsspec
 import pytest
 from fsspec.implementations.local import LocalFileSystem
 
@@ -8,6 +7,7 @@ from fcstnyctaxi.lib.io import (
     build_run_scoped_uri,
     download_from_gcs,
     prepare_sql,
+    read_text_from_gcs,
     sync_to_gcs,
     upload_to_gcs,
     write_text_to_gcs,
@@ -30,26 +30,6 @@ def sql_file_with_params(tmp_path: Path) -> Path:
     path = tmp_path / "query_with_params.sql"
     path.write_text("SELECT * FROM `proj.schema.table` WHERE year = {{ year }}")
     return path
-
-
-@pytest.fixture
-def fake_gcs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Resolve gs:// URIs onto a LocalFileSystem under tmp_path; return its root.
-
-    Runs the real fsspec calls in CI with no credentials. Two details are
-    load-bearing: auto_mkdir=True is GCS's implicit-parents behaviour, and the path
-    is built by string substitution because _strip_protocol strips the trailing "/"
-    that marks a prefix rather than an object name.
-    """
-    remote_root = tmp_path / "remote"
-    remote_root.mkdir()
-    fs = LocalFileSystem(auto_mkdir=True)
-
-    def _fake_url_to_fs(url: str, **kwargs: object) -> tuple[LocalFileSystem, str]:
-        return fs, url.replace("gs://", f"{remote_root}/", 1)
-
-    monkeypatch.setattr("fsspec.url_to_fs", _fake_url_to_fs)
-    return remote_root
 
 
 @pytest.fixture
@@ -142,18 +122,62 @@ def test_build_run_scoped_id_constructs_expected_string() -> None:
 # ================================================
 
 
-def test_write_text_to_gcs_writes_text_at_uri() -> None:
-    """Test that text file can be written to & read from fsspec memory system"""
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "s3://BUCKET/dev/train/RUNID/query.sql",
+        "file:///tmp/query.sql",
+        "/tmp/query.sql",
+    ],
+)
+def test_write_text_to_gcs_rejects_non_gcs_uri(uri: str) -> None:
+    """Unguarded, a bare path resolves to LocalFileSystem and the write succeeds."""
+    with pytest.raises(ValueError, match="must be a gs://"):
+        write_text_to_gcs("SELECT 1", uri)
 
-    uri = "memory://text_write_to_gcs/file.sql"
 
-    write_text_to_gcs("SELECT 1", uri)
+def test_write_text_to_gcs_writes_utf8_text_at_the_uri(fake_gcs: Path) -> None:
+    """Replaces the memory:// round trip the scheme guard invalidates."""
+    write_text_to_gcs("SELECT 'café' AS x", "gs://BUCKET/dev/train/RUNID/query.sql")
 
-    fs, path = fsspec.url_to_fs(uri)
-    with fs.open(path, "r") as f:
-        text = f.read()
+    landed = fake_gcs / "BUCKET" / "dev" / "train" / "RUNID" / "query.sql"
+    assert landed.read_text(encoding="utf-8") == "SELECT 'café' AS x"
 
-    assert text == "SELECT 1"
+
+# ================================================
+# read_text_from_gcs tests
+# ================================================
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "s3://BUCKET/dev/train/RUNID/query.sql",
+        "file:///tmp/query.sql",
+        "/tmp/query.sql",
+    ],
+)
+def test_read_text_from_gcs_rejects_non_gcs_uri(uri: str) -> None:
+    """Unguarded, a bare path reads a local file and reports it as a GCS object."""
+    with pytest.raises(ValueError, match="must be a gs://"):
+        read_text_from_gcs(uri)
+
+
+def test_read_text_from_gcs_round_trips_what_the_writer_wrote(fake_gcs: Path) -> None:
+    """The pair is documented as a mirror, so it has to survive its own round trip."""
+    uri = "gs://BUCKET/dev/feature/RUNID/run_outputs.json"
+    write_text_to_gcs("SELECT 'café' AS x", uri)
+
+    assert read_text_from_gcs(uri) == "SELECT 'café' AS x"
+
+
+def test_read_text_from_gcs_raises_file_not_found_for_a_missing_object(
+    fake_gcs: Path,
+) -> None:
+    """read_feature_run_outputs converts exactly this into a completion failure, so
+    a different exception type would slip past its except clause."""
+    with pytest.raises(FileNotFoundError):
+        read_text_from_gcs("gs://BUCKET/dev/feature/RUNID/run_outputs.json")
 
 
 # ================================================
