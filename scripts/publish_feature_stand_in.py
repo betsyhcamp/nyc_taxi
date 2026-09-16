@@ -4,7 +4,7 @@ The Training pipeline needs a panel and a fiscal calendar carrying
 `feature_run_id` at run-scoped paths, and the Feature pipeline that will write
 them does not exist yet. This reads the two artifacts `notebooks/data_prep.py`
 already wrote, adds the column, writes them under `resolve_run_prefix`'s
-convention, and prints the flags the local training runner takes.
+convention, and prints the `--feature-run-id` both training callers resolve from.
 
 Disposable by construction: delete it the day the Feature pipeline publishes
 these artifacts.
@@ -77,7 +77,7 @@ def _with_lineage_column(frame: pd.DataFrame, feature_run_id: str) -> pd.DataFra
 
 
 def main() -> None:
-    """Republish both artifacts under one feature run id, then print the flags.
+    """Republish both artifacts under one feature run id, then print that id.
 
     Raises:
         ValueError: If `--env` has no `environments/<env>.yaml`, if
@@ -125,15 +125,14 @@ def main() -> None:
     )
     write_text_to_gcs(
         outputs.model_dump_json(indent=2, exclude_none=True),
-        # EnvironmentConfig composed a second time, as the submitter already does
-        # deliberately: the alternative is exposing the private prefix builder and
-        # losing one authority on layout.
         resolve_run_outputs_uri(config_dir, args.env, "feature", feature_run_id),
     )
 
-    print(f"--feature-run-id {feature_run_id} \\")
-    print(f"--panel-uri {panel_uri} \\")
-    print(f"--calendar-uri {calendar_uri}")
+    # One pasteable line, so resolution is the path every run takes by default.
+    print(f"--feature-run-id {feature_run_id}")
+    print("\n# override, normally unnecessary:")
+    print(f"#   --panel-uri {panel_uri}")
+    print(f"#   --calendar-uri {calendar_uri}")
 
 
 if __name__ == "__main__":

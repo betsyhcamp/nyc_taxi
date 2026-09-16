@@ -148,7 +148,7 @@ Compiling and submitting are separate programs on purpose. The image reference i
 - `bash scripts/setup_train_iam.sh` run once per project. It creates the `fcst-ml-containers` repository, which Artifact Registry does not auto-create on push, and the Training runner service account.
 - `.env` filled in from `.env.example`, with `FCST_TRAIN_SERVICE_ACCOUNT` set. The submitter reads it with `python-dotenv`, so there is no sourcing step.
 - Working tree clean, so image tags do not include `-dirty`
-- A published Feature run. `uv run python scripts/publish_feature_stand_in.py --env dev` prints the `--feature-run-id`, `--panel-uri` and `--calendar-uri` values the submit step needs.
+- A published Feature run. `uv run python scripts/publish_feature_stand_in.py --env dev` prints the `--feature-run-id` the submit step needs, with `--panel-uri` and `--calendar-uri` commented below it as optional overrides.
 
 **Step 1. Build and verify the image:**
 
@@ -185,10 +185,10 @@ This task deliberately does not build. `GIT_HASH` is recomputed on every invocat
 ```{bash}
 task compile-submit-train IMAGE_REF=<digest from step 2> -- \
   --env dev \
-  --feature-run-id <id from publish_feature_stand_in.py> \
-  --panel-uri gs://... \
-  --calendar-uri gs://...
+  --feature-run-id <id from publish_feature_stand_in.py>
 ```
+
+Both artifact URIs are resolved from `--feature-run-id`, by reading the `run_outputs.json` the Feature run wrote at its run root. Pass `--panel-uri` and `--calendar-uri` together to override that; neither is accepted alone.
 
 `compile-submit-train` compiles a fresh template into `build/fcst-train-pipeline.yaml`, then appends its own `--template-path` after your arguments. Argparse is last-wins, so the run always submits what it just compiled.
 
