@@ -24,6 +24,7 @@ from fcstnyctaxi.lib.io import (
     sync_to_gcs,
     upload_to_gcs,
 )
+from fcstnyctaxi.lib.run_outputs import resolve_feature_artifacts
 from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
 from fcstnyctaxi.lib.utils import (
     generate_run_id,
@@ -56,18 +57,20 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--feature-run-id",
         required=True,
-        help="The Feature run that produced the two artifacts, checked against "
+        help="The Feature run both artifact URIs resolve from, checked against "
         "the feature_run_id column in both.",
     )
     parser.add_argument(
         "--panel-uri",
-        required=True,
-        help="gs:// URI of the actuals, as publish_feature_stand_in.py prints it.",
+        default=None,
+        help="Override the actuals URI --feature-run-id resolves to; requires "
+        "--calendar-uri.",
     )
     parser.add_argument(
         "--calendar-uri",
-        required=True,
-        help="gs:// URI of the fiscal calendar, from the same Feature run.",
+        default=None,
+        help="Override the fiscal calendar URI --feature-run-id resolves to; "
+        "requires --panel-uri.",
     )
     parser.add_argument(
         "--run-id",
@@ -108,13 +111,14 @@ def main() -> None:
     """Compose one Training run's configs and publish them to its run prefix.
 
     Raises:
-        ValueError: If either run id is not path-safe, if an input URI cannot be
-            mirrored to a distinct local path, if `--env` has no
+        ValueError: If either run id is not path-safe, if exactly one URI override
+            was given, if the Feature run published no manifest, if an input URI
+            cannot be mirrored to a distinct local path, if `--env` has no
             `environments/<env>.yaml`, on a failed lineage check, or on any
             composition failure.
         RuntimeError: If the git hash cannot be determined, since a run whose
             commit is unknown cannot be reproduced from its own record.
-        ValidationError: If an identity field is malformed.
+        ValidationError: If an identity field or an override URI is malformed.
     """
     logging.Formatter.converter = time.gmtime
     logging.basicConfig(
@@ -124,8 +128,7 @@ def main() -> None:
     )
     args = _parse_args()
 
-    # Both ids are checked here because both are argv. Only --run-id becomes a
-    # path; --feature-run-id is checked so the two flags accept one vocabulary.
+    # Only --run-id becomes a path; the other is checked for one vocabulary.
     run_id = generate_run_id() if args.run_id is None else args.run_id
     require_path_safe_run_id(args.feature_run_id, "--feature-run-id")
     require_path_safe_run_id(run_id, "--run-id")
@@ -141,10 +144,20 @@ def main() -> None:
 
     mirror_root = args.scratch_dir
     out_dir = _mirror_path(step_uri, mirror_root)
-    # Resolved before the clear below, so a URI the mirror rejects cannot cost
-    # the previous attempt's output.
-    panel_path = _mirror_path(args.panel_uri, mirror_root)
-    calendar_path = _mirror_path(args.calendar_uri, mirror_root)
+
+    # Called for the raise. Above the rmtree, and above the resolve's network read.
+    compose_train_static_configs(config_dir, args.env)
+
+    artifacts = resolve_feature_artifacts(
+        config_dir=config_dir,
+        env=args.env,
+        feature_run_id=args.feature_run_id,
+        panel_uri=args.panel_uri,
+        calendar_uri=args.calendar_uri,
+    )
+    # Before the clear below, so a rejected URI cannot cost the previous output.
+    panel_path = _mirror_path(artifacts.panel_uri, mirror_root)
+    calendar_path = _mirror_path(artifacts.calendar_uri, mirror_root)
 
     logger.info(
         "compose_configs starting: run_id=%s feature_run_id=%s out_dir=%s uri=%s",
@@ -154,10 +167,6 @@ def main() -> None:
         step_uri,
     )
 
-    # Validate every Training destination before the rmtree below destroys the previous
-    # attempt's output. This call raises, not to create a value the runner uses.
-    compose_train_static_configs(config_dir, args.env)
-
     # Scratch persists, so a retry under the same --run-id finds stale files.
     # sync_to_gcs matches the prefix to out_dir; it does not clean out_dir.
     if out_dir.exists():
@@ -165,12 +174,12 @@ def main() -> None:
     out_dir.mkdir(parents=True)
 
     panel = SourcedPath(
-        path=download_from_gcs(args.panel_uri, panel_path.parent),
-        uri=args.panel_uri,
+        path=download_from_gcs(artifacts.panel_uri, panel_path.parent),
+        uri=artifacts.panel_uri,
     )
     calendar = SourcedPath(
-        path=download_from_gcs(args.calendar_uri, calendar_path.parent),
-        uri=args.calendar_uri,
+        path=download_from_gcs(artifacts.calendar_uri, calendar_path.parent),
+        uri=artifacts.calendar_uri,
     )
 
     summary = compose_configs_impl(

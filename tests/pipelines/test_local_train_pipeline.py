@@ -1,9 +1,11 @@
 """Tests for the local Training runner's ordering guarantees.
 
-`main()` runs end to end against a config tree copied under `tmp_path`, with only
-`require_git_hash` patched: git cannot answer for a directory that is not a repo.
+`main()` runs end to end against a config tree copied under `tmp_path`, with
+everything needing a repo, a bucket or real parquet patched out, so what is left
+to assert is the order of the local steps.
 """
 
+import logging
 import shutil
 import sys
 from pathlib import Path
@@ -12,14 +14,38 @@ import pytest
 from pytest_mock import MockerFixture
 
 from fcstnyctaxi.core.train.compose_configs_impl import ComposeConfigsSummary
+from fcstnyctaxi.lib import run_outputs
 from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.pipelines import local_train_pipeline
+from fcstnyctaxi.schemas.run_outputs import FeatureArtifacts, FeatureRunOutputs
 
 ENV = "dev"
 RUN_ID = "t-20260913T000000000000Z"
 FEATURE_RUN_ID = "f-20260913T000000000000Z"
 PREVIOUS_OUTPUT = "the previous attempt's output"
+# A step segment Training never constructs, so an assertion on these proves the
+# URIs came from the manifest rather than from a path this runner guessed.
+RESOLVED_PANEL_URI = f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/step/panel.parquet"
+RESOLVED_CALENDAR_URI = (
+    f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/step/calendar.parquet"
+)
+# Through the shared model, which is what makes writer and reader agree on shape.
+RESOLVED_MANIFEST = FeatureRunOutputs(
+    feature_run_id=FEATURE_RUN_ID,
+    env=ENV,
+    published=FeatureArtifacts(
+        panel_uri=RESOLVED_PANEL_URI, calendar_uri=RESOLVED_CALENDAR_URI
+    ),
+).model_dump_json()
+COMPOSE_SUMMARY = ComposeConfigsSummary(
+    n_origins=1,
+    first_origin="2025-05-18",
+    last_origin="2025-05-18",
+    last_complete_actual_month=202505,
+    start_months=[202505],
+    model_names=["naive"],
+)
 
 
 @pytest.fixture
@@ -42,16 +68,22 @@ def test_mirror_path_rejects_a_non_gcs_uri(tmp_path: Path, uri: str) -> None:
         local_train_pipeline._mirror_path(uri, tmp_path)
 
 
-def test_a_malformed_train_config_raises_before_out_dir_is_cleared(
+def test_a_malformed_train_config_raises_before_the_resolve_and_the_clear(
     broken_config_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     mocker: MockerFixture,
 ) -> None:
-    """Without the explicit preflight the impl reads the configs after the rmtree."""
+    """Both orderings at once: below the resolve a local config error reports as a
+    network error, and below the rmtree the impl reads the configs too late."""
     monkeypatch.setenv("PROJECT_ROOT", str(broken_config_root))
     mocker.patch.object(
         local_train_pipeline, "require_git_hash", return_value="abc1234"
+    )
+    # No URI flags below, so this runs unless the preflight raises first, and its
+    # message is what the assertion distinguishes the mis-ordered case by.
+    mocker.patch.object(
+        run_outputs, "read_text_from_gcs", side_effect=FileNotFoundError
     )
     rmtree = mocker.spy(local_train_pipeline.shutil, "rmtree")
 
@@ -72,10 +104,6 @@ def test_a_malformed_train_config_raises_before_out_dir_is_cleared(
             ENV,
             "--feature-run-id",
             FEATURE_RUN_ID,
-            "--panel-uri",
-            f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/data_prep/time_series.parquet",
-            "--calendar-uri",
-            f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/data_prep/fiscal_calendar.parquet",
             "--run-id",
             RUN_ID,
             "--scratch-dir",
@@ -106,16 +134,7 @@ def test_the_identity_is_published_before_the_step_and_manifest_marks_it_complet
         local_train_pipeline, "download_from_gcs", side_effect=lambda uri, d: d / "f"
     )
     mocker.patch.object(
-        local_train_pipeline,
-        "compose_configs_impl",
-        return_value=ComposeConfigsSummary(
-            n_origins=1,
-            first_origin="2025-05-18",
-            last_origin="2025-05-18",
-            last_complete_actual_month=202505,
-            start_months=[202505],
-            model_names=["naive"],
-        ),
+        local_train_pipeline, "compose_configs_impl", return_value=COMPOSE_SUMMARY
     )
     # One manager, so the assertion is about order between the two calls rather
     # than each in isolation.
@@ -154,3 +173,58 @@ def test_the_identity_is_published_before_the_step_and_manifest_marks_it_complet
     assert [call[0] for call in publishes.mock_calls] == ["upload", "sync"]
     assert publishes.mock_calls[0].args[1] == f"{run_prefix}run_identity.json"
     assert publishes.mock_calls[1].kwargs["completion_marker"] == "manifest.json"
+
+
+def test_the_local_runner_resolves_both_uris_from_the_feature_run_id_alone(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test the drift the flag-name mirror test cannot see: this caller could still
+    require the overrides while both parsers declare the same flag names."""
+    root = tmp_path / "project"
+    shutil.copytree(get_project_root_dir() / "config", root / "config")
+    monkeypatch.setenv("PROJECT_ROOT", str(root))
+    mocker.patch.object(
+        local_train_pipeline, "require_git_hash", return_value="abc1234"
+    )
+    downloads = mocker.patch.object(
+        local_train_pipeline, "download_from_gcs", side_effect=lambda uri, d: d / "f"
+    )
+    mocker.patch.object(
+        local_train_pipeline, "compose_configs_impl", return_value=COMPOSE_SUMMARY
+    )
+    mocker.patch.object(local_train_pipeline, "upload_to_gcs")
+    mocker.patch.object(local_train_pipeline, "sync_to_gcs", return_value=(7, 0))
+    # Patched on the importing module, which imports at module scope. Picked wrong,
+    # the failure is a credentials error in CI rather than an assertion failure.
+    mocker.patch.object(
+        run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "local_train_pipeline",
+            "--env",
+            ENV,
+            "--feature-run-id",
+            FEATURE_RUN_ID,
+            "--run-id",
+            RUN_ID,
+            "--scratch-dir",
+            str(tmp_path / "scratch"),
+        ],
+    )
+
+    with caplog.at_level(logging.INFO):
+        local_train_pipeline.main()
+
+    assert [call.args[0] for call in downloads.call_args_list] == [
+        RESOLVED_PANEL_URI,
+        RESOLVED_CALENDAR_URI,
+    ]
+    # The evidence the override flags are to be retired on, from this caller.
+    assert "source=resolved" in caplog.text

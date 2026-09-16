@@ -21,6 +21,7 @@ import yaml
 from kfp import compiler
 from pytest_mock import MockerFixture
 
+from fcstnyctaxi.lib import run_outputs
 from fcstnyctaxi.lib.config.bindings import (
     environment_bindings,
     train_infra_bindings,
@@ -31,6 +32,7 @@ from fcstnyctaxi.pipelines import local_train_pipeline
 from fcstnyctaxi.pipelines.train_pipeline import train_pipeline
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import TrainInfraConfig
+from fcstnyctaxi.schemas.run_outputs import FeatureArtifacts, FeatureRunOutputs
 from scripts import submit_train_pipeline
 
 ENV = "dev"
@@ -40,6 +42,20 @@ PANEL_URI = f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/data_prep/time_series.p
 CALENDAR_URI = (
     f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/data_prep/fiscal_calendar.parquet"
 )
+# Deliberately not the two URIs above: a caller that ignored the manifest would
+# still produce those, and the resolve assertions would not notice.
+RESOLVED_PANEL_URI = f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/step/panel.parquet"
+RESOLVED_CALENDAR_URI = (
+    f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/step/calendar.parquet"
+)
+# Through the shared model, which is what makes writer and reader agree on shape.
+RESOLVED_MANIFEST = FeatureRunOutputs(
+    feature_run_id=FEATURE_RUN_ID,
+    env=ENV,
+    published=FeatureArtifacts(
+        panel_uri=RESOLVED_PANEL_URI, calendar_uri=RESOLVED_CALENDAR_URI
+    ),
+).model_dump_json()
 SERVICE_ACCOUNT = "svc-train@nyc-taxi-ehc.iam.gserviceaccount.com"
 RESOURCE_NAME = "projects/123456789/locations/us-central1/pipelineJobs/fcst-train-x"
 
@@ -72,9 +88,12 @@ def importer_only_template(template: Path, tmp_path: Path) -> Path:
     return path
 
 
-def _argv(template: Path, overrides: dict[str, str] | None = None) -> list[str]:
-    """The flags a submission takes, with any value replaced by `overrides`."""
-    values = {
+def _argv(template: Path, overrides: dict[str, str | None] | None = None) -> list[str]:
+    """The flags a submission takes, with any value replaced by `overrides`.
+
+    A None override means the flag is absent, which no other spelling can express.
+    """
+    values: dict[str, str | None] = {
         "--template-path": str(template),
         "--env": ENV,
         "--feature-run-id": FEATURE_RUN_ID,
@@ -85,6 +104,9 @@ def _argv(template: Path, overrides: dict[str, str] | None = None) -> list[str]:
     values.update(overrides or {})
     argv = ["submit_train_pipeline"]
     for flag, value in values.items():
+        # Skipped at emission rather than popped, so flag order survives.
+        if value is None:
+            continue
         argv += [flag, value]
     return argv
 
@@ -317,6 +339,51 @@ def test_a_template_pinning_no_container_executors_warns_and_still_submits(
     assert len(warnings) == 1
     assert "zero container executors" in warnings[0].getMessage()
     vertex.PipelineJob.return_value.submit.assert_called_once()
+
+
+def test_the_submitter_resolves_both_uris_from_the_feature_run_id_alone(
+    template: Path,
+    vertex: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The mirror test below compares flag names, so it cannot see this drift."""
+    # Patched on the importing module, which imports at module scope.
+    mocker.patch.object(
+        run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
+    )
+    monkeypatch.setattr(
+        "sys.argv", _argv(template, {"--panel-uri": None, "--calendar-uri": None})
+    )
+
+    with caplog.at_level(logging.INFO):
+        submit_train_pipeline.main()
+
+    parameter_values = vertex.PipelineJob.call_args.kwargs["parameter_values"]
+    assert parameter_values["panel_uri"] == RESOLVED_PANEL_URI
+    assert parameter_values["calendar_uri"] == RESOLVED_CALENDAR_URI
+    # The evidence the override flags are to be retired on, from this caller.
+    assert "source=resolved" in caplog.text
+
+
+def test_a_missing_template_beats_a_manifest_read_failure(
+    vertex: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+) -> None:
+    """Above the template read, a missing manifest would mask the missing template."""
+    mocker.patch.object(
+        run_outputs, "read_text_from_gcs", side_effect=FileNotFoundError
+    )
+    missing = tmp_path / "never-compiled.yaml"
+    monkeypatch.setattr(
+        "sys.argv", _argv(missing, {"--panel-uri": None, "--calendar-uri": None})
+    )
+
+    with pytest.raises(FileNotFoundError, match=missing.name):
+        submit_train_pipeline.main()
 
 
 def test_domain_flags_mirror_the_local_runners() -> None:
