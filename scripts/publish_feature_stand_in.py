@@ -11,15 +11,19 @@ these artifacts.
 """
 
 import argparse
+from datetime import UTC, datetime
 
 import pandas as pd
+from tsbricks.blocks.metadata import get_git_hash
 
-from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
+from fcstnyctaxi.lib.io import write_text_to_gcs
+from fcstnyctaxi.lib.storage_layout import resolve_run_outputs_uri, resolve_run_prefix
 from fcstnyctaxi.lib.utils import (
     generate_run_id,
     get_project_root_dir,
     require_path_safe_run_id,
 )
+from fcstnyctaxi.schemas.run_outputs import FeatureArtifacts, FeatureRunOutputs
 
 # Hardcoded because they are the pre-convention locations this script migrates
 # away from, and they exist only under dev whatever --env says.
@@ -34,6 +38,10 @@ _PANEL_FILENAME = "time_series.parquet"
 _CALENDAR_FILENAME = "fiscal_calendar.parquet"
 
 _LINEAGE_COLUMN = "feature_run_id"
+
+# The version the reader expects. Written although the shipped producer file has
+# none: the stand-in imitates the contract being asked for, not today's gap.
+_SCHEMA_VERSION = "0.1.0"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -81,9 +89,8 @@ def main() -> None:
     )
     require_path_safe_run_id(feature_run_id, "--feature-run-id")
 
-    run_prefix = resolve_run_prefix(
-        get_project_root_dir() / "config", args.env, "feature", feature_run_id
-    )
+    config_dir = get_project_root_dir() / "config"
+    run_prefix = resolve_run_prefix(config_dir, args.env, "feature", feature_run_id)
     panel_uri = f"{run_prefix}{_STEP}/{_PANEL_FILENAME}"
     calendar_uri = f"{run_prefix}{_STEP}/{_CALENDAR_FILENAME}"
 
@@ -93,6 +100,36 @@ def main() -> None:
     )
     panel_df.to_parquet(panel_uri, index=False)
     calendar_df.to_parquet(calendar_uri, index=False)
+
+    # Written last, after both parquet files: its presence is what marks the run
+    # complete, so a URI stamped before the artifacts exist would be a promise.
+    outputs = FeatureRunOutputs(
+        schema_version=_SCHEMA_VERSION,
+        feature_run_id=feature_run_id,
+        env=args.env,
+        git_hash=get_git_hash(),
+        completed_at=datetime.now(UTC).isoformat(),
+        published=FeatureArtifacts(panel_uri=panel_uri, calendar_uri=calendar_uri),
+        # Computed, never hardcoded. No series_admitted, series_dropped or
+        # exogenous_columns: this script admits nothing and this panel has none.
+        panel={
+            "rows": len(panel_df),
+            "series": panel_df["unique_id"].nunique(),
+            # pd.Timestamp first: `ds` arrives as datetime64, object, or the
+            # `dbdate` extension dtype a BigQuery DATE becomes, and `.min()`
+            # returns a plain `datetime.date` for the latter two, which has
+            # no `.date()`.
+            "first_ds": str(pd.Timestamp(panel_df["ds"].min()).date()),
+            "last_ds": str(pd.Timestamp(panel_df["ds"].max()).date()),
+        },
+    )
+    write_text_to_gcs(
+        outputs.model_dump_json(indent=2, exclude_none=True),
+        # EnvironmentConfig composed a second time, as the submitter already does
+        # deliberately: the alternative is exposing the private prefix builder and
+        # losing one authority on layout.
+        resolve_run_outputs_uri(config_dir, args.env, "feature", feature_run_id),
+    )
 
     print(f"--feature-run-id {feature_run_id} \\")
     print(f"--panel-uri {panel_uri} \\")
