@@ -192,7 +192,7 @@ def test_exactly_one_uri_flag_is_refused(supplied: str) -> None:
         )
 
 
-def test_a_non_gcs_override_uri_is_refused(caplog: pytest.LogCaptureFixture) -> None:
+def test_a_non_gcs_override_uri_is_refused() -> None:
     """Nothing else checks a hand-typed override until download_from_gcs receives it."""
     with pytest.raises(ValidationError):
         resolve_feature_artifacts(
