@@ -37,13 +37,13 @@ forecasting = [
 ]
 
 train = [
-    # compose_configs needs only the common set: pandas + pyarrow (via tsbricks),
-    # pydantic, pyyaml (via kfp), tsbricks. Declared-and-empty is forced, not
-    # preferred: `uv sync --group train` errors outright on an undeclared group,
-    # so the alternative is putting model and forecasting dependencies into the
-    # build recipe instead of here. It grows when model fitting lands (xgboost)
-    # and when backtesting needs the forecasting stack (likely via
-    # {include-group = "forecasting"}).
+    # Explicit, not {include-group = "forecasting"}: that group is the experimentation
+    # stack (holidays, experimental_models/), so inheriting it would put every future
+    # experiment's dependency in the image. Duplicating its specifiers is safe, since
+    # uv.lock resolves one version per package.
+    "mlforecast==1.1.0",
+    "lightgbm>=4.7.0",
+    "statsforecast>=2.0.1",
 ]
 
 dev = [

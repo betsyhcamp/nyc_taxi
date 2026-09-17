@@ -148,14 +148,14 @@ tasks:
     requires:
       vars: [IMAGE]
     cmds:
-      # Real newlines, not `;`: `if c: raise X; print(y)` puts print inside the if.
-      # pyarrow is imported because undeclared; without the guard an empty loop passes.
+      # Probes shipped path that config/train/models/naive.yaml names. Spot check only.
       - |
         docker run --rm --platform linux/amd64 {{.IMAGE}} python -c '
         import os, pyarrow
         from fcstnyctaxi.runtime_paths import CONFIG_DIR
         from fcstnyctaxi.lib.config.bindings import available_environments
         from fcstnyctaxi.core.train.compose_configs_impl import compose_train_static_configs
+        from fcstnyctaxi.models import naive
         if not os.environ.get("FCST_GIT_HASH"):
             raise SystemExit("FCST_GIT_HASH is unset; rebuild with --build-arg GIT_HASH=...")
         envs = available_environments(CONFIG_DIR)
