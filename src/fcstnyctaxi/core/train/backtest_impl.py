@@ -3,12 +3,16 @@
 Near-verbatim: the port's only proof is a manual diff against the notebook.
 """
 
+import json
 import logging
+import shutil
 from collections import Counter
 from dataclasses import dataclass
-from typing import cast
+from pathlib import Path
+from typing import Any, cast
 
 import pandas as pd
+import yaml
 from tsbricks.backtesting import evaluate_metrics, generate_folds
 from tsbricks.backtesting.schema import AggregationConfig, BacktestConfig
 from tsbricks.runner import (
@@ -19,6 +23,10 @@ from tsbricks.runner import (
 )
 
 from fcstnyctaxi.lib.backtest_results import build_backtest_results, build_cv_results
+from fcstnyctaxi.lib.column_checks import (
+    require_matching_feature_run_id,
+    trim_to_allowlist,
+)
 from fcstnyctaxi.lib.monthly_aggregation import (
     attach_tier_and_weight,
     build_monthly_forecast_vs_actual,
@@ -31,7 +39,14 @@ from fcstnyctaxi.lib.period_utils import (
     compute_series_weights,
     normalized_origin_horizon_pairs,
 )
+from fcstnyctaxi.lib.storage_layout import composed_config_filename
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
+from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
+from fcstnyctaxi.schemas.run_outputs import (
+    CALENDAR_ALLOWED_COLUMNS,
+    CALENDAR_REQUIRED_COLUMNS,
+    PANEL_REQUIRED_COLUMNS,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -48,6 +63,15 @@ _RAW_CV_FORECAST_COLUMNS = [
     "fold_id",
 ]
 
+# BacktestOutputs field to sidecar file; the write loop and output_rows share it.
+_OUTPUT_FILENAMES = {
+    "monthly_series": "monthly_series.parquet",
+    "monthly_forecast_components": "monthly_forecast_components.parquet",
+    "metrics": "metrics.parquet",
+    "raw_cv_forecasts": "raw_cv_forecasts.parquet",
+}
+_MANIFEST_FILENAME = "backtest_manifest.json"
+
 
 @dataclass(frozen=True)
 class BacktestOutputs:
@@ -57,6 +81,33 @@ class BacktestOutputs:
     monthly_forecast_components: pd.DataFrame
     metrics: pd.DataFrame
     raw_cv_forecasts: pd.DataFrame
+
+
+@dataclass(frozen=True)
+class BacktestSummary:
+    """What this run backtested, for a wrapper that never opens the sidecar.
+
+    Carries `feature_run_id`, unlike `ComposeConfigsSummary`: that wrapper is handed
+    the id and this one is not, so the return value is its only source.
+    """
+
+    n_origins: int
+    first_origin: str
+    last_origin: str
+    n_series: int
+    feature_run_id: str
+    output_rows: dict[str, int]
+
+    def as_dict(self) -> dict[str, Any]:
+        """Coerce to JSON-safe primitives: a numpy scalar off a frame breaks KFP."""
+        return {
+            "n_origins": int(self.n_origins),
+            "first_origin": str(self.first_origin),
+            "last_origin": str(self.last_origin),
+            "n_series": int(self.n_series),
+            "feature_run_id": str(self.feature_run_id),
+            "output_rows": {name: int(rows) for name, rows in self.output_rows.items()},
+        }
 
 
 def compute_backtest_outputs(
@@ -113,15 +164,14 @@ def compute_backtest_outputs(
     )
     if repeated:
         raise ValueError(
-            f"forecast origins repeat {repeated}, so two folds would carry one "
-            "forecast_origin_date and every output file would key those rows twice."
+            f"forecast origins repeat {repeated}: two folds would share one "
+            "forecast_origin_date and double-key every output file."
         )
     if len(cv_folds) != len(origin_horizon_pairs):
         raise ValueError(
             f"fold count {len(cv_folds)} against {len(origin_horizon_pairs)} "
-            "origin/horizon pairs, which the loop indexes by fold position: more "
-            "folds raises IndexError mid-loop, fewer runs the whole backtest "
-            "against a prefix."
+            "origin/horizon pairs, indexed by fold position: more folds is an "
+            "IndexError mid-loop, fewer scores each fold against a prefix."
         )
 
     fraction_by_origin = calendar_df.set_index("ds")["origin_month_fraction_elapsed"]
@@ -215,8 +265,7 @@ def compute_backtest_outputs(
         sample = monthly_series_df.loc[duplicated, _MONTHLY_SERIES_KEYS].head(3)
         raise ValueError(
             f"monthly_series has {int(duplicated.sum())} duplicate key row(s), which "
-            "inflate every weighted sum in every score; first few: "
-            f"{sample.to_dict('records')}"
+            f"inflate every weighted sum: {sample.to_dict('records')}"
         )
 
     monthly_forecast_components_df = pd.concat(
@@ -256,8 +305,8 @@ def compute_backtest_outputs(
     unmapped = int(cv_forecasts_df["forecast_origin_date"].isna().sum())
     if unmapped:
         raise ValueError(
-            f"{unmapped} raw forecast row(s) carry a null forecast_origin_date: "
-            "fold_id_to_origin does not cover every fold in the forecasts."
+            f"{unmapped} raw forecast row(s) have a null forecast_origin_date: "
+            "fold_id_to_origin does not cover every fold."
         )
 
     # Explicit reindex: validate_sidecar asserts the first column is the origin.
@@ -269,3 +318,155 @@ def compute_backtest_outputs(
         metrics=backtest_results.cv.metrics,
         raw_cv_forecasts=cv_forecasts_df,
     )
+
+
+def _build_manifest(
+    model_name: str,
+    summary: BacktestSummary,
+    identity: TrainRunIdentity,
+    modeling: TrainModelingConfig,
+) -> dict[str, Any]:
+    """Explicit mapping from three single sources, so nothing here is counted twice.
+
+    The summary owns what was measured, the identity provenance, and `modeling` the
+    tiering and weighting that change every score and sit in no other sidecar file.
+    """
+    return {
+        "model_name": model_name,
+        "lineage": {
+            "train_run_id": identity.train_run_id,
+            "feature_run_id": identity.feature_run_id,
+            "git_hash": identity.git_hash,
+            "panel_uri": identity.panel_uri,
+            "calendar_uri": identity.calendar_uri,
+        },
+        "config": {
+            "tiering": modeling.tiering.model_dump(),
+            "weighting": modeling.weighting.model_dump(),
+        },
+        "origins": {
+            "n_origins": summary.n_origins,
+            "first_origin": summary.first_origin,
+            "last_origin": summary.last_origin,
+        },
+        "n_series": summary.n_series,
+        "output_rows": summary.output_rows,
+    }
+
+
+def backtest_impl(
+    *,
+    panel_path: Path,
+    calendar_path: Path,
+    compose_configs_dir: Path,
+    model_name: str,
+    out_dir: Path,
+) -> BacktestSummary:
+    """Back one model over one run's origins and write its eight-file sidecar.
+
+    Keyword-only: three adjacent `Path` parameters transpose without a type error, and
+    a swapped panel and calendar surfaces much later as a missing column. No provenance
+    scalars: reading `run_identity.json` makes a disagreeing parameter unrepresentable.
+    Every failure below raises before the first write, so a failure leaves no sidecar.
+
+    Args:
+        panel_path: The weekly actuals, stamped with a `feature_run_id`.
+        calendar_path: The fiscal calendar, same stamping.
+        compose_configs_dir: Holds this model's composed config and `modeling.yaml`,
+            with `run_identity.json` beside it.
+        model_name: Selects the composed config, and names `out_dir`.
+        out_dir: This model's sidecar directory, created if missing.
+
+    Raises:
+        ValueError: If `out_dir` is not this model's directory under that run root, if
+            `run_identity.json` is absent, or on a failed lineage or column check.
+        ValidationError: If a config or the identity fails to revalidate on read.
+
+    Returns:
+        BacktestSummary: What was backtested, for a wrapper or the local runner.
+    """
+    if out_dir.name != model_name:
+        raise ValueError(
+            f"out_dir {out_dir} must be named for its model {model_name!r}: the "
+            "directory name is what tells two models' sidecars apart."
+        )
+
+    identity_path = compose_configs_dir.parent / "run_identity.json"
+    if not identity_path.is_file():
+        raise ValueError(
+            f"No run_identity.json at {identity_path}: compose_configs writes it "
+            "beside its step directory, so that path is wrong or the step failed."
+        )
+    identity = TrainRunIdentity.model_validate_json(identity_path.read_text())
+
+    # Against the parsed id, not compose_configs_dir.parent as paths: the two arrive by
+    # different channels, so two spellings of one place would fire on correct wiring.
+    if out_dir.parent.parent.name != identity.train_run_id:
+        raise ValueError(
+            f"out_dir {out_dir} must sit under the run root "
+            f"{identity.train_run_id!r}: the manifest would name a run it is not under."
+        )
+
+    composed_config_path = compose_configs_dir / composed_config_filename(model_name)
+    cfg = BacktestConfig.model_validate(
+        yaml.safe_load(composed_config_path.read_text())
+    )
+    modeling = TrainModelingConfig.model_validate(
+        yaml.safe_load((compose_configs_dir / "modeling.yaml").read_text())
+    )
+
+    panel_df = pd.read_parquet(panel_path)
+    calendar_df = pd.read_parquet(calendar_path)
+    # Catches a DAG wiring a different panel here than compose_configs read.
+    require_matching_feature_run_id(panel_df, calendar_df, identity.feature_run_id)
+
+    # Before the snapshots: a moved upstream timestamp must not fail input equivalence.
+    panel_df = trim_to_allowlist(
+        panel_df, required=PANEL_REQUIRED_COLUMNS, frame_name="panel"
+    )
+    calendar_df = trim_to_allowlist(
+        calendar_df,
+        required=CALENDAR_REQUIRED_COLUMNS,
+        allowed=CALENDAR_ALLOWED_COLUMNS,
+        frame_name="calendar",
+    )
+
+    outputs = compute_backtest_outputs(
+        cfg=cfg, modeling=modeling, ts_df=panel_df, calendar_df=calendar_df
+    )
+
+    origins = sorted(
+        str(origin) for origin, _ in cfg.cross_validation.origin_horizon_pairs()
+    )
+    summary = BacktestSummary(
+        n_origins=len(origins),
+        first_origin=origins[0],
+        last_origin=origins[-1],
+        n_series=int(panel_df["unique_id"].nunique()),
+        feature_run_id=identity.feature_run_id,
+        output_rows={
+            filename: len(getattr(outputs, field))
+            for field, filename in _OUTPUT_FILENAMES.items()
+        },
+    )
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for field, filename in _OUTPUT_FILENAMES.items():
+        getattr(outputs, field).to_parquet(out_dir / filename, index=False)
+    calendar_df.to_parquet(out_dir / "fiscal_calendar.parquet", index=False)
+    panel_df.to_parquet(out_dir / "time_series_snapshot.parquet", index=False)
+    # A byte copy, not a re-dump: a re-dump reimplements save_config's formatting.
+    shutil.copyfile(composed_config_path, out_dir / "composed_config.yaml")
+
+    manifest = _build_manifest(model_name, summary, identity, modeling)
+    # backtest_manifest.json written is the step's completion marker. Keep this last.
+    (out_dir / _MANIFEST_FILENAME).write_text(json.dumps(manifest, indent=2) + "\n")
+
+    _log.info(
+        "backtest complete: model=%s origins=%d series=%d out_dir=%s",
+        model_name,
+        summary.n_origins,
+        summary.n_series,
+        out_dir,
+    )
+    return summary

@@ -17,6 +17,14 @@ from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 _RUN_OUTPUTS_FILENAME = "run_outputs.json"
 
 
+def composed_config_filename(model_name: str) -> str:
+    """The per-model config `compose_configs` emits and every later step reads.
+
+    A function, not a format string per call site: a computed name can desynchronize.
+    """
+    return f"composed_config_{model_name}.yaml"
+
+
 def resolve_run_prefix(
     config_dir: Path, env: str, slice_name: SliceName, run_id: str
 ) -> str:

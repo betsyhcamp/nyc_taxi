@@ -1,4 +1,6 @@
 import dataclasses
+import json
+from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd
@@ -6,15 +8,24 @@ import pytest
 from tsbricks.backtesting import generate_folds
 from tsbricks.backtesting.schema import BacktestConfig
 
-from fcstnyctaxi.core.train.backtest_impl import compute_backtest_outputs
+from fcstnyctaxi.core.train.backtest_impl import (
+    BacktestSummary,
+    _build_manifest,
+    backtest_impl,
+    compute_backtest_outputs,
+)
 from fcstnyctaxi.lib.backtest_results import build_cv_results
 from fcstnyctaxi.lib.config.bindings import train_modeling_bindings
 from fcstnyctaxi.lib.config.composition import compose_config, merge_configs
 from fcstnyctaxi.lib.monthly_aggregation import attach_tier_and_weight
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
+from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 
 CONFIG_DIR = get_project_root_dir() / "config"
+FEATURE_RUN_ID = "f-2026-09-17"
+TRAIN_RUN_ID = "t-2026-09-17"
+MODEL_NAME = "naive"
 
 # ================================================
 # Fixtures
@@ -249,3 +260,132 @@ def test_duplicate_monthly_series_keys_raise(
             ts_df=ts_df,
             calendar_df=calendar_df,
         )
+
+
+# ================================================
+# backtest_impl: the guards above the first write
+#
+# Each fires before the panel and calendar are opened, so a run identity is the most
+# any needs staged. The end-to-end run belongs with the fixture that anchors a golden.
+# ================================================
+
+
+def _identity() -> TrainRunIdentity:
+    """The provenance record compose_configs leaves at the run root."""
+    return TrainRunIdentity(
+        git_hash="abc1234-dirty",
+        feature_run_id=FEATURE_RUN_ID,
+        train_run_id=TRAIN_RUN_ID,
+        panel_uri=f"gs://bucket/dev/feature/{FEATURE_RUN_ID}/time_series.parquet",
+        calendar_uri=f"gs://bucket/dev/feature/{FEATURE_RUN_ID}/fiscal_calendar.parquet",
+    )
+
+
+def _stage_compose_configs(tmp_path: Path, with_identity: bool = True) -> Path:
+    """A compose_configs step directory, optionally with its identity beside it."""
+    step_dir = tmp_path / TRAIN_RUN_ID / "compose_configs"
+    step_dir.mkdir(parents=True)
+    if with_identity:
+        (step_dir.parent / "run_identity.json").write_text(
+            _identity().model_dump_json(indent=2)
+        )
+    return step_dir
+
+
+def test_an_out_dir_not_named_for_its_model_is_refused(tmp_path: Path) -> None:
+    """Two models writing one directory would interleave two sidecars silently."""
+    step_dir = _stage_compose_configs(tmp_path)
+    out_dir = tmp_path / TRAIN_RUN_ID / "backtest" / "some_other_model"
+
+    with pytest.raises(ValueError, match="must be named for its model"):
+        backtest_impl(
+            panel_path=tmp_path / "absent.parquet",
+            calendar_path=tmp_path / "absent.parquet",
+            compose_configs_dir=step_dir,
+            model_name=MODEL_NAME,
+            out_dir=out_dir,
+        )
+
+    assert not out_dir.exists()
+
+
+def test_an_out_dir_outside_the_declared_run_root_is_refused(tmp_path: Path) -> None:
+    """Otherwise a sidecar sits under one run while its manifest names another."""
+    step_dir = _stage_compose_configs(tmp_path)
+    out_dir = tmp_path / "a-different-run" / "backtest" / MODEL_NAME
+
+    with pytest.raises(ValueError, match="must sit under the run root"):
+        backtest_impl(
+            panel_path=tmp_path / "absent.parquet",
+            calendar_path=tmp_path / "absent.parquet",
+            compose_configs_dir=step_dir,
+            model_name=MODEL_NAME,
+            out_dir=out_dir,
+        )
+
+    assert not out_dir.exists()
+
+
+def test_a_missing_run_identity_names_what_should_have_written_it(
+    tmp_path: Path,
+) -> None:
+    """A bare FileNotFoundError would not say which step failed to produce it."""
+    step_dir = _stage_compose_configs(tmp_path, with_identity=False)
+
+    with pytest.raises(ValueError, match="No run_identity.json"):
+        backtest_impl(
+            panel_path=tmp_path / "absent.parquet",
+            calendar_path=tmp_path / "absent.parquet",
+            compose_configs_dir=step_dir,
+            model_name=MODEL_NAME,
+            out_dir=tmp_path / TRAIN_RUN_ID / "backtest" / MODEL_NAME,
+        )
+
+
+# ================================================
+# BacktestSummary and the manifest
+# ================================================
+
+
+def _summary() -> BacktestSummary:
+    """Counts as they arrive off frames, so nunique's int64 is what as_dict sees."""
+    return BacktestSummary(
+        n_origins=2,
+        first_origin="2025-02-23",
+        last_origin="2025-03-23",
+        n_series=pd.Series(["a", "b", "c"]).nunique(),
+        feature_run_id=FEATURE_RUN_ID,
+        output_rows={"monthly_series.parquet": pd.Series([1, 2]).size},
+    )
+
+
+def test_summary_as_dict_survives_json_serialisation() -> None:
+    """KFP serialises artifact metadata, so a numpy scalar would break a run."""
+    json.dumps(_summary().as_dict())
+
+
+def test_the_manifest_records_the_effective_settings_not_the_defaults() -> None:
+    """No sidecar has ever recorded these, because the notebook took the defaults."""
+    shipped = cast(
+        TrainModelingConfig,
+        compose_config(CONFIG_DIR, train_modeling_bindings()).config,
+    )
+    tuned = shipped.model_copy(
+        update={"tiering": shipped.tiering.model_copy(update={"trailing_weeks": 13})}
+    )
+
+    manifest = _build_manifest(MODEL_NAME, _summary(), _identity(), tuned)
+
+    assert manifest["config"]["tiering"]["trailing_weeks"] == 13
+    assert manifest["lineage"]["train_run_id"] == TRAIN_RUN_ID
+    assert manifest["lineage"]["git_hash"] == _identity().git_hash
+
+
+def test_the_manifest_survives_json_serialisation() -> None:
+    """It is written with json.dumps, so a numpy count would fail the whole step."""
+    modeling = cast(
+        TrainModelingConfig,
+        compose_config(CONFIG_DIR, train_modeling_bindings()).config,
+    )
+
+    json.dumps(_build_manifest(MODEL_NAME, _summary(), _identity(), modeling))

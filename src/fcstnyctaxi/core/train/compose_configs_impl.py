@@ -33,6 +33,7 @@ from fcstnyctaxi.lib.period_utils import (
     generate_origins_for_periods,
     last_complete_actual_month,
 )
+from fcstnyctaxi.lib.storage_layout import composed_config_filename
 from fcstnyctaxi.schemas.config.train import EvaluationPeriods, TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 
@@ -231,7 +232,7 @@ def compose_configs_impl(
         composed = compose_config(
             config_dir, bindings, {"cross_validation": {"forecast_origins": origins}}
         )
-        files[f"composed_config_{model_name}.yaml"] = composed
+        files[composed_config_filename(model_name)] = composed
         destinations[bindings[0].destination_key] = composed
 
     # Both built before the first write; on Vertex out_dir is the durable destination.
