@@ -9,7 +9,7 @@ from mlforecast.lag_transforms import (
 )
 
 from fcstnyctaxi.lib.calendar_utils import _build_future_calendar_df
-from models._utils import _align_ds_dtype
+from fcstnyctaxi.models._utils import _align_ds_dtype
 
 _CALENDAR_FEATURES = [
     "fiscal_week_of_month",

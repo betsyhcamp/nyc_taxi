@@ -2,7 +2,7 @@ import pandas as pd
 from statsforecast import StatsForecast
 from statsforecast.models import AutoETS
 
-from models._utils import _align_ds_dtype, _ensure_unique_id_column
+from fcstnyctaxi.models._utils import _align_ds_dtype, _ensure_unique_id_column
 
 
 def auto_ets_weekly(
