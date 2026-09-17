@@ -1,17 +1,30 @@
-"""Feature's run-root outputs manifest run_outputs.json, as a typed input contract.
-
-Written by the Feature pipeline as last action and read by Training's callers to
-resolve two artifact URIs from a ``feature_run_id`` alone.
-
-No ``extra="forbid"``, unlike ``run_identity.py``: that is right for a record this
-repo writes and wrong for a third party's, where an added field would break a
-consumer that never reads it. ``frozen=True`` does carry over, since a
-``FeatureArtifacts`` becomes provenance. The freeze is shallow.
-"""
-
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# An allowlist rather than a drop-list; each new metadata column would otherwise
+
+PANEL_MODELING_COLUMNS: tuple[str, ...] = ("unique_id", "ds", "y")
+"""What the panel carries into a model; required and allowed are one list."""
+
+CALENDAR_REQUIRED_COLUMNS: tuple[str, ...] = (
+    "ds",
+    "fiscal_year_month",
+    "origin_month_fraction_elapsed",
+    "fiscal_week_of_month",
+    "fiscal_month",
+    "weeks_in_month",
+    "count_workdays",
+)
+"""Calendar columns with a named consumer, so absence is a failure."""
+
+CALENDAR_ALLOWED_COLUMNS: tuple[str, ...] = CALENDAR_REQUIRED_COLUMNS + (
+    "fiscal_year",
+    "fiscal_year_week",
+)
+"""Everything the contract declares. The two extras are allowed but not required:
+`exog_features` could name them, and the contract lets them change uncoordinated.
+"""
 
 
 class FeatureArtifacts(BaseModel):

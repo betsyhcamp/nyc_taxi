@@ -5,6 +5,7 @@ from fcstnyctaxi.lib.column_checks import (
     require_columns,
     require_matching_feature_run_id,
     require_single_feature_run_id,
+    trim_to_allowlist,
 )
 from fcstnyctaxi.schemas.run_identity import LINEAGE_COLUMN
 
@@ -136,3 +137,65 @@ def test_matching_feature_run_id_checks_frame_agreement_before_the_declaration()
         require_matching_feature_run_id(
             _frame(), _frame(feature_run_id="another-run"), "a-third-run"
         )
+
+
+# ================================================
+# trim_to_allowlist
+# ================================================
+
+_ALLOWED = ("a", "b", "optional")
+_REQUIRED = ("a", "b")
+
+
+def _wide() -> pd.DataFrame:
+    """Everything allowed, plus the metadata columns Feature keeps adding."""
+    return pd.DataFrame(
+        {
+            "a": [1],
+            "b": [2],
+            "optional": [3],
+            LINEAGE_COLUMN: pd.array(["f-1"], dtype="string"),
+            "executed_at": [pd.Timestamp("2026-09-16")],
+        }
+    )
+
+
+def test_trim_drops_columns_outside_the_allowlist() -> None:
+    """The hazard: an unlisted column reaching a model crashes it four layers down."""
+    trimmed = trim_to_allowlist(
+        _wide(), required=_REQUIRED, allowed=_ALLOWED, frame_name="panel"
+    )
+    assert list(trimmed.columns) == list(_ALLOWED)
+
+
+def test_trim_names_the_frame_and_every_missing_required_column() -> None:
+    """A bare pandas KeyError would name neither the frame nor the second gap."""
+    frame = _wide().drop(columns=["a", "b"])
+    with pytest.raises(ValueError, match=r"calendar is missing required columns") as e:
+        trim_to_allowlist(
+            frame, required=_REQUIRED, allowed=_ALLOWED, frame_name="calendar"
+        )
+    assert "'a'" in str(e.value) and "'b'" in str(e.value)
+
+
+def test_trim_tolerates_an_allowed_column_that_is_not_required() -> None:
+    """The contract says the unconsumed two can change without a coordinated release."""
+    frame = _wide().drop(columns=["optional"])
+    trimmed = trim_to_allowlist(
+        frame, required=_REQUIRED, allowed=_ALLOWED, frame_name="calendar"
+    )
+    assert list(trimmed.columns) == list(_REQUIRED)
+
+
+def test_trim_allows_exactly_what_it_requires_by_default() -> None:
+    """The panel's case: every column it carries into a model is consumed."""
+    trimmed = trim_to_allowlist(_wide(), required=_REQUIRED, frame_name="panel")
+    assert list(trimmed.columns) == list(_REQUIRED)
+
+
+def test_trim_leaves_the_callers_frame_alone() -> None:
+    """Callers rebind in place, so an in-place drop would hide until it mattered."""
+    frame = _wide()
+    before = list(frame.columns)
+    trim_to_allowlist(frame, required=_REQUIRED, allowed=_ALLOWED, frame_name="panel")
+    assert list(frame.columns) == before

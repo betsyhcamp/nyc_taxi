@@ -74,3 +74,19 @@ def require_matching_feature_run_id(
         )
 
     return panel_id
+
+
+def trim_to_allowlist(
+    frame: pd.DataFrame,
+    *,
+    required: tuple[str, ...],
+    allowed: tuple[str, ...] | None = None,
+    frame_name: str,
+) -> pd.DataFrame:
+    """Keep `allowed`'s columns; raise unless every `required` one is present.
+
+    `allowed` defaults to `required`; the reasoning is in `schemas/run_outputs.py`.
+    """
+    require_columns(frame, list(required), frame_name)
+    keep = required if allowed is None else allowed
+    return frame[[column for column in keep if column in frame.columns]]
