@@ -33,6 +33,14 @@ accepted here — one field, one spelling.
 
 from pydantic import BaseModel, ConfigDict, Field
 
+LINEAGE_COLUMN = "feature_run_id"
+"""The column Feature stamps on both artifacts, and every Training impl checks.
+
+A contract term, not a check: the checks that read it live in
+``lib/column_checks.py``. Public rather than underscore-private because it crosses
+module boundaries, which is the same reason it left ``compose_configs_impl``.
+"""
+
 
 class FeatureRunIdentity(BaseModel):
     """Provenance of one Feature run's published artifacts.

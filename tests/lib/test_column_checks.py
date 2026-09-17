@@ -1,7 +1,21 @@
 import pandas as pd
 import pytest
 
-from fcstnyctaxi.lib.column_checks import require_columns
+from fcstnyctaxi.lib.column_checks import (
+    require_columns,
+    require_matching_feature_run_id,
+    require_single_feature_run_id,
+)
+from fcstnyctaxi.schemas.run_identity import LINEAGE_COLUMN
+
+FEATURE_RUN_ID = "f-2026-09-08"
+
+
+def _frame(feature_run_id: str | None = FEATURE_RUN_ID, rows: int = 3) -> pd.DataFrame:
+    """A frame carrying only the lineage column, "string" dtype like the real one."""
+    return pd.DataFrame(
+        {LINEAGE_COLUMN: pd.array([feature_run_id] * rows, dtype="string")}
+    )
 
 
 def test_require_columns_passes_when_all_present() -> None:
@@ -41,3 +55,84 @@ def test_require_columns_reports_every_missing_column_not_just_the_first() -> No
         require_columns(df, ["a", "b", "c"], "df")
     assert "'b'" in str(excinfo.value)
     assert "'c'" in str(excinfo.value)
+
+
+# ================================================
+# require_single_feature_run_id
+# ================================================
+
+
+def test_single_feature_run_id_returns_the_one_id_the_frame_carries() -> None:
+    """The happy path hands back what was validated, rather than returning None."""
+    assert require_single_feature_run_id(_frame(), "panel") == FEATURE_RUN_ID
+
+
+def test_single_feature_run_id_names_the_frame_when_the_column_is_absent() -> None:
+    """Delegates to require_columns, so an unstamped artifact names itself."""
+    df = pd.DataFrame({"y": [1, 2, 3]})
+    with pytest.raises(ValueError, match=r"panel is missing required columns"):
+        require_single_feature_run_id(df, "panel")
+
+
+@pytest.mark.parametrize("null_rows", [slice(None), slice(0, 1)], ids=["all", "some"])
+def test_single_feature_run_id_rejects_nulls(null_rows: slice) -> None:
+    """nunique() skips nulls, so a partly-null column would otherwise pass."""
+    df = _frame()
+    df.loc[df.index[null_rows], LINEAGE_COLUMN] = None
+
+    with pytest.raises(ValueError, match=r"null feature_run_id"):
+        require_single_feature_run_id(df, "panel")
+
+
+def test_single_feature_run_id_rejects_a_frame_mixing_two_runs() -> None:
+    """Two ids in one frame means every table stamped from it claims a false run."""
+    df = _frame()
+    df.loc[df.index[0], LINEAGE_COLUMN] = "another-run"
+
+    with pytest.raises(ValueError, match=r"panel mixes Feature runs"):
+        require_single_feature_run_id(df, "panel")
+
+
+# ================================================
+# require_matching_feature_run_id
+# ================================================
+
+
+def test_matching_feature_run_id_returns_the_id_both_frames_carry() -> None:
+    """The observed value is what a caller stamps, so it must come back."""
+    observed = require_matching_feature_run_id(_frame(), _frame(), FEATURE_RUN_ID)
+    assert observed == FEATURE_RUN_ID
+
+
+def test_matching_feature_run_id_rejects_frames_from_different_runs() -> None:
+    """Origins from one run's calendar and actuals from another's is wrong numbers."""
+    with pytest.raises(ValueError, match=r"!= calendar"):
+        require_matching_feature_run_id(
+            _frame(), _frame(feature_run_id="another-run"), FEATURE_RUN_ID
+        )
+
+
+def test_matching_feature_run_id_rejects_a_consistent_pair_from_the_wrong_run() -> None:
+    """The check that makes pasting explicit URIs safe: right shape, wrong run."""
+    with pytest.raises(ValueError, match=r"not the declared"):
+        require_matching_feature_run_id(_frame(), _frame(), "a-different-run")
+
+
+def test_matching_feature_run_id_names_which_of_the_two_frames_is_unstamped() -> None:
+    """Two frames are read here, so a bare KeyError would not say which one failed."""
+    calendar = pd.DataFrame(
+        {"ds": pd.date_range("2025-01-05", periods=3, freq="W-SUN")}
+    )
+
+    with pytest.raises(ValueError, match=r"calendar is missing required columns"):
+        require_matching_feature_run_id(_frame(), calendar, FEATURE_RUN_ID)
+
+
+def test_matching_feature_run_id_checks_frame_agreement_before_the_declaration() -> (
+    None
+):
+    """Both faults at once: a shared value must exist before it can be compared."""
+    with pytest.raises(ValueError, match=r"!= calendar"):
+        require_matching_feature_run_id(
+            _frame(), _frame(feature_run_id="another-run"), "a-third-run"
+        )

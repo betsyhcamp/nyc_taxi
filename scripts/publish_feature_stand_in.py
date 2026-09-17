@@ -23,6 +23,7 @@ from fcstnyctaxi.lib.utils import (
     get_project_root_dir,
     require_path_safe_run_id,
 )
+from fcstnyctaxi.schemas.run_identity import LINEAGE_COLUMN
 from fcstnyctaxi.schemas.run_outputs import FeatureArtifacts, FeatureRunOutputs
 
 # Hardcoded because they are the pre-convention locations this script migrates
@@ -36,8 +37,6 @@ _SOURCE_CALENDAR_URI = (
 _STEP = "data_prep"
 _PANEL_FILENAME = "time_series.parquet"
 _CALENDAR_FILENAME = "fiscal_calendar.parquet"
-
-_LINEAGE_COLUMN = "feature_run_id"
 
 # The version the reader expects. Written although the shipped producer file has
 # none: the stand-in imitates the contract being asked for, not today's gap.
@@ -71,8 +70,8 @@ def _with_lineage_column(frame: pd.DataFrame, feature_run_id: str) -> pd.DataFra
     detail; the consumer checks neither, which leaves both to this producer.
     """
     frame = frame.copy()
-    frame[_LINEAGE_COLUMN] = feature_run_id
-    frame[_LINEAGE_COLUMN] = frame[_LINEAGE_COLUMN].astype("string")
+    frame[LINEAGE_COLUMN] = feature_run_id
+    frame[LINEAGE_COLUMN] = frame[LINEAGE_COLUMN].astype("string")
     return frame
 
 

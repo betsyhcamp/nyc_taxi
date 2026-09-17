@@ -314,49 +314,14 @@ def test_frames_carrying_only_what_this_step_reads_still_compose(
     assert summary.n_origins > 0
 
 
-def test_a_panel_mixing_two_feature_runs_raises(tmp_path: Path) -> None:
-    """Two ids in one frame means every table stamped from it claims a false run."""
-    panel = _panel_frame()
-    panel.loc[panel.index[:10], "feature_run_id"] = "another-run"
-
-    with pytest.raises(ValueError, match="panel mixes Feature runs"):
-        _run(tmp_path, panel_df=panel)
-
-
-def test_a_panel_and_calendar_from_different_runs_raise(tmp_path: Path) -> None:
-    """Origins from one run's calendar and actuals from another's is wrong numbers."""
+def test_the_impl_runs_the_lineage_check_on_both_frames(tmp_path: Path) -> None:
+    """Wiring only: the check's own cases live in tests/lib/test_column_checks.py."""
     with pytest.raises(ValueError, match="!= calendar"):
         _run(tmp_path, calendar_df=_calendar_frame(feature_run_id="another-run"))
 
 
-@pytest.mark.parametrize("null_rows", [slice(None), slice(0, 10)], ids=["all", "some"])
-def test_a_null_feature_run_id_raises(tmp_path: Path, null_rows: slice) -> None:
-    """nunique() skips nulls, so a partly-null column would otherwise pass."""
-    panel = _panel_frame()
-    panel.loc[panel.index[null_rows], "feature_run_id"] = None
-
-    with pytest.raises(ValueError, match="null feature_run_id"):
-        _run(tmp_path, panel_df=panel)
-
-
-def test_a_consistent_pair_from_the_wrong_run_raises(tmp_path: Path) -> None:
-    """The check that makes pasting explicit URIs safe: right shape, wrong run."""
-    with pytest.raises(ValueError, match="not the declared"):
-        _run(tmp_path, expected_feature_run_id="a-different-run")
-
-
-def test_a_frame_without_the_lineage_column_names_which_frame(
-    tmp_path: Path,
-) -> None:
-    """Two frames are read here, so a bare KeyError would not say which one failed."""
-    calendar = _calendar_frame().drop(columns=["feature_run_id"])
-
-    with pytest.raises(ValueError, match="calendar is missing required columns"):
-        _run(tmp_path, calendar_df=calendar)
-
-
 def test_nothing_is_written_when_the_lineage_check_fails(tmp_path: Path) -> None:
-    """A half-written prefix is indistinguishable from a complete one to a reader."""
+    """A half-written prefix reads as complete; an impl property, not a check's."""
     with pytest.raises(ValueError):
         _run(tmp_path, expected_feature_run_id="a-different-run")
 
@@ -364,11 +329,7 @@ def test_nothing_is_written_when_the_lineage_check_fails(tmp_path: Path) -> None
 
 
 def test_nothing_is_written_when_an_identity_field_is_invalid(tmp_path: Path) -> None:
-    """Identity is validated before the first write, not after six of seven land.
-
-    A local path where a URI belongs is the documented slip: the runner holds
-    both, and stamping the staged path would record the wrong source silently.
-    """
+    """Validated before the first write; the slip is a local path where a URI goes."""
     panel, calendar = _write_inputs(tmp_path, _panel_frame(), _calendar_frame())
 
     with pytest.raises(ValidationError):
