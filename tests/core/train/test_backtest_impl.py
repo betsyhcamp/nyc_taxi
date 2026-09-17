@@ -9,18 +9,38 @@ from tsbricks.backtesting import generate_folds
 from tsbricks.backtesting.schema import BacktestConfig
 
 from fcstnyctaxi.core.train.backtest_impl import (
+    _MONTHLY_SERIES_KEYS,
+    _OUTPUT_FILENAMES,
+    BacktestOutputs,
     BacktestSummary,
     _build_manifest,
     backtest_impl,
     compute_backtest_outputs,
 )
 from fcstnyctaxi.lib.backtest_results import build_cv_results
-from fcstnyctaxi.lib.config.bindings import train_modeling_bindings
-from fcstnyctaxi.lib.config.composition import compose_config, merge_configs
+from fcstnyctaxi.lib.config.bindings import (
+    train_backtest_bindings,
+    train_modeling_bindings,
+)
+from fcstnyctaxi.lib.config.composition import (
+    compose_config,
+    merge_configs,
+    save_config,
+)
 from fcstnyctaxi.lib.monthly_aggregation import attach_tier_and_weight
+from fcstnyctaxi.lib.period_utils import (
+    derive_start_months,
+    generate_origins_for_periods,
+    last_complete_actual_month,
+)
+from fcstnyctaxi.lib.storage_layout import composed_config_filename
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
+from fcstnyctaxi.schemas.run_outputs import (
+    CALENDAR_ALLOWED_COLUMNS,
+    PANEL_REQUIRED_COLUMNS,
+)
 
 CONFIG_DIR = get_project_root_dir() / "config"
 FEATURE_RUN_ID = "f-2026-09-17"
@@ -100,13 +120,18 @@ def ts_df() -> pd.DataFrame:
     )
 
 
-@pytest.fixture
-def modeling() -> TrainModelingConfig:
-    """The shipped tiering and weighting, composed rather than hand-built."""
+def _shipped_modeling() -> TrainModelingConfig:
+    """The committed tiering, weighting and evaluation periods."""
     return cast(
         TrainModelingConfig,
         compose_config(CONFIG_DIR, train_modeling_bindings()).config,
     )
+
+
+@pytest.fixture
+def modeling() -> TrainModelingConfig:
+    """The shipped tiering and weighting, composed rather than hand-built."""
+    return _shipped_modeling()
 
 
 def _cfg(origins: list[tuple[int, int]]) -> BacktestConfig:
@@ -389,3 +414,330 @@ def test_the_manifest_survives_json_serialisation() -> None:
     )
 
     json.dumps(_build_manifest(MODEL_NAME, _summary(), _identity(), modeling))
+
+
+# ================================================
+# The shaped fixture, and the structural assertions
+#
+# A second fixture, deliberately: the pair above is 16 weeks on a fake model, sized to
+# keep the assertion tests fast. This is 80 weeks on the real naive model, shaped so
+# the regression golden it will anchor is not a smoke test. Five series with distinct
+# trailing means so every tier label is used, one at zero revenue for the lowest tier,
+# 52 weeks of history before the first origin, two fiscal months per horizon, and one
+# series activating after the first origin so a ragged series set is exercised. Origins
+# come from the shipped evaluation_periods, as compose_configs derives them.
+# ================================================
+
+_FULL_WEEKS_PER_MONTH = 4
+_FULL_N_WEEKS = 80
+_FULL_WEEKS = pd.date_range("2024-01-07", periods=_FULL_N_WEEKS, freq="W-SUN")
+_FULL_MONTHS = [202401 + i for i in range(12)] + [202501 + i for i in range(8)]
+# Weekly level, and the week the series becomes active.
+_FULL_SERIES = {
+    "high": (1000.0, 0),
+    "mid": (300.0, 0),
+    "low": (80.0, 0),
+    "tiny": (5.0, 0),
+    "zero": (0.0, 0),
+    "late": (200.0, 66),
+}
+
+_SIDECAR_FILENAMES = frozenset(_OUTPUT_FILENAMES.values()) | {
+    "fiscal_calendar.parquet",
+    "time_series_snapshot.parquet",
+    "composed_config.yaml",
+    "backtest_manifest.json",
+}
+
+
+@pytest.fixture(scope="module")
+def full_calendar() -> pd.DataFrame:
+    """Every column the contract declares, so the impl's trim has something to keep."""
+    month_index = [week // _FULL_WEEKS_PER_MONTH for week in range(_FULL_N_WEEKS)]
+    week_of_month = [week % _FULL_WEEKS_PER_MONTH + 1 for week in range(_FULL_N_WEEKS)]
+    return pd.DataFrame(
+        {
+            "ds": _FULL_WEEKS,
+            "fiscal_year_month": [_FULL_MONTHS[m] for m in month_index],
+            "fiscal_month": [m % 12 + 1 for m in month_index],
+            "fiscal_week_of_month": week_of_month,
+            "weeks_in_month": _FULL_WEEKS_PER_MONTH,
+            "origin_month_fraction_elapsed": [
+                week / _FULL_WEEKS_PER_MONTH for week in week_of_month
+            ],
+            "count_workdays": 5,
+            "fiscal_year": [_FULL_MONTHS[m] // 100 for m in month_index],
+            "fiscal_year_week": list(range(1, 49)) + list(range(1, 33)),
+        }
+    )
+
+
+@pytest.fixture(scope="module")
+def full_panel() -> pd.DataFrame:
+    """Deterministic levels on a five-week cycle, so naive is not trivially exact."""
+    return pd.DataFrame(
+        [
+            {
+                "unique_id": uid,
+                "ds": _FULL_WEEKS[week],
+                "y": level * (1 + 0.1 * (week % 5)),
+            }
+            for uid, (level, first_week) in _FULL_SERIES.items()
+            for week in range(first_week, _FULL_N_WEEKS)
+        ]
+    )
+
+
+@pytest.fixture(scope="module")
+def full_cfg(full_panel: pd.DataFrame, full_calendar: pd.DataFrame) -> BacktestConfig:
+    """The naive config compose_configs would emit for this panel."""
+    periods = _shipped_modeling().evaluation_periods
+    last_complete = last_complete_actual_month(
+        max_actual_date=full_panel["ds"].max(), calendar_df=full_calendar
+    )
+    origins = generate_origins_for_periods(
+        start_months=derive_start_months(
+            last_complete_actual_month=last_complete,
+            n_start_months=periods.n_start_months,
+            start_month_step=periods.start_month_step,
+            forecast_horizon_months=periods.forecast_horizon_months,
+            calendar_df=full_calendar,
+        ),
+        forecast_horizon_months=periods.forecast_horizon_months,
+        calendar_df=full_calendar,
+        last_complete_actual_month=last_complete,
+    )
+    return cast(
+        BacktestConfig,
+        compose_config(
+            CONFIG_DIR,
+            train_backtest_bindings(MODEL_NAME),
+            {"cross_validation": {"forecast_origins": origins}},
+        ).config,
+    )
+
+
+@pytest.fixture(scope="module")
+def full_outputs(
+    full_cfg: BacktestConfig, full_panel: pd.DataFrame, full_calendar: pd.DataFrame
+) -> BacktestOutputs:
+    """One real backtest, shared by every structural assertion below."""
+    return compute_backtest_outputs(
+        cfg=full_cfg,
+        modeling=_shipped_modeling(),
+        ts_df=full_panel,
+        calendar_df=full_calendar,
+    )
+
+
+def _merge_components(outputs: BacktestOutputs) -> pd.DataFrame:
+    """Outer, not inner: an inner merge verifies reconstruction on the intersection
+    alone, so a components file missing one key while carrying a spurious one passes."""
+    return outputs.monthly_series.merge(
+        outputs.monthly_forecast_components,
+        on=_MONTHLY_SERIES_KEYS,
+        how="outer",
+        indicator=True,
+        validate="one_to_one",
+    )
+
+
+def test_the_fixture_uses_every_tier_and_a_ragged_series_set(
+    full_outputs: BacktestOutputs,
+) -> None:
+    """A fixture that collapses to fewer tiers weakens its golden without saying so."""
+    monthly_series = full_outputs.monthly_series
+
+    assert set(monthly_series["tier"].astype(str)) == set(
+        _shipped_modeling().tiering.tier_labels
+    )
+    per_origin = monthly_series.groupby("forecast_origin_date")["unique_id"].nunique()
+    assert per_origin.nunique() > 1
+
+
+def test_components_cover_the_same_keys_as_monthly_series(
+    full_outputs: BacktestOutputs,
+) -> None:
+    """Two files a consumer joins, so a key in one and not the other is a drop."""
+    assert (_merge_components(full_outputs)["_merge"] == "both").all()
+
+
+def test_monthly_forecast_reconstructs_exactly_from_its_components(
+    full_outputs: BacktestOutputs,
+) -> None:
+    """Exact, not approximate: a tolerance would hide a dropped or swapped addend."""
+    merged = _merge_components(full_outputs)
+
+    residual = (
+        merged["mtd_revenue"]
+        + merged["predicted_remaining"]
+        - merged["monthly_forecast"]
+    )
+    assert (residual == 0).all()
+
+
+def test_forecast_origin_date_carries_the_calendars_unit(
+    full_outputs: BacktestOutputs, full_calendar: pd.DataFrame
+) -> None:
+    """Anchored to the calendar, since all three frames derive theirs from one variable
+    and so agree even when all three are wrong together."""
+    calendar_unit = full_calendar["ds"].dt.unit
+
+    for frame in (
+        full_outputs.monthly_series,
+        full_outputs.monthly_forecast_components,
+        full_outputs.raw_cv_forecasts,
+    ):
+        assert frame["forecast_origin_date"].dt.unit == calendar_unit
+
+
+def test_raw_cv_forecasts_lead_with_the_origin_and_carry_no_nulls(
+    full_outputs: BacktestOutputs,
+) -> None:
+    """Column order is load-bearing: compare tools read the first column by position."""
+    raw_cv_forecasts = full_outputs.raw_cv_forecasts
+
+    assert list(raw_cv_forecasts.columns)[0] == "forecast_origin_date"
+    assert not raw_cv_forecasts["forecast_origin_date"].isna().any()
+
+
+def test_monthly_series_keys_are_unique_on_good_data(
+    full_outputs: BacktestOutputs,
+) -> None:
+    """The raising case is crafted above; this pins that real data does not trip it."""
+    assert not full_outputs.monthly_series.duplicated(_MONTHLY_SERIES_KEYS).any()
+
+
+# ================================================
+# backtest_impl end to end
+# ================================================
+
+
+def _stage(
+    tmp_path: Path,
+    full_panel: pd.DataFrame,
+    full_calendar: pd.DataFrame,
+    full_cfg: BacktestConfig,
+) -> dict[str, Any]:
+    """Land the inputs and compose_configs outputs, as backtest_impl's arguments.
+
+    Both frames are stamped the way Feature delivers them, with a metadata column
+    beyond the lineage one, so the trims have something to drop.
+    """
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    panel_path = inputs / "time_series.parquet"
+    calendar_path = inputs / "fiscal_calendar.parquet"
+    stamps = {
+        "feature_run_id": FEATURE_RUN_ID,
+        "executed_at": pd.Timestamp("2026-09-17"),
+    }
+    full_panel.assign(**stamps).to_parquet(panel_path)
+    full_calendar.assign(**stamps).to_parquet(calendar_path)
+
+    step_dir = _stage_compose_configs(tmp_path)
+    save_config(
+        full_cfg.model_dump(by_alias=True, exclude_none=True),
+        step_dir / composed_config_filename(MODEL_NAME),
+    )
+    save_config(
+        _shipped_modeling().model_dump(by_alias=True, exclude_none=True),
+        step_dir / "modeling.yaml",
+    )
+    return {
+        "panel_path": panel_path,
+        "calendar_path": calendar_path,
+        "compose_configs_dir": step_dir,
+        "model_name": MODEL_NAME,
+        "out_dir": tmp_path / TRAIN_RUN_ID / "backtest" / MODEL_NAME,
+    }
+
+
+@pytest.fixture
+def staged(
+    tmp_path: Path,
+    full_panel: pd.DataFrame,
+    full_calendar: pd.DataFrame,
+    full_cfg: BacktestConfig,
+) -> dict[str, Any]:
+    """A run root staged but not yet backtested, for the one test that must fail."""
+    return _stage(tmp_path, full_panel, full_calendar, full_cfg)
+
+
+@pytest.fixture(scope="module")
+def completed_run(
+    tmp_path_factory: pytest.TempPathFactory,
+    full_panel: pd.DataFrame,
+    full_calendar: pd.DataFrame,
+    full_cfg: BacktestConfig,
+) -> Path:
+    """One real run, shared by the sidecar assertions; returns its out_dir."""
+    staged = _stage(
+        tmp_path_factory.mktemp("backtest"), full_panel, full_calendar, full_cfg
+    )
+    backtest_impl(**staged)
+    return staged["out_dir"]
+
+
+def test_a_run_writes_the_whole_sidecar(completed_run: Path) -> None:
+    """Asserted in full because the file set is the contract two compare tools read,
+    and a missing file is not detectable from inside the run that omitted it."""
+    assert {path.name for path in completed_run.iterdir()} == _SIDECAR_FILENAMES
+
+
+def test_the_manifest_is_absent_when_an_earlier_step_fails(
+    staged: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Its presence is the completion marker, so it must not survive a failed run."""
+
+    def _fail(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("manifest build failed")
+
+    monkeypatch.setattr("fcstnyctaxi.core.train.backtest_impl._build_manifest", _fail)
+
+    with pytest.raises(RuntimeError):
+        backtest_impl(**staged)
+
+    written = {path.name for path in staged["out_dir"].iterdir()}
+    assert written == _SIDECAR_FILENAMES - {"backtest_manifest.json"}
+
+
+def test_the_manifest_agrees_with_the_files_beside_it(completed_run: Path) -> None:
+    """A manifest a reader cannot check against the directory records nothing."""
+    manifest = json.loads((completed_run / "backtest_manifest.json").read_text())
+
+    for filename, rows in manifest["output_rows"].items():
+        assert len(pd.read_parquet(completed_run / filename)) == rows
+    panel_snapshot = pd.read_parquet(completed_run / "time_series_snapshot.parquet")
+    assert manifest["n_series"] == panel_snapshot["unique_id"].nunique()
+    monthly_series = pd.read_parquet(completed_run / "monthly_series.parquet")
+    assert (
+        manifest["origins"]["n_origins"]
+        == monthly_series["forecast_origin_date"].nunique()
+    )
+
+
+def test_dtypes_survive_the_parquet_round_trip(
+    completed_run: Path, full_outputs: BacktestOutputs
+) -> None:
+    """Against the frames as computed, not against named dtypes: `tier` is categorical
+    or object depending on whether every fold binned the same number of tiers, so
+    pinning either would fail on data rather than on a defect."""
+    calendar_unit = pd.read_parquet(completed_run / "fiscal_calendar.parquet")[
+        "ds"
+    ].dt.unit
+
+    for field, filename in _OUTPUT_FILENAMES.items():
+        written = pd.read_parquet(completed_run / filename)
+        assert written.dtypes.equals(getattr(full_outputs, field).dtypes)
+        if "forecast_origin_date" in written.columns:
+            assert written["forecast_origin_date"].dt.unit == calendar_unit
+
+
+def test_the_snapshots_are_trimmed_to_the_contract(completed_run: Path) -> None:
+    """An untrimmed panel reaches the model and crashes it three layers down."""
+    panel_snapshot = pd.read_parquet(completed_run / "time_series_snapshot.parquet")
+    calendar_snapshot = pd.read_parquet(completed_run / "fiscal_calendar.parquet")
+
+    assert tuple(panel_snapshot.columns) == PANEL_REQUIRED_COLUMNS
+    assert tuple(calendar_snapshot.columns) == CALENDAR_ALLOWED_COLUMNS
