@@ -1,8 +1,16 @@
+"""The Feature-to-Training contract: `run_outputs.json`, and the columns it promises.
+
+No `extra="forbid"`, unlike `run_identity.py`: an added field in a third party's
+record must not break a consumer that never reads it. `frozen=True` carries over,
+since a `FeatureArtifacts` becomes provenance.
+
+The column tuples are a projection, not a validation: an allowlist, so a new metadata
+column on a consultant-owned artifact cannot become a model input. Feature owns shape.
+"""
+
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
-
-# An allowlist rather than a drop-list; each new metadata column would otherwise
 
 PANEL_REQUIRED_COLUMNS: tuple[str, ...] = ("unique_id", "ds", "y")
 """Everything the panel must contain; required and allowed are one list."""
