@@ -156,11 +156,9 @@ def test_static_configs_reject_an_env_with_no_file() -> None:
         ("environment.yaml", EnvironmentConfig),
         ("infra.yaml", TrainInfraConfig),
         ("modeling.yaml", TrainModelingConfig),
-        ("composed_config_naive.yaml", BacktestConfig),
-        ("composed_config_xgboost.yaml", BacktestConfig),
     ],
 )
-def test_every_emitted_config_revalidates_when_loaded_back(
+def test_every_static_config_revalidates_when_loaded_back(
     composed: tuple[ComposeConfigsSummary, Path],
     filename: str,
     destination: type[BaseModel],
@@ -169,6 +167,17 @@ def test_every_emitted_config_revalidates_when_loaded_back(
     _, out_dir = composed
 
     destination.model_validate(yaml.safe_load((out_dir / filename).read_text()))
+
+
+def test_every_model_config_revalidates_when_loaded_back(
+    composed: tuple[ComposeConfigsSummary, Path],
+) -> None:
+    """Driven by the configured model set, so swapping a model needs no edit here."""
+    summary, out_dir = composed
+
+    for model_name in summary.model_names:
+        emitted = (out_dir / f"composed_config_{model_name}.yaml").read_text()
+        BacktestConfig.model_validate(yaml.safe_load(emitted))
 
 
 def test_run_identity_reloads_and_stamps_what_was_read(
@@ -253,20 +262,21 @@ def test_manifest_records_no_hash_for_the_runtime_source(
     assert RUNTIME_SOURCE not in manifest["config_files"]
 
 
-@pytest.mark.parametrize("model_name", ["naive", "xgboost"])
 def test_the_derived_origins_reach_every_model_config(
-    composed: tuple[ComposeConfigsSummary, Path], model_name: str
+    composed: tuple[ComposeConfigsSummary, Path],
 ) -> None:
     """Origins are the one runtime override; a model config without them is unusable."""
     summary, out_dir = composed
-    emitted = yaml.safe_load(
-        (out_dir / f"composed_config_{model_name}.yaml").read_text()
-    )
 
-    origins = emitted["cross_validation"]["forecast_origins"]
-    assert len(origins) == summary.n_origins
-    assert origins[0]["origin"] == summary.first_origin
-    assert origins[-1]["origin"] == summary.last_origin
+    for model_name in summary.model_names:
+        emitted = yaml.safe_load(
+            (out_dir / f"composed_config_{model_name}.yaml").read_text()
+        )
+
+        origins = emitted["cross_validation"]["forecast_origins"]
+        assert len(origins) == summary.n_origins
+        assert origins[0]["origin"] == summary.first_origin
+        assert origins[-1]["origin"] == summary.last_origin
 
 
 # ================================================
@@ -287,9 +297,13 @@ def test_summary_describes_the_run_the_caller_could_not_open(
     composed: tuple[ComposeConfigsSummary, Path],
 ) -> None:
     """Every field here is derived by walking a frame the wrapper never opens."""
-    summary, _ = composed
+    summary, out_dir = composed
 
-    assert summary.model_names == ["naive", "xgboost"]
+    emitted = {
+        path.stem.removeprefix("composed_config_")
+        for path in out_dir.glob("composed_config_*.yaml")
+    }
+    assert set(summary.model_names) == emitted
     assert summary.n_origins > 0
     assert summary.first_origin <= summary.last_origin
     assert summary.start_months == sorted(summary.start_months)

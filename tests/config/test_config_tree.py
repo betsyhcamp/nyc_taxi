@@ -174,7 +174,7 @@ def test_calendar_source_is_declared_and_null() -> None:
 def test_naive_declares_freq_and_xgboost_does_not() -> None:
     """The asymmetry is deliberate, and gives the cross-field check both branches.
 
-    naive_weekly's freq is load-bearing; xgboost's hyperparameters land in PR 1.
+    naive_weekly's freq is load-bearing; xgboost's land with its module.
     A model may legitimately declare no freq and let its callable infer one, so
     a universal requirement would be wrong.
     """

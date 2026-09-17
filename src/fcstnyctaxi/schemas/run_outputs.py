@@ -4,8 +4,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # An allowlist rather than a drop-list; each new metadata column would otherwise
 
-PANEL_MODELING_COLUMNS: tuple[str, ...] = ("unique_id", "ds", "y")
-"""What the panel carries into a model; required and allowed are one list."""
+PANEL_REQUIRED_COLUMNS: tuple[str, ...] = ("unique_id", "ds", "y")
+"""Everything the panel must contain; required and allowed are one list."""
 
 CALENDAR_REQUIRED_COLUMNS: tuple[str, ...] = (
     "ds",
