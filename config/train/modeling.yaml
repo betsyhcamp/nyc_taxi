@@ -5,7 +5,7 @@
 # run.
 evaluation_periods:
   start_months: null # explicit list -> pin an experiment; null -> derive
-  n_start_months: 4
+  n_start_months: 6 # the full-run window backtest_config.yaml has always named
   start_month_step: 1
   forecast_horizon_months: 2
 
