@@ -87,14 +87,16 @@ class BacktestOutputs:
 class BacktestSummary:
     """What this run backtested, for a wrapper that never opens the sidecar.
 
-    Carries `feature_run_id`, unlike `ComposeConfigsSummary`: that wrapper is handed
-    the id and this one is not, so the return value is its only source.
+    Carries both run ids, unlike `ComposeConfigsSummary`: that impl is handed its
+    `train_run_id` and this one reads both out of `run_identity.json`, so the return
+    value is the only place either discovered value exists.
     """
 
     n_origins: int
     first_origin: str
     last_origin: str
     n_series: int
+    train_run_id: str
     feature_run_id: str
     output_rows: dict[str, int]
 
@@ -105,6 +107,7 @@ class BacktestSummary:
             "first_origin": str(self.first_origin),
             "last_origin": str(self.last_origin),
             "n_series": int(self.n_series),
+            "train_run_id": str(self.train_run_id),
             "feature_run_id": str(self.feature_run_id),
             "output_rows": {name: int(rows) for name, rows in self.output_rows.items()},
         }
@@ -479,6 +482,7 @@ def backtest_impl(
         first_origin=origins[0],
         last_origin=origins[-1],
         n_series=int(panel_df["unique_id"].nunique()),
+        train_run_id=identity.train_run_id,
         feature_run_id=identity.feature_run_id,
         output_rows={
             filename: len(getattr(outputs, field))

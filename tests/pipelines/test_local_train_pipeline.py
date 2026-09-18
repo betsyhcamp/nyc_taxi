@@ -52,6 +52,7 @@ BACKTEST_SUMMARY = BacktestSummary(
     first_origin="2025-05-18",
     last_origin="2025-05-18",
     n_series=3,
+    train_run_id=RUN_ID,
     feature_run_id=FEATURE_RUN_ID,
     output_rows={"monthly_series.parquet": 6},
 )
