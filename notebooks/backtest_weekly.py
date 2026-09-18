@@ -20,6 +20,7 @@ import yaml
 import fsspec  # reads composed_config.yaml from GCS in compare_sidecars
 
 from fcstnyctaxi.lib.backtest_results import build_backtest_results, build_cv_results
+from fcstnyctaxi.lib.column_checks import trim_to_allowlist
 from fcstnyctaxi.lib.config.composition import merge_configs, save_config
 from fcstnyctaxi.lib.io import write_text_to_gcs
 from fcstnyctaxi.lib.monthly_aggregation import (
@@ -36,6 +37,11 @@ from fcstnyctaxi.lib.period_utils import (
     normalized_origin_horizon_pairs,
 )
 from fcstnyctaxi.lib.utils import get_project_root_dir, generate_run_id
+from fcstnyctaxi.schemas.run_outputs import (
+    CALENDAR_ALLOWED_COLUMNS,
+    CALENDAR_REQUIRED_COLUMNS,
+    PANEL_REQUIRED_COLUMNS,
+)
 
 from tsbricks.backtesting import (
     evaluate_metrics,
@@ -79,6 +85,15 @@ calendar_uri = (
     f"{run_cfg['project']['gcs_bucket']}/{run_cfg['project']['fiscal_calendar_uri']}"
 )
 calendar_df = pd.read_parquet(calendar_uri)
+
+# backtest_impl trims with these same constants, so the two sidecars are comparable.
+ts_df = trim_to_allowlist(ts_df, required=PANEL_REQUIRED_COLUMNS, frame_name="panel")
+calendar_df = trim_to_allowlist(
+    calendar_df,
+    required=CALENDAR_REQUIRED_COLUMNS,
+    allowed=CALENDAR_ALLOWED_COLUMNS,
+    frame_name="calendar",
+)
 
 # %%
 raw_backtest_cfg = yaml.safe_load(backtest_cfg_path.read_text())
