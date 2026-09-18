@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from pytest_mock import MockerFixture
 
+from fcstnyctaxi.core.train.backtest_impl import BacktestSummary
 from fcstnyctaxi.core.train.compose_configs_impl import ComposeConfigsSummary
 from fcstnyctaxi.lib import run_outputs
 from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
@@ -44,7 +45,15 @@ COMPOSE_SUMMARY = ComposeConfigsSummary(
     last_origin="2025-05-18",
     last_complete_actual_month=202505,
     start_months=[202505],
-    model_names=["naive"],
+    model_names=["naive", "lightgbm"],
+)
+BACKTEST_SUMMARY = BacktestSummary(
+    n_origins=1,
+    first_origin="2025-05-18",
+    last_origin="2025-05-18",
+    n_series=3,
+    feature_run_id=FEATURE_RUN_ID,
+    output_rows={"monthly_series.parquet": 6},
 )
 
 
@@ -66,6 +75,23 @@ def test_mirror_path_rejects_a_non_gcs_uri(tmp_path: Path, uri: str) -> None:
     """An absolute path absorbs the mirror root, landing outside the scratch tree."""
     with pytest.raises(ValueError, match="must be a gs://"):
         local_train_pipeline._mirror_path(uri, tmp_path)
+
+
+def test_a_model_filter_naming_no_composed_model_is_rejected() -> None:
+    """Filtered silently it would match nothing, back no model, and exit clean."""
+    with pytest.raises(ValueError, match="xgboost"):
+        local_train_pipeline._select_models(["naive", "lightgbm"], "xgboost")
+
+
+def test_the_model_filter_narrows_and_its_absence_keeps_every_model() -> None:
+    """Both paths, since the guard above only says which one raises."""
+    assert local_train_pipeline._select_models(["naive", "lightgbm"], "naive") == [
+        "naive"
+    ]
+    assert local_train_pipeline._select_models(["naive", "lightgbm"], None) == [
+        "naive",
+        "lightgbm",
+    ]
 
 
 def test_a_malformed_train_config_raises_before_the_resolve_and_the_clear(
@@ -118,12 +144,14 @@ def test_a_malformed_train_config_raises_before_the_resolve_and_the_clear(
     assert (out_dir / "run_identity.json").read_text() == PREVIOUS_OUTPUT
 
 
-def test_the_identity_is_published_before_the_step_and_manifest_marks_it_complete(
+def test_each_backtest_is_published_before_the_next_one_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     mocker: MockerFixture,
 ) -> None:
-    """Published second, a failed sync would leave no record of what the run read."""
+    """Two orderings. Published second, a failed sync would leave no record of what
+    the run read; and running both backtests before publishing either would lose the
+    first model's finished sidecar whenever the second one failed."""
     root = tmp_path / "project"
     shutil.copytree(get_project_root_dir() / "config", root / "config")
     monkeypatch.setenv("PROJECT_ROOT", str(root))
@@ -136,15 +164,20 @@ def test_the_identity_is_published_before_the_step_and_manifest_marks_it_complet
     mocker.patch.object(
         local_train_pipeline, "compose_configs_impl", return_value=COMPOSE_SUMMARY
     )
-    # One manager, so the assertion is about order between the two calls rather
-    # than each in isolation.
+    sync = mocker.patch.object(local_train_pipeline, "sync_to_gcs", return_value=(7, 0))
+    # One manager, so the assertion is about order across the calls rather than each
+    # in isolation. backtest_impl belongs in it for the same reason: left out, a run
+    # that backtested both models before publishing either would look identical.
     publishes = mocker.MagicMock()
     publishes.attach_mock(
         mocker.patch.object(local_train_pipeline, "upload_to_gcs"), "identity"
     )
+    publishes.attach_mock(sync, "sync")
     publishes.attach_mock(
-        mocker.patch.object(local_train_pipeline, "sync_to_gcs", return_value=(7, 0)),
-        "sync",
+        mocker.patch.object(
+            local_train_pipeline, "backtest_impl", return_value=BACKTEST_SUMMARY
+        ),
+        "backtest",
     )
 
     monkeypatch.setattr(
@@ -170,9 +203,24 @@ def test_the_identity_is_published_before_the_step_and_manifest_marks_it_complet
     local_train_pipeline.main()
 
     run_prefix = resolve_run_prefix(root / "config", ENV, "train", RUN_ID)
-    assert [call[0] for call in publishes.mock_calls] == ["identity", "sync"]
+    assert [call[0] for call in publishes.mock_calls] == [
+        "identity",
+        "sync",
+        "backtest",
+        "sync",
+        "backtest",
+        "sync",
+    ]
     assert publishes.mock_calls[0].args[1] == run_prefix
-    assert publishes.mock_calls[1].kwargs["completion_marker"] == "manifest.json"
+    assert [call.kwargs["completion_marker"] for call in sync.call_args_list] == [
+        "manifest.json",
+        "backtest_manifest.json",
+        "backtest_manifest.json",
+    ]
+    # out_dir is mirrored from these, so pinning the URIs pins both locations.
+    assert [call.args[1] for call in sync.call_args_list[1:]] == [
+        f"{run_prefix}backtest/{name}/" for name in COMPOSE_SUMMARY.model_names
+    ]
 
 
 def test_the_published_destinations_are_ones_the_transport_accepts(
@@ -190,6 +238,12 @@ def test_the_published_destinations_are_ones_the_transport_accepts(
         (out_dir / "manifest.json").write_text("{}")
         return COMPOSE_SUMMARY
 
+    def _backtest_outputs(*, out_dir: Path, **_: object) -> BacktestSummary:
+        """The same, for the sidecar the per-model publish sends."""
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "backtest_manifest.json").write_text("{}")
+        return BACKTEST_SUMMARY
+
     root = tmp_path / "project"
     shutil.copytree(get_project_root_dir() / "config", root / "config")
     monkeypatch.setenv("PROJECT_ROOT", str(root))
@@ -201,6 +255,9 @@ def test_the_published_destinations_are_ones_the_transport_accepts(
     )
     mocker.patch.object(
         local_train_pipeline, "compose_configs_impl", side_effect=_impl_outputs
+    )
+    mocker.patch.object(
+        local_train_pipeline, "backtest_impl", side_effect=_backtest_outputs
     )
     mocker.patch.object(
         run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
@@ -229,6 +286,11 @@ def test_the_published_destinations_are_ones_the_transport_accepts(
     published = fake_gcs / run_prefix.removeprefix("gs://")
     assert (published / "run_identity.json").is_file()
     assert (published / "compose_configs" / "manifest.json").is_file()
+    # The backtest prefix carries a second segment, which no patched test exercises.
+    for model_name in COMPOSE_SUMMARY.model_names:
+        assert (
+            published / "backtest" / model_name / "backtest_manifest.json"
+        ).is_file()
 
 
 def test_the_local_runner_resolves_both_uris_from_the_feature_run_id_alone(
@@ -238,7 +300,8 @@ def test_the_local_runner_resolves_both_uris_from_the_feature_run_id_alone(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test the drift the flag-name mirror test cannot see: this caller could still
-    require the overrides while both parsers declare the same flag names."""
+    require the overrides while both parsers declare the same flag names. The
+    download assertion also holds the backtest step to the already-staged inputs."""
     root = tmp_path / "project"
     shutil.copytree(get_project_root_dir() / "config", root / "config")
     monkeypatch.setenv("PROJECT_ROOT", str(root))
@@ -250,6 +313,9 @@ def test_the_local_runner_resolves_both_uris_from_the_feature_run_id_alone(
     )
     mocker.patch.object(
         local_train_pipeline, "compose_configs_impl", return_value=COMPOSE_SUMMARY
+    )
+    mocker.patch.object(
+        local_train_pipeline, "backtest_impl", return_value=BACKTEST_SUMMARY
     )
     mocker.patch.object(local_train_pipeline, "upload_to_gcs")
     mocker.patch.object(local_train_pipeline, "sync_to_gcs", return_value=(7, 0))

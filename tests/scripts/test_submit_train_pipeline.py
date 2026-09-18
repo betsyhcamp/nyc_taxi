@@ -61,7 +61,10 @@ RESOURCE_NAME = "projects/123456789/locations/us-central1/pipelineJobs/fcst-trai
 
 # Flags each command line owns because of how it executes, not what it models.
 # Everything else must appear on both, so a new flag has to be classified here.
-LOCAL_ORCHESTRATION_FLAGS = frozenset({"--scratch-dir"})
+# --model is local because the domain set is the DAG's parameters and the model
+# set is not one: Vertex fixes it in the compiled template, so narrowing it there
+# recompiles rather than passes a flag.
+LOCAL_ORCHESTRATION_FLAGS = frozenset({"--scratch-dir", "--model"})
 VERTEX_ORCHESTRATION_FLAGS = frozenset({"--template-path", "--wait", "--no-caching"})
 
 
