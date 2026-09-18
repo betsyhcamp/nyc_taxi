@@ -1,4 +1,4 @@
 model:
-  fit_predict_callable: models.naive.naive_weekly
+  fit_predict_callable: fcstnyctaxi.models.naive.naive_weekly
   hyperparameters:
     freq: W-SUN

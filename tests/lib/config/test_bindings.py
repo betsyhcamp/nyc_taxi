@@ -316,7 +316,11 @@ def test_the_shipped_tree_composes_every_phase_one_destination() -> None:
 
     assert environment.config.storage.bucket_name == "nyc-taxi-ehc--modeling"
     assert infra.config.display_name_prefix == "fcst-train-pipeline"
-    assert model_names_from_roles(modeling.config.model_roles) == ("naive", "xgboost")
+    # Not the model names themselves: those change whenever a role is reassigned,
+    # and deriving the expectation from the same call would make this unfailable.
+    # The invariant is that every configured role names a model file that exists.
+    for model_name in model_names_from_roles(modeling.config.model_roles):
+        assert (CONFIG_DIR / "train" / "models" / f"{model_name}.yaml").is_file()
 
 
 @pytest.mark.parametrize("model_name", ["naive", "xgboost"])

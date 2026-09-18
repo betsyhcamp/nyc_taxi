@@ -1,7 +1,12 @@
 import pytest
 from pydantic import ValidationError
 
-from fcstnyctaxi.schemas.run_outputs import FeatureArtifacts, FeatureRunOutputs
+from fcstnyctaxi.schemas.run_outputs import (
+    CALENDAR_ALLOWED_COLUMNS,
+    CALENDAR_REQUIRED_COLUMNS,
+    FeatureArtifacts,
+    FeatureRunOutputs,
+)
 
 PANEL_URI = "gs://BUCKET/dev/feature/F1/data_prep/time_series.parquet"
 CALENDAR_URI = "gs://BUCKET/dev/feature/F1/data_prep/fiscal_calendar.parquet"
@@ -71,3 +76,26 @@ def test_feature_artifacts_refuses_rebinding() -> None:
 
     with pytest.raises(ValidationError):
         artifacts.panel_uri = "gs://BUCKET/other.parquet"
+
+
+# ================================================
+# Column allowlists
+# ================================================
+
+
+def test_every_required_calendar_column_is_also_allowed() -> None:
+    """A required column outside the allowlist would be demanded and then dropped.
+
+    The two tuples are separate facts, one from consumption and one from the
+    contract, so nothing but this stops them drifting into that contradiction.
+    """
+    assert set(CALENDAR_REQUIRED_COLUMNS) <= set(CALENDAR_ALLOWED_COLUMNS)
+
+
+def test_the_calendar_allows_more_than_it_requires() -> None:
+    """Collapsing the two tuples into one is the conformance check this project avoids.
+
+    If they ever became equal, a column the contract calls optional would take the
+    pipeline down when Feature changed it without coordinating.
+    """
+    assert set(CALENDAR_ALLOWED_COLUMNS) > set(CALENDAR_REQUIRED_COLUMNS)

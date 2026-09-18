@@ -920,6 +920,11 @@ forecasting = [
     { name = "statsforecast" },
     { name = "utilsforecast" },
 ]
+train = [
+    { name = "lightgbm" },
+    { name = "mlforecast" },
+    { name = "statsforecast" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -979,7 +984,11 @@ forecasting = [
     { name = "statsforecast", specifier = ">=2.0.1" },
     { name = "utilsforecast", specifier = ">=0.2.12" },
 ]
-train = []
+train = [
+    { name = "lightgbm", specifier = ">=4.7.0" },
+    { name = "mlforecast", specifier = "==1.1.0" },
+    { name = "statsforecast", specifier = ">=2.0.1" },
+]
 
 [[package]]
 name = "filelock"

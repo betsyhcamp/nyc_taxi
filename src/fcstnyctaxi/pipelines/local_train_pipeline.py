@@ -1,9 +1,9 @@
 """
-The local execution mode: calls `compose_configs_impl` with the arguments the KFP
-wrapper passes, and publishes the step directory. Vertex's mount removes the staging.
+The local execution mode: calls each Training impl with the arguments its KFP wrapper
+passes, and publishes each step directory. Vertex's mount removes the staging.
 
 Permanent, not a prototype: the mode that runs without an image, and where the
-emitted configs are read.
+emitted configs are read and the sidecars produced.
 """
 
 import argparse
@@ -13,6 +13,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from fcstnyctaxi.core.train.backtest_impl import backtest_impl
 from fcstnyctaxi.core.train.compose_configs_impl import (
     SourcedPath,
     compose_configs_impl,
@@ -35,9 +36,11 @@ from fcstnyctaxi.lib.utils import (
 
 logger = logging.getLogger(__name__)
 
-# This runner drives one step, and the step names its own directory under the run
-# root. No step accepts a full output path, so this is not a parameter.
-_STEP = "compose_configs"
+# Each step names its own directory under the run root. No step accepts a full
+# output path, so these are not parameters. Backtest appends the model name too,
+# which only the loop knows.
+_COMPOSE_STEP = "compose_configs"
+_BACKTEST_STEP = "backtest"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -47,7 +50,7 @@ def _parse_args() -> argparse.Namespace:
     location, so `require_known_environment` is the whole guard.
     """
     parser = argparse.ArgumentParser(
-        description="Compose and publish every Training config for one run."
+        description="Compose every Training config for one run, then back each model."
     )
     parser.add_argument(
         "--env",
@@ -79,6 +82,12 @@ def _parse_args() -> argparse.Namespace:
         "generated when absent.",
     )
     parser.add_argument(
+        "--model",
+        default=None,
+        help="Back only this model instead of every model in model_roles; must "
+        "name one this run composed.",
+    )
+    parser.add_argument(
         "--scratch-dir",
         # A TemporaryDirectory deletes on failure, which is when the staged
         # inputs and the half-written output matter most.
@@ -107,15 +116,35 @@ def _mirror_path(gcs_uri: str, root: Path) -> Path:
     return root / key
 
 
+def _select_models(model_names: list[str], selected: str | None) -> list[str]:
+    """The models to back, narrowed to `selected` when one was asked for.
+
+    Raises rather than filtering silently: a name outside the set matches nothing,
+    so the loop would back no model, write nothing, and exit clean.
+    """
+    if selected is None:
+        return list(model_names)
+    if selected not in model_names:
+        raise ValueError(
+            f"--model {selected!r} is not in this run's model set {list(model_names)}; "
+            "backing nothing would look like a successful run."
+        )
+    return [selected]
+
+
 def main() -> None:
-    """Compose one Training run's configs and publish them to its run prefix.
+    """Compose one Training run's configs, then back each model, publishing both.
+
+    A failing model stops the run rather than being collected: the publish is per
+    model and inside the loop, so an earlier model's sidecar is already complete.
 
     Raises:
         ValueError: If either run id is not path-safe, if exactly one URI override
             was given, if the Feature run published no manifest, if an input URI
             cannot be mirrored to a distinct local path, if `--env` has no
-            `environments/<env>.yaml`, on a failed lineage check, or on any
-            composition failure.
+            `environments/<env>.yaml`, if `--model` names no model this run
+            composed, on a failed lineage check, or on any composition or
+            backtest failure.
         RuntimeError: If the git hash cannot be determined, since a run whose
             commit is unknown cannot be reproduced from its own record.
         ValidationError: If an identity field or an override URI is malformed.
@@ -140,10 +169,10 @@ def main() -> None:
     # Held as a value rather than folded into step_uri: backtest, evaluate, and
     # final_fit will each append their own step name to this same prefix.
     run_prefix = resolve_run_prefix(config_dir, args.env, "train", run_id)
-    step_uri = f"{run_prefix}{_STEP}/"
+    compose_uri = f"{run_prefix}{_COMPOSE_STEP}/"
 
     mirror_root = args.scratch_dir
-    out_dir = _mirror_path(step_uri, mirror_root)
+    compose_dir = _mirror_path(compose_uri, mirror_root)
 
     # Called for the raise. Above the rmtree, and above the resolve's network read.
     compose_train_static_configs(config_dir, args.env)
@@ -163,15 +192,17 @@ def main() -> None:
         "compose_configs starting: run_id=%s feature_run_id=%s out_dir=%s uri=%s",
         run_id,
         args.feature_run_id,
-        out_dir,
-        step_uri,
+        compose_dir,
+        compose_uri,
     )
 
     # Scratch persists, so a retry under the same --run-id finds stale files.
-    # sync_to_gcs matches the prefix to out_dir; it does not clean out_dir.
-    if out_dir.exists():
-        shutil.rmtree(out_dir)
-    out_dir.mkdir(parents=True)
+    # sync_to_gcs matches the prefix to compose_dir; it does not clean it. The
+    # backtest step needs no equivalent: its eight filenames are fixed in code,
+    # while this step emits one config per model_roles entry.
+    if compose_dir.exists():
+        shutil.rmtree(compose_dir)
+    compose_dir.mkdir(parents=True)
 
     panel = SourcedPath(
         path=download_from_gcs(artifacts.panel_uri, panel_path.parent),
@@ -190,16 +221,19 @@ def main() -> None:
         expected_feature_run_id=args.feature_run_id,
         train_run_id=run_id,
         git_hash=git_hash,
-        out_dir=out_dir,
+        out_dir=compose_dir,
     )
+    # Above both publishes, so a rejected --model leaves the run prefix untouched.
+    model_names = _select_models(summary.model_names, args.model)
+
     # First, so a failed step publish still leaves a record of what the run read.
     # Not sync_to_gcs here: at the run prefix it deletes every sibling step's output.
-    upload_to_gcs(out_dir.parent / "run_identity.json", run_prefix)
+    upload_to_gcs(compose_dir.parent / "run_identity.json", run_prefix)
 
     # The impl writes manifest.json last, so publishing it alone and last makes its
     # presence at the prefix mean complete rather than started.
     uploaded, removed = sync_to_gcs(
-        out_dir, step_uri, completion_marker="manifest.json"
+        compose_dir, compose_uri, completion_marker="manifest.json"
     )
 
     logger.info(
@@ -208,7 +242,7 @@ def main() -> None:
         "last_complete_actual_month=%d start_months=%s out_dir=%s",
         uploaded,
         removed,
-        step_uri,
+        compose_uri,
         f"{run_prefix}run_identity.json",
         run_id,
         summary.model_names,
@@ -217,8 +251,38 @@ def main() -> None:
         summary.last_origin,
         summary.last_complete_actual_month,
         summary.start_months,
-        out_dir,
+        compose_dir,
     )
+
+    for model_name in model_names:
+        model_uri = f"{run_prefix}{_BACKTEST_STEP}/{model_name}/"
+        # Derived from the URI, like the compose step above, so the published
+        # location and the local one cannot disagree.
+        model_dir = _mirror_path(model_uri, mirror_root)
+
+        # The staged inputs, not a second download: the lineage check the impl
+        # runs must see the frames compose_configs checked.
+        backtest_summary = backtest_impl(
+            panel_path=panel.path,
+            calendar_path=calendar.path,
+            compose_configs_dir=compose_dir,
+            model_name=model_name,
+            out_dir=model_dir,
+        )
+        # Inside the loop, so a later model failing leaves this sidecar complete.
+        uploaded, removed = sync_to_gcs(
+            model_dir, model_uri, completion_marker="backtest_manifest.json"
+        )
+
+        # Row counts are the one summary field backtest_impl does not log itself.
+        logger.info(
+            "backtest published: model=%s uploaded=%d removed=%d uri=%s rows=%s",
+            model_name,
+            uploaded,
+            removed,
+            model_uri,
+            backtest_summary.output_rows,
+        )
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
-from models.lightgbm_weekly import (
+from fcstnyctaxi.models.lightgbm_weekly import (
     _set_lightgbm_iteration,
     lightgbm_weekly,
     lightgbm_weekly_predict,

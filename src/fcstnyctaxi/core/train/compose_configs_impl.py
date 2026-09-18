@@ -11,7 +11,9 @@ from typing import Any, cast
 
 import pandas as pd
 
-from fcstnyctaxi.lib.column_checks import require_columns
+from fcstnyctaxi.lib.column_checks import (
+    require_matching_feature_run_id,
+)
 from fcstnyctaxi.lib.config.bindings import (
     environment_bindings,
     model_names_from_roles,
@@ -31,11 +33,9 @@ from fcstnyctaxi.lib.period_utils import (
     generate_origins_for_periods,
     last_complete_actual_month,
 )
+from fcstnyctaxi.lib.storage_layout import composed_config_filename
 from fcstnyctaxi.schemas.config.train import EvaluationPeriods, TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
-
-# Only column required here. Moves to schemas/run_identity.py, if a 2nd module names it
-_LINEAGE_COLUMN = "feature_run_id"
 
 
 @dataclass(frozen=True)
@@ -108,57 +108,6 @@ def compose_train_static_configs(
     )
 
 
-def _single_feature_run_id(frame: pd.DataFrame, frame_name: str) -> str:
-    """The one non-null `feature_run_id` a frame carries.
-
-    Nulls are rejected separately because `nunique()` skips them, and
-    `require_columns` names which of the two frames lacks the column.
-    """
-    require_columns(frame, [_LINEAGE_COLUMN], frame_name)
-    column = frame[_LINEAGE_COLUMN]
-
-    null_count = int(column.isna().sum())
-    if null_count:
-        raise ValueError(
-            f"{frame_name} has {null_count} row(s) with a null "
-            f"{_LINEAGE_COLUMN}, so those rows carry no provenance."
-        )
-
-    distinct = sorted(column.unique())
-    if len(distinct) != 1:
-        raise ValueError(
-            f"{frame_name} mixes Feature runs: {len(distinct)} distinct "
-            f"{_LINEAGE_COLUMN} values {distinct[:5]}."
-        )
-
-    return str(distinct[0])
-
-
-def _observe_feature_run_id(
-    panel_df: pd.DataFrame, calendar_df: pd.DataFrame, expected: str
-) -> str:
-    """The id both frames carry, checked against the one the caller declared.
-
-    Consistency between frames is checked first, since a shared value must exist
-    before it can be compared. `expected` is a claim; the observation gets stamped.
-    """
-    panel_id = _single_feature_run_id(panel_df, "panel")
-    calendar_id = _single_feature_run_id(calendar_df, "calendar")
-
-    if panel_id != calendar_id:
-        raise ValueError(
-            f"panel feature_run_id {panel_id!r} != calendar {calendar_id!r}; "
-            f"origins and actuals would come from different Feature runs."
-        )
-    if panel_id != expected:
-        raise ValueError(
-            f"Frames carry feature_run_id {panel_id!r}, not the declared "
-            f"{expected!r}: wrong URIs, or wrong bytes at the requested location."
-        )
-
-    return panel_id
-
-
 def _derive_origins(
     panel_df: pd.DataFrame, calendar_df: pd.DataFrame, periods: EvaluationPeriods
 ) -> tuple[list[dict], list[int], int]:
@@ -226,9 +175,7 @@ def compose_configs_impl(
 ) -> ComposeConfigsSummary:
     """Compose and emit every Training destination for one run.
 
-    Keyword-only to address possible transposition inherent in large num inputs.
-    `expected_feature_run_id` is a claim, checked and then discarded; the
-    observed frame value is what `TrainRunIdentity` stamps. Every failure below
+    Keyword-only, since eight parameters invite transposition. Every failure below
     raises before the first write, so a failed run leaves no partial output.
 
     Args:
@@ -236,18 +183,16 @@ def compose_configs_impl(
         env (str): Environment selector.
         panel (SourcedPath): The actuals; opened for origins, stamped for lineage.
         calendar (SourcedPath): The fiscal calendar, same pairing.
-        expected_feature_run_id (str): The caller-declared upstream Feature run,
-            compared against both frames and then discarded.
+        expected_feature_run_id (str): A claim, checked then discarded; the
+            observed frame value is what `TrainRunIdentity` stamps.
         train_run_id (str): This run's own identifier.
         git_hash (str): The commit that produced this run.
-        out_dir (Path): Step directory the emitted configs are written into,
-            created if missing. Must sit under the run root, since
-            `run_identity.json` is written to its parent.
+        out_dir (Path): Step directory for the emitted configs, created if missing.
+            Must sit under the run root, since `run_identity.json` goes to its parent.
 
     Raises:
-        ValueError: If `panel` and `calendar` name one file; if `out_dir` is not a
-            step directory under `train_run_id`; on a failed lineage check; or on
-            any composition failure.
+        ValueError: If `panel` and `calendar` name one file, `out_dir` is not a step
+            directory under `train_run_id`, a lineage check fails, or composition fails.
         ValidationError: If an identity field is malformed.
 
     Returns:
@@ -261,7 +206,7 @@ def compose_configs_impl(
     environment, infra, modeling = compose_train_static_configs(config_dir, env)
     panel_df = pd.read_parquet(panel.path)
     calendar_df = pd.read_parquet(calendar.path)
-    feature_run_id = _observe_feature_run_id(
+    feature_run_id = require_matching_feature_run_id(
         panel_df, calendar_df, expected_feature_run_id
     )
     modeling_config = cast(TrainModelingConfig, modeling.config)
@@ -287,7 +232,7 @@ def compose_configs_impl(
         composed = compose_config(
             config_dir, bindings, {"cross_validation": {"forecast_origins": origins}}
         )
-        files[f"composed_config_{model_name}.yaml"] = composed
+        files[composed_config_filename(model_name)] = composed
         destinations[bindings[0].destination_key] = composed
 
     # Both built before the first write; on Vertex out_dir is the durable destination.
@@ -308,6 +253,9 @@ def compose_configs_impl(
             f"out_dir {out_dir} must be a step directory under the run root "
             f"{train_run_id!r}, since run_identity.json is written beside it."
         )
+
+    # Otherwise a failed rerun leaves the old manifest over a mix of two runs' files.
+    (out_dir / "manifest.json").unlink(missing_ok=True)
 
     # All four dumped with save_config's model-branch flags; exclude_none drops nulls.
     out_dir.mkdir(parents=True, exist_ok=True)

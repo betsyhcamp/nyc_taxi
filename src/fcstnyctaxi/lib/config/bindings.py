@@ -272,7 +272,7 @@ def model_names_from_roles(model_roles: ModelRoles) -> tuple[str, ...]:
 
     One name per ``train/models/<name>.yaml`` to compose. A name in both roles
     composes once — ``benchmark == challenger`` is a legitimate smoke test — and
-    deduplicating here rather than downstream is what stops PR 4's compile-time
+    deduplicating here rather than downstream is what stops the compile-time
     loop emitting two KFP tasks with one name, a DAG error several PRs from the
     line of ``train/modeling.yaml`` that caused it.
     """

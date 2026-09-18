@@ -1,17 +1,38 @@
-"""Feature's run-root outputs manifest run_outputs.json, as a typed input contract.
+"""The Feature-to-Training contract: `run_outputs.json`, and the columns it promises.
 
-Written by the Feature pipeline as last action and read by Training's callers to
-resolve two artifact URIs from a ``feature_run_id`` alone.
+No `extra="forbid"`, unlike `run_identity.py`: an added field in a third party's
+record must not break a consumer that never reads it. `frozen=True` carries over,
+since a `FeatureArtifacts` becomes provenance.
 
-No ``extra="forbid"``, unlike ``run_identity.py``: that is right for a record this
-repo writes and wrong for a third party's, where an added field would break a
-consumer that never reads it. ``frozen=True`` does carry over, since a
-``FeatureArtifacts`` becomes provenance. The freeze is shallow.
+The column tuples are a projection, not a validation: an allowlist, so a new metadata
+column on a consultant-owned artifact cannot become a model input. Feature owns shape.
 """
 
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+PANEL_REQUIRED_COLUMNS: tuple[str, ...] = ("unique_id", "ds", "y")
+"""Everything the panel must contain; required and allowed are one list."""
+
+CALENDAR_REQUIRED_COLUMNS: tuple[str, ...] = (
+    "ds",
+    "fiscal_year_month",
+    "origin_month_fraction_elapsed",
+    "fiscal_week_of_month",
+    "fiscal_month",
+    "weeks_in_month",
+    "count_workdays",
+)
+"""Calendar columns with a named consumer, so absence is a failure."""
+
+CALENDAR_ALLOWED_COLUMNS: tuple[str, ...] = CALENDAR_REQUIRED_COLUMNS + (
+    "fiscal_year",
+    "fiscal_year_week",
+)
+"""Everything the contract declares. The two extras are allowed but not required:
+`exog_features` could name them, and the contract lets them change uncoordinated.
+"""
 
 
 class FeatureArtifacts(BaseModel):

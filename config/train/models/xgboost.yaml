@@ -1,7 +1,7 @@
 # BacktestConfig, third layer. Allowed keys: {model}.
 #
-# hyperparameters are intentionally omitted until PR 1 adds
-# fcstnyctaxi/models/xgboost_weekly.py. ModelConfig requires only
+# hyperparameters are intentionally omitted until fcstnyctaxi/models/xgboost_weekly.py
+# exists. ModelConfig requires only
 # fit_predict_callable, so this validates as written, and inventing provisional
 # tuning numbers would look authoritative while being certain to be replaced.
 #

@@ -1,0 +1,22 @@
+# BacktestConfig, third layer. Allowed keys: {model}.
+#
+# Replicates notebooks/backtest_configs/model_weekly_lightgbm.yaml exactly: the
+# migration gate runs this model on both sides, so any difference means the two
+# sides fit different models and the comparison proves nothing. n_estimators is
+# 1050, not the 1025 the calibration note records as adopted; the config is what
+# ran, so the config is authoritative for reproduction.
+#
+# The only model declaring predict_callable, which tsbricks resolves through
+# resolve_predict rather than resolve_model.
+model:
+  fit_predict_callable: fcstnyctaxi.models.lightgbm_weekly.lightgbm_weekly
+  predict_callable: fcstnyctaxi.models.lightgbm_weekly.lightgbm_weekly_predict
+  hyperparameters:
+    freq: W-SUN
+    lags: [1, 52]
+    rolling_mean_window: 4
+    num_leaves: 31
+    learning_rate: 0.05
+    min_data_in_leaf: 125
+    n_estimators: 1050
+    n_jobs: 1
