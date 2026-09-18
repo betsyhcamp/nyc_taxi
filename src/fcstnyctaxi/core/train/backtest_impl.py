@@ -110,6 +110,53 @@ class BacktestSummary:
         }
 
 
+def _require_unique_origins(origin_horizon_pairs: list[tuple]) -> None:
+    """Replaces the notebook's `seen_origins` skip; outputs are keyed by fold."""
+    repeated = sorted(
+        origin
+        for origin, count in Counter(o for o, _ in origin_horizon_pairs).items()
+        if count > 1
+    )
+    if repeated:
+        raise ValueError(
+            f"forecast origins repeat {repeated}: two folds would share one "
+            "forecast_origin_date and double-key every output file."
+        )
+
+
+def _require_matching_fold_count(
+    cv_folds: dict, origin_horizon_pairs: list[tuple]
+) -> None:
+    """generate_folds emits one fold per pair, so only an upstream change breaks it."""
+    if len(cv_folds) != len(origin_horizon_pairs):
+        raise ValueError(
+            f"fold count {len(cv_folds)} against {len(origin_horizon_pairs)} "
+            "origin/horizon pairs, indexed by fold position: more folds is an "
+            "IndexError mid-loop, fewer scores each fold against a prefix."
+        )
+
+
+def _require_unique_monthly_series_keys(monthly_series_df: pd.DataFrame) -> None:
+    """Caused by a duplicated unique_id in the panel, which nothing upstream rejects."""
+    duplicated = monthly_series_df.duplicated(_MONTHLY_SERIES_KEYS)
+    if duplicated.any():
+        sample = monthly_series_df.loc[duplicated, _MONTHLY_SERIES_KEYS].head(3)
+        raise ValueError(
+            f"monthly_series has {int(duplicated.sum())} duplicate key row(s), which "
+            f"inflate every weighted sum: {sample.to_dict('records')}"
+        )
+
+
+def _require_mapped_forecast_origins(cv_forecasts_df: pd.DataFrame) -> None:
+    """.map() returns NaT for a missing key, silently nulling an output's key column."""
+    unmapped = int(cv_forecasts_df["forecast_origin_date"].isna().sum())
+    if unmapped:
+        raise ValueError(
+            f"{unmapped} raw forecast row(s) have a null forecast_origin_date: "
+            "fold_id_to_origin does not cover every fold."
+        )
+
+
 def compute_backtest_outputs(
     *,
     cfg: BacktestConfig,
@@ -156,23 +203,8 @@ def compute_backtest_outputs(
     monthly_series_rows = []
     components_rows = []
 
-    # Replaces the notebook's `seen_origins` skip; outputs are keyed by fold.
-    repeated = sorted(
-        origin
-        for origin, count in Counter(o for o, _ in origin_horizon_pairs).items()
-        if count > 1
-    )
-    if repeated:
-        raise ValueError(
-            f"forecast origins repeat {repeated}: two folds would share one "
-            "forecast_origin_date and double-key every output file."
-        )
-    if len(cv_folds) != len(origin_horizon_pairs):
-        raise ValueError(
-            f"fold count {len(cv_folds)} against {len(origin_horizon_pairs)} "
-            "origin/horizon pairs, indexed by fold position: more folds is an "
-            "IndexError mid-loop, fewer scores each fold against a prefix."
-        )
+    _require_unique_origins(origin_horizon_pairs)
+    _require_matching_fold_count(cv_folds, origin_horizon_pairs)
 
     fraction_by_origin = calendar_df.set_index("ds")["origin_month_fraction_elapsed"]
 
@@ -260,13 +292,7 @@ def compute_backtest_outputs(
     metrics = pd.concat(per_fold_metrics, ignore_index=True)
     monthly_series_df = pd.concat(monthly_series_rows, ignore_index=True)
 
-    duplicated = monthly_series_df.duplicated(_MONTHLY_SERIES_KEYS)
-    if duplicated.any():
-        sample = monthly_series_df.loc[duplicated, _MONTHLY_SERIES_KEYS].head(3)
-        raise ValueError(
-            f"monthly_series has {int(duplicated.sum())} duplicate key row(s), which "
-            f"inflate every weighted sum: {sample.to_dict('records')}"
-        )
+    _require_unique_monthly_series_keys(monthly_series_df)
 
     monthly_forecast_components_df = pd.concat(
         components_rows, ignore_index=True
@@ -302,12 +328,7 @@ def compute_backtest_outputs(
         .astype(f"datetime64[{ORIGIN_TIME_UNIT}]")  # one unit across every output file
     )
 
-    unmapped = int(cv_forecasts_df["forecast_origin_date"].isna().sum())
-    if unmapped:
-        raise ValueError(
-            f"{unmapped} raw forecast row(s) have a null forecast_origin_date: "
-            "fold_id_to_origin does not cover every fold."
-        )
+    _require_mapped_forecast_origins(cv_forecasts_df)
 
     # Explicit reindex: validate_sidecar asserts the first column is the origin.
     cv_forecasts_df = cv_forecasts_df[_RAW_CV_FORECAST_COLUMNS]
