@@ -254,6 +254,9 @@ def compose_configs_impl(
             f"{train_run_id!r}, since run_identity.json is written beside it."
         )
 
+    # Otherwise a failed rerun leaves the old manifest over a mix of two runs' files.
+    (out_dir / "manifest.json").unlink(missing_ok=True)
+
     # All four dumped with save_config's model-branch flags; exclude_none drops nulls.
     out_dir.mkdir(parents=True, exist_ok=True)
     for filename, composed in files.items():

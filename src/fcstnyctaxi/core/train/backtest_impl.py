@@ -320,6 +320,13 @@ def compute_backtest_outputs(
     )
 
 
+def _origin_label(origin: pd.Timestamp | int) -> str:
+    """The spelling `compose_configs` records, so one run states an origin one way."""
+    return (
+        origin.date().isoformat() if isinstance(origin, pd.Timestamp) else str(origin)
+    )
+
+
 def _build_manifest(
     model_name: str,
     summary: BacktestSummary,
@@ -367,7 +374,8 @@ def backtest_impl(
     Keyword-only: three adjacent `Path` parameters transpose without a type error, and
     a swapped panel and calendar surfaces much later as a missing column. No provenance
     scalars: reading `run_identity.json` makes a disagreeing parameter unrepresentable.
-    Every failure below raises before the first write, so a failure leaves no sidecar.
+    The completion marker is deleted once the guards pass, so a failed run leaves no
+    marker even when it has overwritten part of an earlier sidecar.
 
     Args:
         panel_path: The weekly actuals, stamped with a `feature_run_id`.
@@ -407,6 +415,9 @@ def backtest_impl(
             f"{identity.train_run_id!r}: the manifest would name a run it is not under."
         )
 
+    # Otherwise a failed rerun leaves the old manifest over a mix of two runs' files.
+    (out_dir / _MANIFEST_FILENAME).unlink(missing_ok=True)
+
     composed_config_path = compose_configs_dir / composed_config_filename(model_name)
     cfg = BacktestConfig.model_validate(
         yaml.safe_load(composed_config_path.read_text())
@@ -435,9 +446,13 @@ def backtest_impl(
         cfg=cfg, modeling=modeling, ts_df=panel_df, calendar_df=calendar_df
     )
 
-    origins = sorted(
-        str(origin) for origin, _ in cfg.cross_validation.origin_horizon_pairs()
-    )
+    # Not sorted(str(...)): 10 sorts before 2, and `2025-4-27` after `2025-05-04`.
+    origins = [
+        _origin_label(origin)
+        for origin, _ in normalized_origin_horizon_pairs(
+            cfg.cross_validation.origin_horizon_pairs(), cfg.data.freq
+        )
+    ]
     summary = BacktestSummary(
         n_origins=len(origins),
         first_origin=origins[0],

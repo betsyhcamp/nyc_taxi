@@ -14,6 +14,7 @@ from fcstnyctaxi.core.train.backtest_impl import (
     BacktestOutputs,
     BacktestSummary,
     _build_manifest,
+    _origin_label,
     backtest_impl,
     compute_backtest_outputs,
 )
@@ -389,6 +390,21 @@ def test_summary_as_dict_survives_json_serialisation() -> None:
     json.dumps(_summary().as_dict())
 
 
+@pytest.mark.parametrize(
+    ("origin", "expected"),
+    [
+        (pd.Timestamp("2025-4-27"), "2025-04-27"),
+        (pd.Timestamp("2025-05-04T00:00:00"), "2025-05-04"),
+        (5, "5"),
+    ],
+)
+def test_an_origin_is_labelled_the_way_compose_configs_spells_it(
+    origin: Any, expected: str
+) -> None:
+    """The schema admits mixed spellings with only a warning, and freq=1 admits ints."""
+    assert _origin_label(origin) == expected
+
+
 def test_the_manifest_records_the_effective_settings_not_the_defaults() -> None:
     """No sidecar has ever recorded these, because the notebook took the defaults."""
     shipped = cast(
@@ -442,12 +458,20 @@ _FULL_SERIES = {
     "late": (200.0, 66),
 }
 
-_SIDECAR_FILENAMES = frozenset(_OUTPUT_FILENAMES.values()) | {
-    "fiscal_calendar.parquet",
-    "time_series_snapshot.parquet",
-    "composed_config.yaml",
-    "backtest_manifest.json",
-}
+# Literal, not derived from the writer's own map: deriving it moves the expectation
+# with any deletion from that map, so dropping a file from the sidecar stays green.
+_SIDECAR_FILENAMES = frozenset(
+    {
+        "monthly_series.parquet",
+        "monthly_forecast_components.parquet",
+        "metrics.parquet",
+        "raw_cv_forecasts.parquet",
+        "fiscal_calendar.parquet",
+        "time_series_snapshot.parquet",
+        "composed_config.yaml",
+        "backtest_manifest.json",
+    }
+)
 
 
 @pytest.fixture(scope="module")
@@ -685,21 +709,27 @@ def test_a_run_writes_the_whole_sidecar(completed_run: Path) -> None:
     assert {path.name for path in completed_run.iterdir()} == _SIDECAR_FILENAMES
 
 
-def test_the_manifest_is_absent_when_an_earlier_step_fails(
-    staged: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "failing_collaborator", ["compute_backtest_outputs", "_build_manifest"]
+)
+def test_a_failed_rerun_leaves_no_completion_marker(
+    staged: dict[str, Any], monkeypatch: pytest.MonkeyPatch, failing_collaborator: str
 ) -> None:
-    """Its presence is the completion marker, so it must not survive a failed run."""
+    """Both failure positions: before the writes, and partway through them."""
 
-    def _fail(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        raise RuntimeError("manifest build failed")
+    def _fail(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("attempt failed")
 
-    monkeypatch.setattr("fcstnyctaxi.core.train.backtest_impl._build_manifest", _fail)
+    backtest_impl(**staged)
+    assert (staged["out_dir"] / "backtest_manifest.json").is_file()
 
+    monkeypatch.setattr(
+        f"fcstnyctaxi.core.train.backtest_impl.{failing_collaborator}", _fail
+    )
     with pytest.raises(RuntimeError):
         backtest_impl(**staged)
 
-    written = {path.name for path in staged["out_dir"].iterdir()}
-    assert written == _SIDECAR_FILENAMES - {"backtest_manifest.json"}
+    assert not (staged["out_dir"] / "backtest_manifest.json").exists()
 
 
 def test_the_manifest_agrees_with_the_files_beside_it(completed_run: Path) -> None:
