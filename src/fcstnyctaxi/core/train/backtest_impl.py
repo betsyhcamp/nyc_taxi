@@ -449,7 +449,7 @@ def backtest_impl(
 
     panel_df = pd.read_parquet(panel_path)
     calendar_df = pd.read_parquet(calendar_path)
-    # Catches a DAG wiring a different panel here than compose_configs read.
+    # Catches frames from two Feature runs, or wrong bytes at the paths handed in.
     require_matching_feature_run_id(panel_df, calendar_df, identity.feature_run_id)
 
     # Before the snapshots: a moved upstream timestamp must not fail input equivalence.
