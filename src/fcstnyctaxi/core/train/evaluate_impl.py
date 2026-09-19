@@ -1,14 +1,58 @@
 import logging
+from collections.abc import Callable, Iterator
+from itertools import product
+from typing import Any
 
 import pandas as pd
 
 from fcstnyctaxi.lib.column_checks import require_columns
+from fcstnyctaxi.lib.fold_metrics import (
+    compute_signed_bias_per_series,
+    compute_signed_bias_pooled,
+    compute_wape,
+    compute_weighted_signed_bias,
+    compute_wrmae_per_series,
+    compute_wrmae_pooled,
+)
 from fcstnyctaxi.lib.period_utils import ORIGIN_TIME_UNIT, derive_horizon_label
 
 _log = logging.getLogger(__name__)
 
 _FOLD_KEYS = ["forecast_origin_date", "predicted_fiscal_year_month"]
 _JOIN_KEYS = _FOLD_KEYS + ["unique_id"]
+_SCORE_KEYS = ["model", "horizon", "tier", "metric"]
+
+GLOBAL_TIER = "global"
+"""The aggregate row beside the tier partition, so never sum across `tier`."""
+
+# The vocabulary is the function name minus `compute_`, so a seventh names itself.
+# Two mappings rather than one adapter: the two call shapes below are real.
+_RELATIVE_METRIC_FNS: dict[
+    str, Callable[[pd.DataFrame, pd.DataFrame, str | None], float]
+] = {
+    "wrmae_pooled": compute_wrmae_pooled,
+    "wrmae_per_series": compute_wrmae_per_series,
+}
+_ABSOLUTE_METRIC_FNS: dict[str, Callable[[pd.DataFrame, str | None], float]] = {
+    "wape": compute_wape,
+    "weighted_signed_bias": compute_weighted_signed_bias,
+    "signed_bias_pooled": compute_signed_bias_pooled,
+    "signed_bias_per_series": compute_signed_bias_per_series,
+}
+_METRIC_NAMES = tuple(_RELATIVE_METRIC_FNS) + tuple(_ABSOLUTE_METRIC_FNS)
+
+# What the metric functions consume, once a side is narrowed to one forecast.
+# `horizon` rides along so a caller can score a summary-grain slice of a view.
+_VIEW_COLUMNS = _JOIN_KEYS + [
+    "monthly_forecast",
+    "actual_monthly_total",
+    "series_weight",
+    "tier",
+    "horizon",
+]
+
+_FOLD_GRAIN = ["model", "horizon", "tier"] + _FOLD_KEYS
+_FOLD_METRIC_COLUMNS = _FOLD_GRAIN + ["metric", "value", "n_obs"]
 
 # The columns evaluate takes off each sidecar's monthly_series.parquet.
 _MONTHLY_SERIES_COLUMNS = _JOIN_KEYS + [
@@ -245,3 +289,101 @@ def _build_base_frame(
     # No derived error columns: inputs only, so the near-zero guard on any ratio
     # stays a consumer's decision rather than the substrate's.
     return base[_BASE_FRAME_COLUMNS].sort_values(_JOIN_KEYS).reset_index(drop=True)
+
+
+def _model_view(base: pd.DataFrame, forecast_column: str) -> pd.DataFrame:
+    """One model's slice of the wide base frame, in the shape the metrics take."""
+    return base.rename(columns={forecast_column: "monthly_forecast"})[_VIEW_COLUMNS]
+
+
+def _global_first_tier(tier_values: pd.Series, present: pd.Index) -> pd.Series:
+    """`tier` on a score table: ordered, with the `global` aggregate row first.
+
+    A dashboard reading only summary_metrics has no other ordering source, and a
+    string column sorts high, low, middle, very_high, very_low.
+    """
+    return pd.Series(
+        pd.Categorical(tier_values, categories=[GLOBAL_TIER, *present], ordered=True),
+        index=tier_values.index,
+        name="tier",
+    )
+
+
+def _model_folds(
+    model_views: dict[str, tuple[pd.DataFrame, pd.DataFrame]],
+) -> Iterator[tuple[str, tuple, pd.DataFrame, pd.DataFrame]]:
+    """Every (model, fold) pair, both sides already cut to that fold.
+
+    Split out because the axes are not independent: a fold slice needs its model,
+    so the groupby is per-model setup. Inlining it wedges two statements between
+    two `for` statements.
+    """
+    for model, (challenger, benchmark) in model_views.items():
+        challenger_folds = dict(tuple(challenger.groupby(_FOLD_KEYS, observed=True)))
+        benchmark_folds = dict(tuple(benchmark.groupby(_FOLD_KEYS, observed=True)))
+        for fold_key, challenger_fold in challenger_folds.items():
+            yield model, fold_key, challenger_fold, benchmark_folds[fold_key]
+
+
+def _score_folds(
+    base: pd.DataFrame, *, challenger_model: str, benchmark_model: str
+) -> pd.DataFrame:
+    """Every metric for both models at fold grain, in long form.
+
+    Both models run through the same six with no branch, so the benchmark scores
+    itself and reads 1.0: no conditional, a square metric set under `pivot_table`,
+    and the reference line on a skill chart. Never test it with `== 1.0`, since
+    `wrmae_per_series` renormalizes weights and lands 1.0 to float tolerance.
+
+    `n_obs` counts rows available before metric-specific exclusions, not rows used.
+    Rows used would need all six functions to return a count.
+    """
+    challenger_view = _model_view(base, "monthly_forecast_ch")
+    benchmark_view = _model_view(base, "monthly_forecast_bm")
+
+    # A model in both roles is a legitimate smoke test and must score once: two
+    # identical row sets under one name would double every n_obs.
+    model_views = {challenger_model: (challenger_view, benchmark_view)}
+    model_views.setdefault(benchmark_model, (benchmark_view, benchmark_view))
+
+    tier_slices: list[tuple[str, str | None]] = [(GLOBAL_TIER, None)] + [
+        (label, label) for label in base["tier"].cat.categories
+    ]
+    # Horizon is a function of the origin alone, so every fold has exactly one,
+    # which is also why horizon does not multiply this table's row count.
+    fold_horizons = base.drop_duplicates(_FOLD_KEYS).set_index(_FOLD_KEYS)["horizon"]
+
+    rows = []
+    for fold, tier_slice in product(_model_folds(model_views), tier_slices):
+        model, fold_key, challenger_fold, benchmark_fold = fold
+        tier_label, tier_value = tier_slice
+        origin, predicted_month = fold_key
+
+        row: dict[str, Any] = {
+            "model": model,
+            "horizon": fold_horizons.loc[fold_key],
+            "tier": tier_label,
+            "forecast_origin_date": origin,
+            "predicted_fiscal_year_month": predicted_month,
+            "n_obs": len(challenger_fold)
+            if tier_value is None
+            else int((challenger_fold["tier"] == tier_value).sum()),
+        }
+        for name, relative_fn in _RELATIVE_METRIC_FNS.items():
+            row[name] = relative_fn(challenger_fold, benchmark_fold, tier_value)
+        for name, absolute_fn in _ABSOLUTE_METRIC_FNS.items():
+            row[name] = absolute_fn(challenger_fold, tier_value)
+        rows.append(row)
+
+    long = pd.DataFrame(rows).melt(
+        id_vars=_FOLD_GRAIN + ["n_obs"],
+        value_vars=list(_METRIC_NAMES),
+        var_name="metric",
+        value_name="value",
+    )
+    long["tier"] = _global_first_tier(long["tier"], base["tier"].cat.categories)
+    return (
+        long[_FOLD_METRIC_COLUMNS]
+        .sort_values(_SCORE_KEYS + _FOLD_KEYS)
+        .reset_index(drop=True)
+    )

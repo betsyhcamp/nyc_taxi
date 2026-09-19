@@ -2,19 +2,26 @@ import json
 from pathlib import Path
 from typing import cast
 
+import numpy as np
 import pandas as pd
 import pytest
 import yaml
 
 from fcstnyctaxi.core.train.evaluate_impl import (
+    _FOLD_KEYS,
+    _RELATIVE_METRIC_FNS,
+    GLOBAL_TIER,
     _build_base_frame,
     _check_base_frame,
+    _model_view,
+    _score_folds,
 )
 from fcstnyctaxi.lib.config.bindings import (
     model_names_from_roles,
     train_modeling_bindings,
 )
 from fcstnyctaxi.lib.config.composition import compose_config, save_config
+from fcstnyctaxi.lib.fold_metrics import compute_wape
 from fcstnyctaxi.lib.period_utils import ORIGIN_TIME_UNIT, derive_horizon_label
 from fcstnyctaxi.lib.storage_layout import composed_config_filename
 from fcstnyctaxi.lib.utils import get_project_root_dir
@@ -890,3 +897,218 @@ def test_categories_are_compared_before_values_so_the_comparison_cannot_raise(
 
     with pytest.raises(ValueError, match="tier categories differ"):
         _check_base_frame(restored)
+
+
+# ================================================
+# _score_folds: both models, every metric, at fold grain
+# ================================================
+
+
+@pytest.fixture(scope="module")
+def base_frame(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+) -> pd.DataFrame:
+    """The joined substrate, shared by the assertions below."""
+    return _base(challenger_ms, benchmark_ms, calendar_df, modeling)
+
+
+@pytest.fixture(scope="module")
+def fold_metrics(
+    base_frame: pd.DataFrame, modeling: TrainModelingConfig
+) -> pd.DataFrame:
+    """One scoring of the shaped fixture, shared by the assertions below."""
+    return _score_folds(
+        base_frame,
+        challenger_model=modeling.model_roles.challenger,
+        benchmark_model=modeling.model_roles.benchmark,
+    )
+
+
+def test_the_fold_table_has_one_row_per_model_tier_metric_and_fold(
+    fold_metrics: pd.DataFrame, modeling: TrainModelingConfig
+) -> None:
+    """A duplicated cell would double an n_obs and skew every mean derived from
+    it, while the table still looks square."""
+    roles = modeling.model_roles
+
+    assert not fold_metrics.duplicated(
+        ["model", "horizon", "tier", "metric", *_FOLD_KEYS]
+    ).any()
+    assert set(fold_metrics["model"]) == {roles.challenger, roles.benchmark}
+
+
+def test_both_models_carry_the_same_metric_set(
+    fold_metrics: pd.DataFrame, modeling: TrainModelingConfig
+) -> None:
+    """Scoring the benchmark on the absolute metrics alone would make the set
+    ragged by model, so any pivot on model has holes."""
+    roles = modeling.model_roles
+    challenger = set(
+        fold_metrics.loc[fold_metrics["model"] == roles.challenger, "metric"]
+    )
+    benchmark = set(
+        fold_metrics.loc[fold_metrics["model"] == roles.benchmark, "metric"]
+    )
+
+    assert challenger == benchmark
+    assert len(challenger) > 1
+
+
+def test_the_benchmark_scores_one_against_itself(
+    fold_metrics: pd.DataFrame, modeling: TrainModelingConfig
+) -> None:
+    """The reference line on a skill chart, and a live check that the scoring path
+    is wired. Exact for the pooled form, whose numerator and denominator are
+    bit-identical sums, and to tolerance for the per-series form, which
+    renormalizes weights and does return 0.9999999999999999 on this fixture."""
+    benchmark = fold_metrics[fold_metrics["model"] == modeling.model_roles.benchmark]
+    pooled = benchmark.loc[benchmark["metric"] == "wrmae_pooled", "value"].dropna()
+    per_series = benchmark.loc[
+        benchmark["metric"] == "wrmae_per_series", "value"
+    ].dropna()
+
+    assert not pooled.empty
+    assert (pooled == 1.0).all()
+    np.testing.assert_allclose(per_series, 1.0, rtol=1e-12)
+
+
+def test_the_challenger_outscores_the_benchmark_in_every_cell(
+    fold_metrics: pd.DataFrame, modeling: TrainModelingConfig
+) -> None:
+    """The fixture wins everywhere by construction, so a skill ratio that is not
+    below 1.0 means the two sides were never actually compared: handing both
+    models one forecast column reads as a clean 1.0 rather than as an error."""
+    challenger = fold_metrics[fold_metrics["model"] == modeling.model_roles.challenger]
+    relative = challenger.loc[
+        challenger["metric"].isin(_RELATIVE_METRIC_FNS), "value"
+    ].dropna()
+
+    assert not relative.empty
+    assert (relative < 1.0).all()
+
+
+def test_the_relative_metrics_are_nan_in_the_same_cells_for_both_models(
+    fold_metrics: pd.DataFrame, modeling: TrainModelingConfig
+) -> None:
+    """Both calls exclude on the benchmark's errors, so a cell where the benchmark
+    reads 1.0 and the challenger reads nan is impossible under correct code."""
+    roles = modeling.model_roles
+    keys = ["horizon", "tier", "metric", *_FOLD_KEYS]
+    relative = fold_metrics[fold_metrics["metric"].isin(_RELATIVE_METRIC_FNS)]
+
+    challenger = relative[relative["model"] == roles.challenger].set_index(keys)[
+        "value"
+    ]
+    benchmark = relative[relative["model"] == roles.benchmark].set_index(keys)["value"]
+    benchmark = benchmark.reindex(challenger.index)
+
+    assert challenger.isna().any()
+    assert (challenger.isna() == benchmark.isna()).all()
+
+
+def test_a_view_scores_the_same_as_the_sidecar_frame_it_came_from(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+) -> None:
+    """The check that would have caught the row-set asymmetry. The relative
+    metrics merge the two sides while the absolute ones never do, so a join that
+    silently dropped rows would move one family and leave the other alone."""
+    base = _base(challenger_ms, benchmark_ms, calendar_df, modeling)
+
+    view = _model_view(base, "monthly_forecast_ch")
+
+    np.testing.assert_allclose(compute_wape(view), compute_wape(challenger_ms))
+
+
+def test_the_tier_slices_partition_the_global_row(
+    fold_metrics: pd.DataFrame,
+) -> None:
+    """global is an aggregate beside the partition, not one of its members, which
+    is the fact that makes summing across tier wrong."""
+    keys = ["model", "metric", *_FOLD_KEYS]
+    is_global = fold_metrics["tier"] == GLOBAL_TIER
+
+    whole = fold_metrics[is_global].set_index(keys)["n_obs"].sort_index()
+    parts = fold_metrics[~is_global].groupby(keys, observed=True)["n_obs"].sum()
+
+    assert (whole == parts.reindex(whole.index)).all()
+
+
+def test_a_tier_with_no_rows_in_a_fold_scores_nan(
+    fold_metrics: pd.DataFrame,
+) -> None:
+    """The nan a nanmean drops one grain up. Without a fold missing a tier the
+    derivation's exclusion behaviour is never exercised."""
+    empty = fold_metrics[fold_metrics["n_obs"] == 0]
+
+    assert not empty.empty
+    assert empty["value"].isna().all()
+
+
+def test_n_obs_counts_rows_available_rather_than_rows_used(
+    fold_metrics: pd.DataFrame, base_frame: pd.DataFrame
+) -> None:
+    """Against an independent count, since rows used is the plausible wrong
+    answer and it reads as a smaller number rather than as an error. One count
+    per cell too: rows used would differ by metric, the fixture's dormant series
+    being dropped by the per-series reductions and kept by wape."""
+    available = base_frame.groupby(_FOLD_KEYS, observed=True).size().sort_index()
+    counted = (
+        fold_metrics[fold_metrics["tier"] == GLOBAL_TIER]
+        .groupby(_FOLD_KEYS, observed=True)["n_obs"]
+        .agg(["nunique", "max"])
+        .sort_index()
+    )
+
+    assert (counted["nunique"] == 1).all()
+    assert (counted["max"] == available).all()
+
+
+def test_tier_is_ordered_with_the_global_row_first(
+    fold_metrics: pd.DataFrame,
+) -> None:
+    """A dashboard reading one score table has no other ordering source, and the
+    order below is the one an object column would not give."""
+    categories = list(fold_metrics["tier"].cat.categories)
+
+    assert fold_metrics["tier"].cat.ordered
+    assert categories[0] == GLOBAL_TIER
+    assert categories != sorted(categories)
+
+
+def test_every_fold_carries_exactly_one_horizon(
+    fold_metrics: pd.DataFrame,
+) -> None:
+    """Horizon is a function of the origin alone, which is why it does not
+    multiply this table. A fold spanning two would double every derived cell."""
+    per_fold = fold_metrics.groupby(_FOLD_KEYS, observed=True)["horizon"].nunique()
+
+    assert (per_fold == 1).all()
+    assert fold_metrics["horizon"].nunique() > 1
+
+
+def test_one_model_in_both_roles_scores_once(
+    challenger_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+) -> None:
+    """The smoke test ModelRoles blesses. Scoring the name twice would double
+    every n_obs while the table still looked well formed."""
+    name = modeling.model_roles.challenger
+    base = _base(
+        challenger_ms, challenger_ms, calendar_df, modeling, benchmark_model=name
+    )
+
+    scored = _score_folds(base, challenger_model=name, benchmark_model=name)
+
+    assert set(scored["model"]) == {name}
+    assert not scored.duplicated(
+        ["model", "horizon", "tier", "metric", *_FOLD_KEYS]
+    ).any()
+    pooled = scored.loc[scored["metric"] == "wrmae_pooled", "value"].dropna()
+    assert (pooled == 1.0).all()
