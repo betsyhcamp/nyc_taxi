@@ -845,6 +845,63 @@ def test_a_sidecar_without_the_origin_fraction_still_builds(
     assert base["origin_month_fraction_elapsed"].notna().all()
 
 
+@pytest.mark.parametrize(
+    ("duplicated_in", "side"), [("challenger_ms", "left"), ("benchmark_ms", "right")]
+)
+def test_a_duplicated_join_key_raises_rather_than_fanning_the_frame_out(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+    duplicated_in: str,
+    side: str,
+) -> None:
+    """A duplicated row agrees with itself, so every other check passes while the
+    join inflates n_obs. pandas names the side, which has its own owner."""
+    frames = {"challenger_ms": challenger_ms, "benchmark_ms": benchmark_ms}
+    doubled = frames[duplicated_in]
+    frames[duplicated_in] = pd.concat([doubled, doubled.iloc[[0]]], ignore_index=True)
+
+    with pytest.raises(ValueError, match=side):
+        _base(calendar_df=calendar_df, modeling=modeling, **frames)
+
+
+@pytest.mark.parametrize("nulled_in", ["challenger_ms", "benchmark_ms"])
+def test_a_null_forecast_raises_rather_than_scoring_as_zero(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+    nulled_in: str,
+) -> None:
+    """The two forecasts are never compared, so nothing else sees this. A null
+    deflates the ratio on the challenger side and inflates it on the benchmark's."""
+    frames = {"challenger_ms": challenger_ms, "benchmark_ms": benchmark_ms}
+    frames[nulled_in] = _changed(frames[nulled_in], "monthly_forecast", np.nan)
+
+    with pytest.raises(ValueError, match="null 'monthly_forecast"):
+        _base(calendar_df=calendar_df, modeling=modeling, **frames)
+
+
+@pytest.mark.parametrize("column", ["actual_monthly_total", "series_weight"])
+def test_a_shared_input_nulled_on_both_sides_raises(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+    column: str,
+) -> None:
+    """The agreement check reads a matched pair of nulls as agreement, on purpose,
+    so this is the only thing standing in front of a shared column going missing."""
+    with pytest.raises(ValueError, match=f"null '{column}"):
+        _base(
+            _changed(challenger_ms, column, np.nan),
+            _changed(benchmark_ms, column, np.nan),
+            calendar_df,
+            modeling,
+        )
+
+
 def test_a_tier_outside_the_configured_vocabulary_raises(
     challenger_ms: pd.DataFrame,
     benchmark_ms: pd.DataFrame,
@@ -1080,6 +1137,23 @@ def test_every_fold_carries_exactly_one_horizon(
 
     assert (per_fold == 1).all()
     assert fold_metrics["horizon"].nunique() > 1
+
+
+def test_one_model_name_over_two_different_forecasts_raises(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+) -> None:
+    """setdefault is a no-op when the names match, which is right for the smoke
+    test and silently drops a model when the two sidecars differ."""
+    name = modeling.model_roles.challenger
+    base = _base(
+        challenger_ms, benchmark_ms, calendar_df, modeling, benchmark_model=name
+    )
+
+    with pytest.raises(ValueError, match="both roles name"):
+        _score_folds(base, challenger_model=name, benchmark_model=name)
 
 
 def test_one_model_in_both_roles_scores_once(

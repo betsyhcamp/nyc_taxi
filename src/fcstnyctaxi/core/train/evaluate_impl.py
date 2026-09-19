@@ -73,6 +73,15 @@ _BENCHMARK_COLUMNS = _JOIN_KEYS + [
     "actual_monthly_total",
 ]
 
+# The suffixed columns every metric reads. The two forecasts are never compared
+# to each other, and a matched pair of nulls passes the agreement check below.
+_METRIC_INPUT_COLUMNS = [
+    "monthly_forecast_ch",
+    "monthly_forecast_bm",
+    "actual_monthly_total_ch",
+    "series_weight_ch",
+]
+
 _BASE_FRAME_COLUMNS = _JOIN_KEYS + [
     "origin_fiscal_year_month",
     "origin_month_fraction_elapsed",
@@ -194,6 +203,17 @@ def _check_base_frame(base: pd.DataFrame) -> None:
                 f"{sample.to_string(index=False)}"
             )
 
+    # A null on both sides is not a disagreement, so the loop above passes it.
+    for column in _METRIC_INPUT_COLUMNS:
+        null = base[column].isna()
+        if null.any():
+            sample = base.loc[null, _JOIN_KEYS].head(5)
+            raise ValueError(
+                f"{int(null.sum())} row(s) carry a null {column!r}, which the fold "
+                f"reductions would read as zero on one side of a ratio:\n"
+                f"{sample.to_string(index=False)}"
+            )
+
     # Every origin is in the calendar. derive_horizon_label emits "horizon_nan" on
     # a null rather than raising, so a wrong label would reach every table.
     absent = base["origin_fiscal_year_month"].isna()
@@ -242,7 +262,14 @@ def _build_base_frame(
     )
 
     base = challenger.merge(
-        benchmark, on=_JOIN_KEYS, suffixes=("_ch", "_bm"), how="outer", indicator=True
+        benchmark,
+        on=_JOIN_KEYS,
+        suffixes=("_ch", "_bm"),
+        how="outer",
+        indicator=True,
+        # A duplicate key fans the frame out while every _merge still reads "both".
+        # pandas names the offending side: left is the challenger, right the benchmark.
+        validate="one_to_one",
     )
     # Not the sidecar's copies: one source, and horizon must not vary within a fold.
     origins = _origin_attribute_lookup(calendar_df)
@@ -319,7 +346,16 @@ def _score_folds(
     benchmark_view = _model_view(base, "monthly_forecast_bm")
 
     # A model in both roles is a legitimate smoke test and must score once: two
-    # identical row sets under one name would double every n_obs.
+    # identical row sets under one name would double every n_obs. One name over two
+    # different row sets is not, and setdefault would drop the second in silence.
+    if challenger_model == benchmark_model and not base["monthly_forecast_ch"].equals(
+        base["monthly_forecast_bm"]
+    ):
+        raise ValueError(
+            f"both roles name {challenger_model!r} while the two sidecars forecast "
+            "differently, so one model's rows would be dropped without an error."
+        )
+
     model_views = {challenger_model: (challenger_view, benchmark_view)}
     model_views.setdefault(benchmark_model, (benchmark_view, benchmark_view))
 
