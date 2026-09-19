@@ -1,4 +1,5 @@
 import json
+import warnings
 from pathlib import Path
 from typing import cast
 
@@ -9,19 +10,23 @@ import yaml
 
 from fcstnyctaxi.core.train.evaluate_impl import (
     _FOLD_KEYS,
+    _PERIOD_KEYS,
     _RELATIVE_METRIC_FNS,
+    _SCORE_KEYS,
     GLOBAL_TIER,
+    EvaluateOutputs,
     _build_base_frame,
     _check_base_frame,
     _model_view,
     _score_folds,
+    compute_evaluate_outputs,
 )
 from fcstnyctaxi.lib.config.bindings import (
     model_names_from_roles,
     train_modeling_bindings,
 )
 from fcstnyctaxi.lib.config.composition import compose_config, save_config
-from fcstnyctaxi.lib.fold_metrics import compute_wape
+from fcstnyctaxi.lib.fold_metrics import compute_wape, compute_wrmae_pooled
 from fcstnyctaxi.lib.period_utils import ORIGIN_TIME_UNIT, derive_horizon_label
 from fcstnyctaxi.lib.storage_layout import composed_config_filename
 from fcstnyctaxi.lib.utils import get_project_root_dir
@@ -1112,3 +1117,244 @@ def test_one_model_in_both_roles_scores_once(
     ).any()
     pooled = scored.loc[scored["metric"] == "wrmae_pooled", "value"].dropna()
     assert (pooled == 1.0).all()
+
+
+# ================================================
+# The derivations: period and summary from the fold table
+#
+# The centerpiece: two independent paths, the metric itself against _derive.
+# ================================================
+
+
+@pytest.fixture(scope="module")
+def outputs(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+) -> EvaluateOutputs:
+    """One run of the pure function, shared by the assertions below."""
+    return compute_evaluate_outputs(
+        challenger_ms=challenger_ms,
+        benchmark_ms=benchmark_ms,
+        calendar_df=calendar_df,
+        challenger_model=modeling.model_roles.challenger,
+        benchmark_model=modeling.model_roles.benchmark,
+        tier_labels=tuple(modeling.tiering.tier_labels),
+        identity=_identity(),
+    )
+
+
+def _computed_directly(
+    metric: str, challenger: pd.DataFrame, benchmark: pd.DataFrame, tier: str | None
+) -> float:
+    """The notebook's path: the metric gets the whole slice and averages its folds."""
+    if metric == "wrmae_pooled":
+        return compute_wrmae_pooled(challenger, benchmark, tier)
+    return compute_wape(challenger, tier)
+
+
+def _tier_filter(tier: object) -> str | None:
+    """The metric functions take None for every series, not the sentinel."""
+    return None if tier == GLOBAL_TIER else str(tier)
+
+
+@pytest.mark.parametrize("metric", ["wrmae_pooled", "wape"])
+def test_summary_equals_the_metric_computed_at_summary_grain(
+    outputs: EvaluateOutputs,
+    base_frame: pd.DataFrame,
+    modeling: TrainModelingConfig,
+    metric: str,
+) -> None:
+    """The identity a golden would only pin: one run over the whole horizon."""
+    challenger = _model_view(base_frame, "monthly_forecast_ch")
+    benchmark = _model_view(base_frame, "monthly_forecast_bm")
+    summary = outputs.summary_metrics
+    cells = summary[
+        (summary["model"] == modeling.model_roles.challenger)
+        & (summary["metric"] == metric)
+    ]
+
+    assert not cells.empty
+    for cell in cells.itertuples():
+        expected = _computed_directly(
+            metric,
+            challenger[challenger["horizon"] == cell.horizon],
+            benchmark[benchmark["horizon"] == cell.horizon],
+            _tier_filter(cell.tier),
+        )
+        if np.isnan(expected):
+            assert np.isnan(cell.value)
+        else:
+            np.testing.assert_allclose(cell.value, expected, rtol=1e-12)
+
+
+@pytest.mark.parametrize("metric", ["wrmae_pooled", "wape"])
+def test_period_equals_the_metric_computed_within_its_month(
+    outputs: EvaluateOutputs,
+    base_frame: pd.DataFrame,
+    modeling: TrainModelingConfig,
+    metric: str,
+) -> None:
+    """Same construction one grain down: period derives by the same groupby."""
+    challenger = _model_view(base_frame, "monthly_forecast_ch")
+    benchmark = _model_view(base_frame, "monthly_forecast_bm")
+    period = outputs.period_metrics
+    cells = period[
+        (period["model"] == modeling.model_roles.challenger)
+        & (period["metric"] == metric)
+    ]
+
+    assert not cells.empty
+    for cell in cells.itertuples():
+        month = cell.predicted_fiscal_year_month
+        in_cell = (challenger["horizon"] == cell.horizon) & (
+            challenger["predicted_fiscal_year_month"] == month
+        )
+        expected = _computed_directly(
+            metric, challenger[in_cell], benchmark[in_cell], _tier_filter(cell.tier)
+        )
+        if np.isnan(expected):
+            assert np.isnan(cell.value)
+        else:
+            np.testing.assert_allclose(cell.value, expected, rtol=1e-12)
+
+
+@pytest.mark.parametrize(
+    ("table", "keys"),
+    [("summary_metrics", _SCORE_KEYS), ("period_metrics", _PERIOD_KEYS)],
+)
+def test_the_derived_value_is_the_nanmean_of_its_fold_values(
+    outputs: EvaluateOutputs, table: str, keys: list[str]
+) -> None:
+    """Every metric, and against numpy rather than the groupby the impl uses."""
+    grouped = outputs.fold_metrics.groupby(keys, observed=True)["value"]
+    with warnings.catch_warnings():
+        # An all-nan group warns "Mean of empty slice" and returns nan, correctly.
+        warnings.simplefilter("ignore", RuntimeWarning)
+        expected = {
+            key: np.nanmean(values.to_numpy(dtype=float)) for key, values in grouped
+        }
+
+    derived = getattr(outputs, table)
+    assert len(derived) == len(expected)
+    for cell in derived.itertuples():
+        key = tuple(getattr(cell, name) for name in keys)
+        if np.isnan(expected[key]):
+            assert np.isnan(cell.value)
+        else:
+            np.testing.assert_allclose(cell.value, expected[key], rtol=1e-12)
+
+
+def test_n_obs_sums_across_folds_rather_than_averaging(
+    outputs: EvaluateOutputs, base_frame: pd.DataFrame
+) -> None:
+    """A mean here yields a plausible frame with a wrong n_obs, and nothing else
+    catches it."""
+    available = base_frame.groupby("horizon", observed=True).size().sort_index()
+    summary = outputs.summary_metrics
+    counted = (
+        summary[summary["tier"] == GLOBAL_TIER]
+        .groupby("horizon", observed=True)["n_obs"]
+        .agg(["nunique", "max"])
+        .sort_index()
+    )
+
+    assert (counted["nunique"] == 1).all()
+    assert (counted["max"] == available).all()
+    # Otherwise a sum and a mean agree and the distinction is untested.
+    assert outputs.fold_metrics.groupby(_SCORE_KEYS, observed=True).size().max() > 1
+
+
+def test_n_folds_used_counts_only_the_folds_that_contributed(
+    outputs: EvaluateOutputs,
+) -> None:
+    """Counted after exclusions where n_obs is counted before: not a pair."""
+    fold = outputs.fold_metrics
+    contributed = fold[fold["value"].notna()].groupby(_SCORE_KEYS, observed=True).size()
+    covered = fold.groupby(_SCORE_KEYS, observed=True).size()
+    reported = outputs.summary_metrics.set_index(_SCORE_KEYS)["n_folds_used"]
+
+    assert (
+        reported.sort_index() == contributed.reindex(reported.index).fillna(0)
+    ).all()
+    # Otherwise every fold contributed and the exclusion path is never exercised.
+    assert (contributed.reindex(covered.index).fillna(0) < covered).any()
+
+
+def test_a_cell_whose_every_fold_was_excluded_is_nan(
+    outputs: EvaluateOutputs,
+) -> None:
+    """A nanmean over nothing is nan, and n_folds_used says so. Period grain only."""
+    empty = outputs.period_metrics[outputs.period_metrics["n_folds_used"] == 0]
+
+    assert not empty.empty
+    assert empty["value"].isna().all()
+    assert (empty["n_obs"] == 0).all()
+
+
+def test_the_fixture_distinguishes_a_mean_of_folds_from_a_mean_of_periods(
+    outputs: EvaluateOutputs,
+) -> None:
+    """A fixture where these agreed would pass the identity checks either way."""
+    via_period = (
+        outputs.period_metrics.groupby(_SCORE_KEYS, observed=True)["value"]
+        .mean()
+        .sort_index()
+    )
+    summary = outputs.summary_metrics.set_index(_SCORE_KEYS)["value"].sort_index()
+
+    assert not np.isclose(summary, via_period, equal_nan=True).all()
+
+
+@pytest.mark.parametrize(
+    ("table", "keys"),
+    [("summary_metrics", _SCORE_KEYS), ("period_metrics", _PERIOD_KEYS)],
+)
+def test_the_derived_cells_are_exactly_those_the_fold_table_carries(
+    outputs: EvaluateOutputs, table: str, keys: list[str]
+) -> None:
+    """Unobserved category combinations would invent cells backed by no fold."""
+    derived = getattr(outputs, table)
+    from_fold = outputs.fold_metrics[keys].astype(str).drop_duplicates()
+
+    assert set(map(tuple, derived[keys].astype(str).to_numpy())) == set(
+        map(tuple, from_fold.to_numpy())
+    )
+
+
+def test_tier_survives_the_derivations_as_an_ordered_categorical(
+    outputs: EvaluateOutputs,
+) -> None:
+    """A dropped dtype leaves a dashboard sorting high, low, middle, very_high."""
+    for table in ("fold_metrics", "period_metrics", "summary_metrics"):
+        tier = getattr(outputs, table)["tier"]
+        categories = list(tier.cat.categories)
+
+        assert tier.cat.ordered
+        assert categories[0] == GLOBAL_TIER
+        assert categories != sorted(categories)
+
+
+def test_lineage_values_propagate_into_every_table(
+    outputs: EvaluateOutputs,
+) -> None:
+    """The values, not that five columns exist."""
+    identity = _identity()
+    stamped = {
+        "train_run_id": identity.train_run_id,
+        "feature_run_id": identity.feature_run_id,
+        "git_hash": identity.git_hash,
+        "panel_uri": identity.panel_uri,
+        "calendar_uri": identity.calendar_uri,
+    }
+
+    for table in (
+        "per_series_comparison",
+        "fold_metrics",
+        "period_metrics",
+        "summary_metrics",
+    ):
+        frame = getattr(outputs, table)
+        for column, value in stamped.items():
+            assert set(frame[column]) == {value}

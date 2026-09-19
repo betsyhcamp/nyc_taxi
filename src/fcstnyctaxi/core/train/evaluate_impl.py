@@ -1,6 +1,6 @@
 import logging
 from collections.abc import Callable, Iterator
-from itertools import product
+from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
@@ -15,17 +15,17 @@ from fcstnyctaxi.lib.fold_metrics import (
     compute_wrmae_pooled,
 )
 from fcstnyctaxi.lib.period_utils import ORIGIN_TIME_UNIT, derive_horizon_label
+from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 
 _log = logging.getLogger(__name__)
 
 _FOLD_KEYS = ["forecast_origin_date", "predicted_fiscal_year_month"]
 _JOIN_KEYS = _FOLD_KEYS + ["unique_id"]
 _SCORE_KEYS = ["model", "horizon", "tier", "metric"]
+_PERIOD_KEYS = _SCORE_KEYS + ["predicted_fiscal_year_month"]
 
 GLOBAL_TIER = "global"
 """The aggregate row beside the tier partition, so never sum across `tier`."""
-
-# The vocabulary is the function name minus `compute_`, so a seventh names itself.
 # Two mappings rather than one adapter: the two call shapes below are real.
 _RELATIVE_METRIC_FNS: dict[
     str, Callable[[pd.DataFrame, pd.DataFrame, str | None], float]
@@ -85,6 +85,16 @@ _BASE_FRAME_COLUMNS = _JOIN_KEYS + [
 ]
 
 
+@dataclass(frozen=True)
+class EvaluateOutputs:
+    """The four frames the step persists; the field names are the filenames."""
+
+    per_series_comparison: pd.DataFrame
+    fold_metrics: pd.DataFrame
+    period_metrics: pd.DataFrame
+    summary_metrics: pd.DataFrame
+
+
 def present_tier_labels(
     tier_values: pd.Series, tier_labels: tuple[str, ...]
 ) -> tuple[str, ...]:
@@ -112,12 +122,9 @@ def present_tier_labels(
 
 
 def _as_ordered_tier(tier_values: pd.Series, present: tuple[str, ...]) -> pd.Series:
-    """Rebuild `tier` as an ordered categorical over the present labels.
-
-    A concatenated categorical degrades to `object` when the per-origin category
-    sets differ, which `assign_tiers` produces legally, and such a column sorts
-    alphabetically. One shared list is also what lets the two sides be compared.
-    """
+    """Rebuild `tier` as an ordered categorical over the present labels: a
+    concatenated one degrades to `object` when the per-origin category sets
+    differ, and an object column sorts alphabetically."""
     values = pd.Series(tier_values)
     return pd.Series(
         pd.Categorical(values.astype(str), categories=present, ordered=True),
@@ -127,12 +134,9 @@ def _as_ordered_tier(tier_values: pd.Series, present: tuple[str, ...]) -> pd.Ser
 
 
 def _origin_fiscal_month_lookup(calendar_df: pd.DataFrame) -> pd.Series:
-    """The origin-to-fiscal-month map, deduped, indexed by origin date.
-
-    Checked here, not in `_check_base_frame`: one `ds` carrying two fiscal months
-    fans the join out before anything can look at it. Re-expressed from
-    `label_horizon`, which discards the map its caller needs as a column.
-    """
+    """The origin-to-fiscal-month map, deduped, indexed by origin date. Checked
+    here, not later: a duplicated `ds` fans the join out before anything can look
+    at it."""
     require_columns(calendar_df, ["ds", "fiscal_year_month"], "calendar_df")
     lookup = calendar_df[["ds", "fiscal_year_month"]].drop_duplicates()
 
@@ -156,12 +160,8 @@ def _disagreeing(left: pd.Series, right: pd.Series) -> pd.Series:
 def _check_base_frame(base: pd.DataFrame) -> None:
     """The checks on the joined frame, before its `_ch`/`_bm` collapse.
 
-    The calendar's uniqueness check fires earlier, in `_origin_fiscal_month_lookup`.
-
     Raises:
-        ValueError: On a one-sided join row, a side disagreeing on tier, weight or
-            actual, an actual that varies by origin, or an origin absent from the
-            calendar.
+        ValueError: On any failed check; each message names its own cause.
     """
     # Both sides matched. The relative metrics merge the two sides internally and
     # the absolute ones never merge, so the families run over different row sets
@@ -232,13 +232,9 @@ def _build_base_frame(
 ) -> pd.DataFrame:
     """Challenger joined to benchmark, one row per origin, month and series.
 
-    Outer with an indicator rather than inner, so the metric functions' row-set
-    assumption becomes a filterable column plus a check. Wide rather than long by
-    model, because a ratio needs both forecasts on one row.
-
-    `forecast_origin_date` is normalized on both sides and on the calendar for the
-    output contract, not the join: pandas bridges the units, but a merged key
-    inherits the left side's.
+    Outer with an indicator so the row-set assumption becomes a column plus a
+    check; wide because a ratio needs both forecasts on one row; origins are
+    normalized for the output contract, since a merged key takes the left's unit.
     """
     require_columns(challenger_ms, _MONTHLY_SERIES_COLUMNS, "challenger monthly_series")
     require_columns(benchmark_ms, _BENCHMARK_COLUMNS, "benchmark monthly_series")
@@ -297,11 +293,9 @@ def _model_view(base: pd.DataFrame, forecast_column: str) -> pd.DataFrame:
 
 
 def _global_first_tier(tier_values: pd.Series, present: pd.Index) -> pd.Series:
-    """`tier` on a score table: ordered, with the `global` aggregate row first.
-
-    A dashboard reading only summary_metrics has no other ordering source, and a
-    string column sorts high, low, middle, very_high, very_low.
-    """
+    """`tier` on a score table: ordered, `global` first. A dashboard reading one
+    table has no other ordering source, and a string column sorts high, low,
+    middle, very_high, very_low."""
     return pd.Series(
         pd.Categorical(tier_values, categories=[GLOBAL_TIER, *present], ordered=True),
         index=tier_values.index,
@@ -312,12 +306,9 @@ def _global_first_tier(tier_values: pd.Series, present: pd.Index) -> pd.Series:
 def _model_folds(
     model_views: dict[str, tuple[pd.DataFrame, pd.DataFrame]],
 ) -> Iterator[tuple[str, tuple, pd.DataFrame, pd.DataFrame]]:
-    """Every (model, fold) pair, both sides already cut to that fold.
-
-    Split out because the axes are not independent: a fold slice needs its model,
-    so the groupby is per-model setup. Inlining it wedges two statements between
-    two `for` statements.
-    """
+    """Every (model, fold) pair, both sides already cut to that fold. Split out
+    because a fold slice needs its model, so the groupby is per-model setup that
+    would otherwise wedge two statements between two `for` statements."""
     for model, (challenger, benchmark) in model_views.items():
         challenger_folds = dict(tuple(challenger.groupby(_FOLD_KEYS, observed=True)))
         benchmark_folds = dict(tuple(benchmark.groupby(_FOLD_KEYS, observed=True)))
@@ -330,13 +321,10 @@ def _score_folds(
 ) -> pd.DataFrame:
     """Every metric for both models at fold grain, in long form.
 
-    Both models run through the same six with no branch, so the benchmark scores
-    itself and reads 1.0: no conditional, a square metric set under `pivot_table`,
-    and the reference line on a skill chart. Never test it with `== 1.0`, since
-    `wrmae_per_series` renormalizes weights and lands 1.0 to float tolerance.
-
-    `n_obs` counts rows available before metric-specific exclusions, not rows used.
-    Rows used would need all six functions to return a count.
+    No branch by model, so the benchmark scores itself and reads 1.0, the skill
+    chart's reference line. Never test that with `== 1.0`: `wrmae_per_series`
+    renormalizes weights and lands 1.0 to float tolerance. `n_obs` counts rows
+    available before metric-specific exclusions, not rows used.
     """
     challenger_view = _model_view(base, "monthly_forecast_ch")
     benchmark_view = _model_view(base, "monthly_forecast_bm")
@@ -354,26 +342,25 @@ def _score_folds(
     fold_horizons = base.drop_duplicates(_FOLD_KEYS).set_index(_FOLD_KEYS)["horizon"]
 
     rows = []
-    for fold, tier_slice in product(_model_folds(model_views), tier_slices):
-        model, fold_key, challenger_fold, benchmark_fold = fold
-        tier_label, tier_value = tier_slice
+    for model, fold_key, challenger_fold, benchmark_fold in _model_folds(model_views):
         origin, predicted_month = fold_key
 
-        row: dict[str, Any] = {
-            "model": model,
-            "horizon": fold_horizons.loc[fold_key],
-            "tier": tier_label,
-            "forecast_origin_date": origin,
-            "predicted_fiscal_year_month": predicted_month,
-            "n_obs": len(challenger_fold)
-            if tier_value is None
-            else int((challenger_fold["tier"] == tier_value).sum()),
-        }
-        for name, relative_fn in _RELATIVE_METRIC_FNS.items():
-            row[name] = relative_fn(challenger_fold, benchmark_fold, tier_value)
-        for name, absolute_fn in _ABSOLUTE_METRIC_FNS.items():
-            row[name] = absolute_fn(challenger_fold, tier_value)
-        rows.append(row)
+        for tier_label, tier_value in tier_slices:
+            row: dict[str, Any] = {
+                "model": model,
+                "horizon": fold_horizons.loc[fold_key],
+                "tier": tier_label,
+                "forecast_origin_date": origin,
+                "predicted_fiscal_year_month": predicted_month,
+                "n_obs": len(challenger_fold)
+                if tier_value is None
+                else int((challenger_fold["tier"] == tier_value).sum()),
+            }
+            for name, relative_fn in _RELATIVE_METRIC_FNS.items():
+                row[name] = relative_fn(challenger_fold, benchmark_fold, tier_value)
+            for name, absolute_fn in _ABSOLUTE_METRIC_FNS.items():
+                row[name] = absolute_fn(challenger_fold, tier_value)
+            rows.append(row)
 
     long = pd.DataFrame(rows).melt(
         id_vars=_FOLD_GRAIN + ["n_obs"],
@@ -386,4 +373,89 @@ def _score_folds(
         long[_FOLD_METRIC_COLUMNS]
         .sort_values(_SCORE_KEYS + _FOLD_KEYS)
         .reset_index(drop=True)
+    )
+
+
+def _derive(fold_metrics: pd.DataFrame, group_keys: list[str]) -> pd.DataFrame:
+    """`nanmean` the fold values within a coarser grain, exactly: a fold a direct
+    computation would skip is a nan this drops. The three columns aggregate
+    differently, so read the agg rather than the keys."""
+    derived = (
+        fold_metrics.groupby(group_keys, observed=True)
+        .agg(
+            # The second stage every metric already does.
+            value=("value", "mean"),
+            # A sum: folds partition the group.
+            n_obs=("n_obs", "sum"),
+            # What the mean actually averaged, so nans are excluded.
+            n_folds_used=("value", "count"),
+        )
+        .reset_index()
+    )
+    return derived.sort_values(group_keys).reset_index(drop=True)
+
+
+def _stamp_lineage(frame: pd.DataFrame, identity: TrainRunIdentity) -> pd.DataFrame:
+    """The five columns every table carries. The two uris are a transitive claim:
+    evaluate never opens a Feature artifact, and the manifest and calendar checks
+    are what back them."""
+    return frame.assign(
+        train_run_id=identity.train_run_id,
+        feature_run_id=identity.feature_run_id,
+        git_hash=identity.git_hash,
+        panel_uri=identity.panel_uri,
+        calendar_uri=identity.calendar_uri,
+    )
+
+
+def compute_evaluate_outputs(
+    *,
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    challenger_model: str,
+    benchmark_model: str,
+    tier_labels: tuple[str, ...],
+    identity: TrainRunIdentity,
+) -> EvaluateOutputs:
+    """Score one run's two models and build its four tables.
+
+    Frames in, dataclass out, no paths, so the derivation identity is testable with
+    no `tmp_path` and no files. `tier_labels` rather than the whole modeling config,
+    because the tier ordering is output contract and is not recoverable from the
+    data, while checks on file contents belong to `evaluate_impl`.
+
+    Args:
+        challenger_ms: The challenger sidecar's monthly_series frame.
+        benchmark_ms: The benchmark sidecar's monthly_series frame.
+        calendar_df: The challenger sidecar's trimmed fiscal calendar.
+        challenger_model: Verified against `model_roles` by `evaluate_impl`.
+        benchmark_model: Same.
+        tier_labels: The configured vocabulary, lowest tier first.
+        identity: Stamped into every row of all four tables.
+
+    Raises:
+        ValueError: On a failed base-frame check, or a tier value set that is not
+            a prefix of `tier_labels`.
+
+    Returns:
+        EvaluateOutputs: The four frames, one per output file.
+    """
+    base = _build_base_frame(
+        challenger_ms=challenger_ms,
+        benchmark_ms=benchmark_ms,
+        calendar_df=calendar_df,
+        challenger_model=challenger_model,
+        benchmark_model=benchmark_model,
+        tier_labels=tier_labels,
+    )
+    fold_metrics = _score_folds(
+        base, challenger_model=challenger_model, benchmark_model=benchmark_model
+    )
+
+    return EvaluateOutputs(
+        per_series_comparison=_stamp_lineage(base, identity),
+        fold_metrics=_stamp_lineage(fold_metrics, identity),
+        period_metrics=_stamp_lineage(_derive(fold_metrics, _PERIOD_KEYS), identity),
+        summary_metrics=_stamp_lineage(_derive(fold_metrics, _SCORE_KEYS), identity),
     )
