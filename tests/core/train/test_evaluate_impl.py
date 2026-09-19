@@ -798,6 +798,53 @@ def test_an_origin_absent_from_the_calendar_raises(
         _base(challenger_ms, benchmark_ms, trimmed, modeling)
 
 
+def test_the_sidecars_origin_fraction_is_ignored_in_favour_of_the_calendar(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+) -> None:
+    """derive_horizon_label turns on frac == 1.0, so a stale copy moves rows
+    between horizons. One row, not an origin: it can disagree inside a fold."""
+    bent = challenger_ms.copy()
+    row = bent.index[0]
+    origin = bent.loc[row, "forecast_origin_date"]
+    bent.loc[row, "origin_month_fraction_elapsed"] = 1.0
+    from_calendar = calendar_df.set_index("ds").loc[
+        origin.as_unit("us"), "origin_month_fraction_elapsed"
+    ]
+    assert from_calendar != 1.0
+
+    base = _base(bent, benchmark_ms, calendar_df, modeling)
+
+    unbent = _base(challenger_ms, benchmark_ms, calendar_df, modeling)
+    assert base["horizon"].equals(unbent["horizon"])
+    assert (
+        base.loc[
+            base["forecast_origin_date"] == origin, "origin_month_fraction_elapsed"
+        ]
+        == from_calendar
+    ).all()
+    # A function of the origin alone, so this holds by construction, not by a guard.
+    per_fold = base.groupby(_FOLD_KEYS, observed=True)["horizon"].nunique()
+    assert (per_fold == 1).all()
+
+
+def test_a_sidecar_without_the_origin_fraction_still_builds(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+) -> None:
+    """Requiring a column evaluate never reads would refuse a sidecar over a
+    value it takes off the calendar anyway."""
+    without = challenger_ms.drop(columns=["origin_month_fraction_elapsed"])
+
+    base = _base(without, benchmark_ms, calendar_df, modeling)
+
+    assert base["origin_month_fraction_elapsed"].notna().all()
+
+
 def test_a_tier_outside_the_configured_vocabulary_raises(
     challenger_ms: pd.DataFrame,
     benchmark_ms: pd.DataFrame,

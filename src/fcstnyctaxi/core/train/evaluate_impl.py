@@ -51,6 +51,10 @@ _VIEW_COLUMNS = _JOIN_KEYS + [
     "horizon",
 ]
 
+# Read off the calendar per origin, not off monthly_series: backtest transcribes
+# the second of these into every row, and horizon labelling turns on its value.
+_ORIGIN_ATTRIBUTES = ["fiscal_year_month", "origin_month_fraction_elapsed"]
+
 _FOLD_GRAIN = ["model", "horizon", "tier"] + _FOLD_KEYS
 _FOLD_METRIC_COLUMNS = _FOLD_GRAIN + ["metric", "value", "n_obs"]
 
@@ -60,7 +64,6 @@ _MONTHLY_SERIES_COLUMNS = _JOIN_KEYS + [
     "series_weight",
     "monthly_forecast",
     "actual_monthly_total",
-    "origin_month_fraction_elapsed",
 ]
 # The benchmark contributes its forecast plus the three columns both sides share.
 _BENCHMARK_COLUMNS = _JOIN_KEYS + [
@@ -133,22 +136,22 @@ def _as_ordered_tier(tier_values: pd.Series, present: tuple[str, ...]) -> pd.Ser
     )
 
 
-def _origin_fiscal_month_lookup(calendar_df: pd.DataFrame) -> pd.Series:
-    """The origin-to-fiscal-month map, deduped, indexed by origin date. Checked
+def _origin_attribute_lookup(calendar_df: pd.DataFrame) -> pd.DataFrame:
+    """The origin-to-attributes map, deduped, indexed by origin date. Checked
     here, not later: a duplicated `ds` fans the join out before anything can look
     at it."""
-    require_columns(calendar_df, ["ds", "fiscal_year_month"], "calendar_df")
-    lookup = calendar_df[["ds", "fiscal_year_month"]].drop_duplicates()
+    require_columns(calendar_df, ["ds", *_ORIGIN_ATTRIBUTES], "calendar_df")
+    lookup = calendar_df[["ds", *_ORIGIN_ATTRIBUTES]].drop_duplicates()
 
     if not lookup["ds"].is_unique:
         conflicting = lookup.loc[lookup["ds"].duplicated(), "ds"].unique()
         raise ValueError(
             f"calendar maps {len(conflicting)} ds value(s) to more than one "
-            f"fiscal_year_month; first few: {sorted(conflicting)[:5]}"
+            f"origin attribute set; first few: {sorted(conflicting)[:5]}"
         )
 
     lookup = lookup.assign(ds=lookup["ds"].astype(f"datetime64[{ORIGIN_TIME_UNIT}]"))
-    return lookup.set_index("ds")["fiscal_year_month"]
+    return lookup.set_index("ds")
 
 
 def _disagreeing(left: pd.Series, right: pd.Series) -> pd.Series:
@@ -241,8 +244,13 @@ def _build_base_frame(
     base = challenger.merge(
         benchmark, on=_JOIN_KEYS, suffixes=("_ch", "_bm"), how="outer", indicator=True
     )
+    # Not the sidecar's copies: one source, and horizon must not vary within a fold.
+    origins = _origin_attribute_lookup(calendar_df)
     base["origin_fiscal_year_month"] = base["forecast_origin_date"].map(
-        _origin_fiscal_month_lookup(calendar_df)
+        origins["fiscal_year_month"]
+    )
+    base["origin_month_fraction_elapsed"] = base["forecast_origin_date"].map(
+        origins["origin_month_fraction_elapsed"]
     )
 
     _check_base_frame(base)
