@@ -6,6 +6,10 @@ import pandas as pd
 import pytest
 import yaml
 
+from fcstnyctaxi.core.train.evaluate_impl import (
+    _build_base_frame,
+    _check_base_frame,
+)
 from fcstnyctaxi.lib.config.bindings import (
     model_names_from_roles,
     train_modeling_bindings,
@@ -50,7 +54,7 @@ _ORIGIN_TARGETS = (
     (9, (202403, 202404)),
 )
 
-_SERIES = ("zone_a", "zone_b", "zone_c")
+_SERIES = ("time_series_a", "time_series_b", "time_series_c")
 
 # Index into the present tier labels, per series and origin:
 #
@@ -58,36 +62,36 @@ _SERIES = ("zone_a", "zone_b", "zone_c")
 #   origin 1  3 bins:  a=middle  b=low       c=very_low
 #   origin 2  3 bins:  a=middle  b=very_low  c=low
 #
-# One fact drives it. zone_c is dormant at the first origin, so assign_tiers bins
-# two series there and force-assigns it tier_labels[0], then bins three once it
-# recovers. Nothing here is stipulated: the top tier has no series at origin 0,
-# which is the empty slice a metric returns nan for; the category sets therefore
-# differ by origin, which degrades a concatenated categorical to object; and two
-# series migrate for two reasons, zone_a because the bin count moved and zone_b
-# because zone_c's mean of positive weeks overtook it.
+# One fact drives it. time_series_c is dormant at the first origin, so
+# assign_tiers bins two series there and force-assigns it tier_labels[0], then
+# bins three once it recovers. Nothing here is stipulated: the top tier has no
+# series at origin 0, which is the empty slice a metric returns nan for; the
+# category sets therefore differ by origin, which degrades a concatenated
+# categorical to object; and two series migrate for two reasons, a because the
+# bin count moved and b because c's mean of positive weeks overtook it.
 #
 # Three and not two: qcut spreads across every bin it makes, so
 # min(len(tier_labels), mean_pos.nunique()) is 3 whenever all three are active.
 _TIER_INDEX = {
-    "zone_a": (1, 2, 2),
-    "zone_b": (0, 1, 0),
-    "zone_c": (0, 0, 1),
+    "time_series_a": (1, 2, 2),
+    "time_series_b": (0, 1, 0),
+    "time_series_c": (0, 0, 1),
 }
 
 # cbrt of a 26-week trailing sum, clipped at zero, so it moves with the origin.
-# zone_c carries none while dormant, the cell the per-series reductions used to
-# score as a perfect forecast. It stays under zone_b's even after its tier passes
-# it: tier averages the positive weeks alone, weight the whole window.
+# Series c carries none while dormant, the cell the per-series reductions used to
+# score as a perfect forecast. It stays under b's even after its tier passes it:
+# tier averages the positive weeks alone, weight the whole window.
 _WEIGHT = {
-    "zone_a": (29.6, 29.6, 29.6),
-    "zone_b": (17.3, 17.3, 17.3),
-    "zone_c": (0.0, 6.7, 10.3),
+    "time_series_a": (29.6, 29.6, 29.6),
+    "time_series_b": (17.3, 17.3, 17.3),
+    "time_series_c": (0.0, 6.7, 10.3),
 }
 
-# What each series realizes: a fact about the month, not the origin. zone_c's is
+# What each series realizes: a fact about the month, not the origin. Series c is
 # positive throughout, since tier and weight look back while the actual looks
 # forward, so a dormant series still has revenue to forecast.
-_ACTUAL_LEVEL = {"zone_a": 1000.0, "zone_b": 200.0, "zone_c": 50.0}
+_ACTUAL_LEVEL = {"time_series_a": 1000.0, "time_series_b": 200.0, "time_series_c": 50.0}
 
 
 def _shipped_modeling() -> TrainModelingConfig:
@@ -123,8 +127,7 @@ def _calendar() -> pd.DataFrame:
 
     The calendar is a trimmed input snapshot carrying whatever unit Feature
     wrote, while backtest normalizes its outputs to ORIGIN_TIME_UNIT. Agreeing
-    units would leave the normalization unexercised, and a mismatch on the join
-    key makes every joined row one-sided.
+    units would leave the normalization unexercised.
     """
     month_index = [week // _WEEKS_PER_MONTH for week in range(_N_WEEKS)]
     week_of_month = [week % _WEEKS_PER_MONTH + 1 for week in range(_N_WEEKS)]
@@ -510,7 +513,9 @@ def test_the_actual_is_a_fact_about_the_month_not_the_origin(
 def test_the_calendar_and_the_origins_disagree_on_time_unit(
     challenger_ms: pd.DataFrame, calendar_df: pd.DataFrame
 ) -> None:
-    """The normalization needs work to do: a mismatch one-sides every row."""
+    """The normalization needs work to do. pandas bridges the units on the way
+    in, so what a matching fixture would hide is the frame carrying the sidecar's
+    unit rather than this project's."""
     assert calendar_df["ds"].dt.unit != challenger_ms["forecast_origin_date"].dt.unit
 
 
@@ -594,3 +599,294 @@ def test_the_staged_modeling_yaml_revalidates_to_what_was_written(
     assert reloaded.model_roles == modeling.model_roles
     assert reloaded.tiering == modeling.tiering
     assert reloaded.weighting == modeling.weighting
+
+
+# ================================================
+# _build_base_frame and its guards
+#
+# The fixtures are module-scoped, so every break below works on a copy.
+# ================================================
+
+
+def _base(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+    **overrides: object,
+) -> pd.DataFrame:
+    """_build_base_frame on the fixture, any argument replaceable by name."""
+    kwargs: dict[str, object] = {
+        "challenger_ms": challenger_ms,
+        "benchmark_ms": benchmark_ms,
+        "calendar_df": calendar_df,
+        "challenger_model": modeling.model_roles.challenger,
+        "benchmark_model": modeling.model_roles.benchmark,
+        "tier_labels": tuple(modeling.tiering.tier_labels),
+    }
+    return _build_base_frame(**{**kwargs, **overrides})
+
+
+def _changed(frame: pd.DataFrame, column: str, value: object) -> pd.DataFrame:
+    """A copy with one cell replaced, for a one-way break."""
+    changed = frame.copy()
+    changed.loc[changed.index[0], column] = value
+    return changed
+
+
+def test_the_base_frame_keeps_one_row_per_origin_month_and_series(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+) -> None:
+    """A fanned join inflates every weighted sum while the run looks healthy."""
+    base = _base(challenger_ms, benchmark_ms, calendar_df, modeling)
+
+    assert not base.duplicated(
+        ["forecast_origin_date", "predicted_fiscal_year_month", "unique_id"]
+    ).any()
+    assert (base["_merge"] == "both").all()
+    assert len(base) == len(challenger_ms)
+
+
+def test_the_base_frame_labels_horizons_off_the_calendar(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+) -> None:
+    """A horizon off the wrong origin month is a wrong number, not a crash."""
+    base = _base(challenger_ms, benchmark_ms, calendar_df, modeling)
+
+    expected = challenger_ms.assign(horizon=_horizons(challenger_ms, calendar_df))
+    merged = base.merge(
+        expected[["forecast_origin_date", "predicted_fiscal_year_month", "horizon"]],
+        on=["forecast_origin_date", "predicted_fiscal_year_month"],
+        suffixes=("", "_expected"),
+    )
+    assert (merged["horizon"] == merged["horizon_expected"]).all()
+
+
+def test_the_base_frame_names_the_model_behind_each_forecast(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+) -> None:
+    """The frame is wide, so nothing else in it says which model _ch is."""
+    base = _base(challenger_ms, benchmark_ms, calendar_df, modeling)
+
+    assert set(base["challenger_model"]) == {modeling.model_roles.challenger}
+    assert set(base["benchmark_model"]) == {modeling.model_roles.benchmark}
+    assert (base["monthly_forecast_ch"] != base["monthly_forecast_bm"]).all()
+
+
+def test_the_origin_unit_is_normalized_whatever_the_sidecar_carries(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+) -> None:
+    """pandas bridges the units, so this protects the output contract and not the
+    join: a merged key inherits the left side's unit."""
+    as_micros = challenger_ms.assign(
+        forecast_origin_date=challenger_ms["forecast_origin_date"].astype(
+            "datetime64[us]"
+        )
+    )
+
+    base = _base(as_micros, benchmark_ms, calendar_df, modeling)
+
+    assert (base["_merge"] == "both").all()
+    assert base["forecast_origin_date"].dt.unit == ORIGIN_TIME_UNIT
+
+
+def test_keys_that_look_equal_but_are_not_are_named_as_one_sided(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+) -> None:
+    """The only silent case: pandas bridges units and raises on a dtype family
+    mismatch, so only two same-dtype keys that differ one-side a join."""
+    shifted = challenger_ms.assign(
+        forecast_origin_date=challenger_ms["forecast_origin_date"]
+        + pd.Timedelta(hours=12)
+    )
+
+    with pytest.raises(ValueError, match="matched one side only"):
+        _base(shifted, benchmark_ms, calendar_df, modeling)
+
+
+@pytest.mark.parametrize("dropped_from", ["challenger_ms", "benchmark_ms"])
+def test_a_row_only_one_side_carries_is_named_by_direction(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+    dropped_from: str,
+) -> None:
+    """The two directions have different owners, so a bare count misdirects."""
+    frames = {"challenger_ms": challenger_ms, "benchmark_ms": benchmark_ms}
+    frames[dropped_from] = frames[dropped_from].iloc[1:]
+    expected = "right_only" if dropped_from == "challenger_ms" else "left_only"
+
+    with pytest.raises(ValueError, match=expected):
+        _base(calendar_df=calendar_df, modeling=modeling, **frames)
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [("series_weight", 99.0), ("actual_monthly_total", 1.0), ("tier", "middle")],
+)
+def test_the_two_sides_disagreeing_on_a_shared_column_raises(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+    column: str,
+    value: object,
+) -> None:
+    """All three come off one panel under one config, so a disagreement is
+    upstream rather than a finding about either model."""
+    with pytest.raises(ValueError, match=f"disagree on {column!r}"):
+        _base(
+            challenger_ms,
+            _changed(benchmark_ms, column, value),
+            calendar_df,
+            modeling,
+        )
+
+
+def test_an_actual_that_varies_by_origin_raises(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+) -> None:
+    """A realized total cannot depend on its origin. The month must be one several
+    origins reach, and both sides must move or the agreement check fires first."""
+    reached = challenger_ms.groupby(
+        ["unique_id", "predicted_fiscal_year_month"], observed=True
+    )["forecast_origin_date"].nunique()
+    series, month = reached[reached > 1].index[0]
+    series_month = (challenger_ms["unique_id"] == series) & (
+        challenger_ms["predicted_fiscal_year_month"] == month
+    )
+    origin = challenger_ms.loc[series_month, "forecast_origin_date"].iloc[0]
+
+    def _bend_one_origin(frame: pd.DataFrame) -> pd.DataFrame:
+        bent = frame.copy()
+        bent.loc[
+            (bent["unique_id"] == series)
+            & (bent["predicted_fiscal_year_month"] == month)
+            & (bent["forecast_origin_date"] == origin),
+            "actual_monthly_total",
+        ] = 1.0
+        return bent
+
+    with pytest.raises(ValueError, match="more than one\\s+actual_monthly_total"):
+        _base(
+            _bend_one_origin(challenger_ms),
+            _bend_one_origin(benchmark_ms),
+            calendar_df,
+            modeling,
+        )
+
+
+def test_a_calendar_mapping_one_week_to_two_months_raises(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+) -> None:
+    """Must fire before the join: a duplicated ds fans the frame out."""
+    conflicting = calendar_df.head(1).assign(fiscal_year_month=209912)
+    fanned = pd.concat([calendar_df, conflicting], ignore_index=True)
+
+    with pytest.raises(ValueError, match="more than one"):
+        _base(challenger_ms, benchmark_ms, fanned, modeling)
+
+
+def test_an_origin_absent_from_the_calendar_raises(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+) -> None:
+    """derive_horizon_label emits horizon_nan on a null rather than raising."""
+    origin = challenger_ms["forecast_origin_date"].iloc[0]
+    trimmed = calendar_df[calendar_df["ds"] != origin.as_unit("us")]
+
+    with pytest.raises(ValueError, match="absent from the calendar"):
+        _base(challenger_ms, benchmark_ms, trimmed, modeling)
+
+
+def test_a_tier_outside_the_configured_vocabulary_raises(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+) -> None:
+    """Coercion nulls an unknown label, which then vanishes from every tier slice
+    while still counting in global."""
+    relabelled = challenger_ms.assign(tier=challenger_ms["tier"].astype(str))
+    relabelled.loc[relabelled.index[0], "tier"] = "enormous"
+
+    with pytest.raises(ValueError, match="not a prefix"):
+        _base(relabelled, benchmark_ms, calendar_df, modeling)
+
+
+def test_a_tier_set_that_skips_a_configured_label_raises(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+) -> None:
+    """assign_tiers emits a prefix and never a gap, so a skipped label is drift."""
+    top = _present_tier_labels(modeling)[-1]
+    challenger = challenger_ms.assign(tier=top)
+    benchmark = benchmark_ms.assign(tier=top)
+
+    with pytest.raises(ValueError, match="not a prefix"):
+        _base(challenger, benchmark, calendar_df, modeling)
+
+
+def test_a_string_tier_is_coerced_to_the_configured_order(
+    calendar_df: pd.DataFrame, modeling: TrainModelingConfig
+) -> None:
+    """A valid sidecar can carry one, and a string column sorts alphabetically."""
+    roles = modeling.model_roles
+    challenger = _monthly_series(roles.challenger, modeling, tier_as_string=True)
+    benchmark = _monthly_series(roles.benchmark, modeling, tier_as_string=True)
+
+    base = _base(challenger, benchmark, calendar_df, modeling)
+
+    assert base["tier"].cat.ordered
+    assert list(base["tier"].cat.categories) == list(_present_tier_labels(modeling))
+
+
+def test_categories_are_compared_before_values_so_the_comparison_cannot_raise(
+    challenger_ms: pd.DataFrame,
+    benchmark_ms: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
+) -> None:
+    """Unreachable through the builder, which rebuilds both sides over one list.
+    Removing that rebuild would turn the tier comparison into a bare TypeError."""
+    base = _base(challenger_ms, benchmark_ms, calendar_df, modeling)
+    restored = base.rename(
+        columns={
+            "tier": "tier_ch",
+            "series_weight": "series_weight_ch",
+            "actual_monthly_total": "actual_monthly_total_ch",
+        }
+    ).assign(
+        tier_bm=base["tier"].cat.set_categories(["low", "high"]),
+        series_weight_bm=base["series_weight"],
+        actual_monthly_total_bm=base["actual_monthly_total"],
+    )
+
+    with pytest.raises(ValueError, match="tier categories differ"):
+        _check_base_frame(restored)
