@@ -86,7 +86,11 @@ def compute_wrmae_per_series(
     benchmark_df: pd.DataFrame,
     tier: str | None = None,
 ) -> float:
-    """Fold-averaged per series WRMAE. tier=None -> all series."""
+    """Fold-averaged per series WRMAE. tier=None -> all series.
+
+    Excludes rows with a near-zero benchmark error, no weight, or no computable
+    ratio before renormalizing weights within the fold.
+    """
     if tier is not None:
         challenger_df = challenger_df[challenger_df["tier"] == tier]
         benchmark_df = benchmark_df[benchmark_df["tier"] == tier]
@@ -125,14 +129,38 @@ def compute_wrmae_per_series(
     merged["challenger_errors"] = (
         merged["monthly_forecast_ch"] - merged["actual_monthly_total"]
     ).abs()
+    merged["error_ratio"] = merged["challenger_errors"] / merged["benchmark_errors"]
+
+    # Drop before renormalizing: an all-zero-weight fold normalizes 0/0 and sums
+    # to 0.0, the best attainable value, and a nan row keeps its weight in the
+    # denominator while adding nothing to the numerator.
+    contributing = (merged["series_weight"] > _SMALL_NUM_BOUND) & merged[
+        "error_ratio"
+    ].notna()
+    n_non_contributing = int((~contributing).sum())
+    if n_non_contributing > 0:
+        _log.warning(
+            "compute_wrmae_per_series: %d rows excluded carrying no weight or no "
+            "computable ratio (tier=%r)",
+            n_non_contributing,
+            tier,
+        )
+
+    merged = merged[contributing].copy()
+
+    if merged.empty:
+        return np.nan
 
     fold_weight_sum = merged.groupby(_FOLD_KEYS)["series_weight"].transform("sum")
     merged["normalized_series_weights"] = merged["series_weight"] / fold_weight_sum
-    merged["normalized_weighted_ratio"] = merged["normalized_series_weights"] * (
-        merged["challenger_errors"] / merged["benchmark_errors"]
+    merged["normalized_weighted_ratio"] = (
+        merged["normalized_series_weights"] * merged["error_ratio"]
     )
 
-    fold_totals = merged.groupby(_FOLD_KEYS)["normalized_weighted_ratio"].sum()
+    # Backstop: min_count=1 makes an all-nan group nan rather than 0.0
+    fold_totals = merged.groupby(_FOLD_KEYS)["normalized_weighted_ratio"].sum(
+        min_count=1
+    )
 
     return np.nanmean(fold_totals.to_numpy(dtype=np.float64)).item()
 
@@ -196,7 +224,9 @@ def compute_signed_bias_per_series(
 ) -> float:
     """Fold-averaged per-series signed relative bias. tier=None -> all series.
 
-    Positive values indicate systematic over-forecasting.
+    Positive values indicate systematic over-forecasting. Excludes rows with a
+    near-zero actual, no weight, or no computable bias before renormalizing
+    weights within the fold.
     """
     if tier is not None:
         challenger_df = challenger_df[challenger_df["tier"] == tier]
@@ -223,16 +253,36 @@ def compute_signed_bias_per_series(
     if df.empty:
         return np.nan
 
-    fold_weight_total = df.groupby(_FOLD_KEYS)["series_weight"].transform("sum")
-
-    df["normalized_weight"] = df["series_weight"] / fold_weight_total
-
     df["per_series_bias"] = (df["monthly_forecast"] - df["actual_monthly_total"]) / df[
         "abs_actual"
     ]
+
+    # Drop before renormalizing: an all-zero-weight fold normalizes 0/0 and sums
+    # to 0.0, a perfectly unbiased forecast, and a nan row keeps its weight in
+    # the denominator while adding nothing to the numerator.
+    contributing = (df["series_weight"] > _SMALL_NUM_BOUND) & df[
+        "per_series_bias"
+    ].notna()
+    n_non_contributing = int((~contributing).sum())
+    if n_non_contributing > 0:
+        _log.warning(
+            "compute_signed_bias_per_series: %d rows excluded carrying no weight "
+            "or no computable bias (tier=%r)",
+            n_non_contributing,
+            tier,
+        )
+
+    df = df[contributing].copy()
+    if df.empty:
+        return np.nan
+
+    fold_weight_total = df.groupby(_FOLD_KEYS)["series_weight"].transform("sum")
+
+    df["normalized_weight"] = df["series_weight"] / fold_weight_total
     df["weighted_bias"] = df["normalized_weight"] * df["per_series_bias"]
 
-    fold_totals = df.groupby(_FOLD_KEYS)["weighted_bias"].sum()
+    # Backstop: min_count=1 makes an all-nan group nan rather than 0.0
+    fold_totals = df.groupby(_FOLD_KEYS)["weighted_bias"].sum(min_count=1)
 
     return np.nanmean(fold_totals.to_numpy(dtype=np.float64)).item()
 
