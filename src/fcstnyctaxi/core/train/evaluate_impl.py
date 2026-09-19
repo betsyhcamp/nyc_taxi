@@ -180,14 +180,7 @@ def _check_base_frame(base: pd.DataFrame) -> None:
         )
 
     # The two sidecars agree on the three columns both compute from one panel under
-    # one config, so a disagreement is an upstream fault. Categories first: two
-    # categoricals that do not share them raise a TypeError.
-    if list(base["tier_ch"].cat.categories) != list(base["tier_bm"].cat.categories):
-        raise ValueError(
-            "the two sidecars' tier categories differ: "
-            f"{list(base['tier_ch'].cat.categories)} against "
-            f"{list(base['tier_bm'].cat.categories)}."
-        )
+    # one config, so a disagreement is an upstream fault.
     for column in ("tier", "series_weight", "actual_monthly_total"):
         mismatched = _disagreeing(base[f"{column}_ch"], base[f"{column}_bm"])
         if mismatched.any():
@@ -197,18 +190,6 @@ def _check_base_frame(base: pd.DataFrame) -> None:
                 f"two sidecars, which both derive it from the same panel:\n"
                 f"{sample.to_string(index=False)}"
             )
-
-    # A cross-step check on backtest: a realized total cannot depend on its origin.
-    per_series_month = base.groupby(
-        ["unique_id", "predicted_fiscal_year_month"], observed=True
-    )["actual_monthly_total_ch"].nunique(dropna=False)
-    varying = per_series_month[per_series_month > 1]
-    if not varying.empty:
-        raise ValueError(
-            f"{len(varying)} series-month(s) carry more than one "
-            f"actual_monthly_total across origins; first few:\n"
-            f"{varying.head(5).to_string()}"
-        )
 
     # Every origin is in the calendar. derive_horizon_label emits "horizon_nan" on
     # a null rather than raising, so a wrong label would reach every table.

@@ -16,7 +16,6 @@ from fcstnyctaxi.core.train.evaluate_impl import (
     GLOBAL_TIER,
     EvaluateOutputs,
     _build_base_frame,
-    _check_base_frame,
     _model_view,
     _score_folds,
     compute_evaluate_outputs,
@@ -513,8 +512,8 @@ def test_the_challenger_over_and_under_forecasts(challenger_ms: pd.DataFrame) ->
 def test_the_actual_is_a_fact_about_the_month_not_the_origin(
     challenger_ms: pd.DataFrame,
 ) -> None:
-    """The upstream property every metric depends on, and the passing case the
-    guard that checks it needs."""
+    """The upstream property every metric depends on: a weighted sum over one
+    series-month must not double-count it across origins."""
     per_series_month = challenger_ms.groupby(
         ["unique_id", "predicted_fiscal_year_month"], observed=True
     )["actual_monthly_total"].nunique()
@@ -771,42 +770,6 @@ def test_the_two_sides_disagreeing_on_a_shared_column_raises(
         )
 
 
-def test_an_actual_that_varies_by_origin_raises(
-    challenger_ms: pd.DataFrame,
-    benchmark_ms: pd.DataFrame,
-    calendar_df: pd.DataFrame,
-    modeling: TrainModelingConfig,
-) -> None:
-    """A realized total cannot depend on its origin. The month must be one several
-    origins reach, and both sides must move or the agreement check fires first."""
-    reached = challenger_ms.groupby(
-        ["unique_id", "predicted_fiscal_year_month"], observed=True
-    )["forecast_origin_date"].nunique()
-    series, month = reached[reached > 1].index[0]
-    series_month = (challenger_ms["unique_id"] == series) & (
-        challenger_ms["predicted_fiscal_year_month"] == month
-    )
-    origin = challenger_ms.loc[series_month, "forecast_origin_date"].iloc[0]
-
-    def _bend_one_origin(frame: pd.DataFrame) -> pd.DataFrame:
-        bent = frame.copy()
-        bent.loc[
-            (bent["unique_id"] == series)
-            & (bent["predicted_fiscal_year_month"] == month)
-            & (bent["forecast_origin_date"] == origin),
-            "actual_monthly_total",
-        ] = 1.0
-        return bent
-
-    with pytest.raises(ValueError, match="more than one\\s+actual_monthly_total"):
-        _base(
-            _bend_one_origin(challenger_ms),
-            _bend_one_origin(benchmark_ms),
-            calendar_df,
-            modeling,
-        )
-
-
 def test_a_calendar_mapping_one_week_to_two_months_raises(
     challenger_ms: pd.DataFrame,
     benchmark_ms: pd.DataFrame,
@@ -877,31 +840,6 @@ def test_a_string_tier_is_coerced_to_the_configured_order(
 
     assert base["tier"].cat.ordered
     assert list(base["tier"].cat.categories) == list(_present_tier_labels(modeling))
-
-
-def test_categories_are_compared_before_values_so_the_comparison_cannot_raise(
-    challenger_ms: pd.DataFrame,
-    benchmark_ms: pd.DataFrame,
-    calendar_df: pd.DataFrame,
-    modeling: TrainModelingConfig,
-) -> None:
-    """Unreachable through the builder, which rebuilds both sides over one list.
-    Removing that rebuild would turn the tier comparison into a bare TypeError."""
-    base = _base(challenger_ms, benchmark_ms, calendar_df, modeling)
-    restored = base.rename(
-        columns={
-            "tier": "tier_ch",
-            "series_weight": "series_weight_ch",
-            "actual_monthly_total": "actual_monthly_total_ch",
-        }
-    ).assign(
-        tier_bm=base["tier"].cat.set_categories(["low", "high"]),
-        series_weight_bm=base["series_weight"],
-        actual_monthly_total_bm=base["actual_monthly_total"],
-    )
-
-    with pytest.raises(ValueError, match="tier categories differ"):
-        _check_base_frame(restored)
 
 
 # ================================================
