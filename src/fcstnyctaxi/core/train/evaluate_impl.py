@@ -1,9 +1,12 @@
+import json
 import logging
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import yaml
 
 from fcstnyctaxi.lib.column_checks import require_columns
 from fcstnyctaxi.lib.fold_metrics import (
@@ -15,6 +18,7 @@ from fcstnyctaxi.lib.fold_metrics import (
     compute_wrmae_pooled,
 )
 from fcstnyctaxi.lib.period_utils import ORIGIN_TIME_UNIT, derive_horizon_label
+from fcstnyctaxi.schemas.config.train import ModelRoles, TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 
 _log = logging.getLogger(__name__)
@@ -96,6 +100,24 @@ _BASE_FRAME_COLUMNS = _JOIN_KEYS + [
     "benchmark_model",
 ]
 
+# EvaluateOutputs field to output file; the write loop and output_rows share it.
+_OUTPUT_FILENAMES = {
+    "per_series_comparison": "per_series_comparison.parquet",
+    "fold_metrics": "fold_metrics.parquet",
+    "period_metrics": "period_metrics.parquet",
+    "summary_metrics": "summary_metrics.parquet",
+}
+_MANIFEST_FILENAME = "evaluate_manifest.json"
+_STEP_DIR_NAME = "evaluate"
+
+# The three sidecar files evaluate opens. Not metrics.parquet and nothing at
+# weekly grain: a dashboard wanting weekly plots reads the sidecar itself.
+_SIDECAR_MANIFEST = "backtest_manifest.json"
+_SIDECAR_MONTHLY_SERIES = "monthly_series.parquet"
+_SIDECAR_CALENDAR = "fiscal_calendar.parquet"
+
+_HERO_METRIC_NAME = "wrmae_pooled"
+
 
 @dataclass(frozen=True)
 class EvaluateOutputs:
@@ -105,6 +127,51 @@ class EvaluateOutputs:
     fold_metrics: pd.DataFrame
     period_metrics: pd.DataFrame
     summary_metrics: pd.DataFrame
+
+
+@dataclass(frozen=True)
+class EvaluateSummary:
+    """What this run scored, for a wrapper that never opens the tables. The hero
+    values keep NaN; `as_dict` and `_build_manifest` are where it becomes `None`."""
+
+    train_run_id: str
+    challenger_model: str
+    benchmark_model: str
+    feature_run_id: str
+    n_origins: int
+    first_origin: str
+    last_origin: str
+    n_series: int
+    n_folds_total: int
+    hero_metric_name: str
+    hero_metric_values: dict[str, float | None]
+    output_rows: dict[str, int]
+
+    def as_dict(self) -> dict[str, Any]:
+        """Coerce to JSON-safe primitives: a numpy scalar or a NaN breaks KFP."""
+        return {
+            "train_run_id": str(self.train_run_id),
+            "challenger_model": str(self.challenger_model),
+            "benchmark_model": str(self.benchmark_model),
+            "feature_run_id": str(self.feature_run_id),
+            "n_origins": int(self.n_origins),
+            "first_origin": str(self.first_origin),
+            "last_origin": str(self.last_origin),
+            "n_series": int(self.n_series),
+            "n_folds_total": int(self.n_folds_total),
+            "hero_metric_name": str(self.hero_metric_name),
+            "hero_metric_values": _json_floats(self.hero_metric_values),
+            "output_rows": {name: int(rows) for name, rows in self.output_rows.items()},
+        }
+
+
+def _json_floats(values: dict[str, float | None]) -> dict[str, float | None]:
+    """NaN to None on both paths out, since the dataclass flattens where the
+    manifest nests. `json.dumps` writes a bare `NaN` only a strict reader rejects."""
+    return {
+        key: None if value is None or pd.isna(value) else float(value)
+        for key, value in values.items()
+    }
 
 
 def present_tier_labels(
@@ -484,3 +551,276 @@ def compute_evaluate_outputs(
         period_metrics=_stamp_lineage(_derive(fold_metrics, _PERIOD_KEYS), identity),
         summary_metrics=_stamp_lineage(_derive(fold_metrics, _SCORE_KEYS), identity),
     )
+
+
+def _check_directories_match_roles(
+    challenger_dir: Path, benchmark_dir: Path, roles: ModelRoles
+) -> None:
+    """Two role names read two sidecars, one name reads one. A biconditional
+    because `ModelRoles` permits one model in both roles as a smoke test."""
+    if (challenger_dir != benchmark_dir) != (roles.challenger != roles.benchmark):
+        raise ValueError(
+            f"model_roles names {roles.challenger!r} as challenger and "
+            f"{roles.benchmark!r} as benchmark, against directories\n"
+            f"  challenger: {challenger_dir}\n  benchmark:  {benchmark_dir}\n"
+            "which is one sidecar scored twice or two sidecars under one name."
+        )
+
+
+def _check_sidecar_manifests(
+    manifests: dict[str, dict[str, Any]],
+    identity: TrainRunIdentity,
+    modeling: TrainModelingConfig,
+) -> None:
+    """What each sidecar declares about itself, against this run's own sources.
+    Read the model names off `model_roles` instead and a swap looks consistent."""
+    for role, manifest in manifests.items():
+        declared = manifest["model_name"]
+        expected_model = getattr(modeling.model_roles, role)
+        if declared != expected_model:
+            raise ValueError(
+                f"the {role} directory holds {declared!r}'s sidecar while "
+                f"modeling.yaml names {expected_model!r} in that role: the two "
+                "directories are swapped, or another run's sidecar is wired in."
+            )
+
+        lineage = manifest["lineage"]
+        if lineage["train_run_id"] != identity.train_run_id:
+            raise ValueError(
+                f"the {role} sidecar was backtested under train_run_id "
+                f"{lineage['train_run_id']!r} while this run is "
+                f"{identity.train_run_id!r}: two runs' sidecars are wired together."
+            )
+        if lineage["feature_run_id"] != identity.feature_run_id:
+            raise ValueError(
+                f"the {role} sidecar reads feature_run_id "
+                f"{lineage['feature_run_id']!r} against this run's "
+                f"{identity.feature_run_id!r}: the models scored different actuals."
+            )
+
+        # Whole dumped blocks, so no field set is maintained here and a legitimate
+        # config addition does not break the comparison.
+        for block in ("tiering", "weighting"):
+            expected_block = getattr(modeling, block).model_dump()
+            if manifest["config"][block] != expected_block:
+                raise ValueError(
+                    f"the {role} sidecar's {block} disagrees with modeling.yaml:\n"
+                    f"  sidecar:  {manifest['config'][block]}\n"
+                    f"  modeling: {expected_block}\n"
+                    "re-composing under an existing run id overwrites that file in "
+                    "place, so every table would stamp settings its scores predate."
+                )
+
+
+def _check_calendars_agree(
+    challenger_calendar: pd.DataFrame, benchmark_calendar: pd.DataFrame
+) -> None:
+    """The two sidecars map origins to the same attributes. Not covered by the
+    lineage check: the snapshot is trimmed at write time, so it can drift."""
+    challenger_origins = _origin_attribute_lookup(challenger_calendar).sort_index()
+    benchmark_origins = _origin_attribute_lookup(benchmark_calendar).sort_index()
+    if challenger_origins.equals(benchmark_origins):
+        return
+
+    one_sided = challenger_origins.index.symmetric_difference(benchmark_origins.index)
+    shared = challenger_origins.index.intersection(benchmark_origins.index)
+    disagreeing = shared[
+        (challenger_origins.loc[shared] != benchmark_origins.loc[shared]).any(axis=1)
+    ]
+    sample = [str(ds.date()) for ds in list(one_sided[:3]) + list(disagreeing[:3])]
+    raise ValueError(
+        f"the two sidecars' calendars carry {len(one_sided)} origin date(s) one "
+        f"of them lacks and map {len(disagreeing)} shared date(s) differently; "
+        f"first few: {sample}. A shifted month boundary moves rows between "
+        "horizons rather than raising."
+    )
+
+
+def _hero_metric_values(
+    summary_metrics: pd.DataFrame, challenger_model: str
+) -> dict[str, float | None]:
+    """The challenger's global-tier hero metric per horizon, read off the table
+    rather than recomputed, so the manifest cannot disagree with the file beside it."""
+    hero = summary_metrics[
+        (summary_metrics["model"] == challenger_model)
+        & (summary_metrics["tier"] == GLOBAL_TIER)
+        & (summary_metrics["metric"] == _HERO_METRIC_NAME)
+    ]
+    return dict(zip(hero["horizon"], hero["value"], strict=True))
+
+
+def _build_summary(
+    outputs: EvaluateOutputs, identity: TrainRunIdentity, roles: ModelRoles
+) -> EvaluateSummary:
+    """The run's headline result, counted off the tables just built.
+    `n_folds_total` counts every fold event, not any cell's contributing folds."""
+    base = outputs.per_series_comparison
+    origins = [
+        pd.Timestamp(origin).date().isoformat()
+        for origin in sorted(base["forecast_origin_date"].unique())
+    ]
+    return EvaluateSummary(
+        train_run_id=identity.train_run_id,
+        challenger_model=roles.challenger,
+        benchmark_model=roles.benchmark,
+        feature_run_id=identity.feature_run_id,
+        n_origins=len(origins),
+        first_origin=origins[0],
+        last_origin=origins[-1],
+        n_series=int(base["unique_id"].nunique()),
+        n_folds_total=len(base[_FOLD_KEYS].drop_duplicates()),
+        hero_metric_name=_HERO_METRIC_NAME,
+        hero_metric_values=_hero_metric_values(
+            outputs.summary_metrics, roles.challenger
+        ),
+        output_rows={
+            filename: len(getattr(outputs, field))
+            for field, filename in _OUTPUT_FILENAMES.items()
+        },
+    )
+
+
+def _build_manifest(
+    summary: EvaluateSummary,
+    identity: TrainRunIdentity,
+    modeling: TrainModelingConfig,
+) -> dict[str, Any]:
+    """Explicit mapping from three single sources, so nothing here is counted twice.
+    The config blocks are restated because `evaluate/` holds no sidecar to point at."""
+    return {
+        "challenger_model": summary.challenger_model,
+        "benchmark_model": summary.benchmark_model,
+        "lineage": {
+            "train_run_id": identity.train_run_id,
+            "feature_run_id": identity.feature_run_id,
+            "git_hash": identity.git_hash,
+            "panel_uri": identity.panel_uri,
+            "calendar_uri": identity.calendar_uri,
+        },
+        "config": {
+            "tiering": modeling.tiering.model_dump(),
+            "weighting": modeling.weighting.model_dump(),
+        },
+        "hero_metric": {
+            "name": summary.hero_metric_name,
+            "tier": GLOBAL_TIER,
+            "values": _json_floats(summary.hero_metric_values),
+        },
+        "origins": {
+            "n_origins": summary.n_origins,
+            "first_origin": summary.first_origin,
+            "last_origin": summary.last_origin,
+        },
+        "n_series": summary.n_series,
+        "n_folds_total": summary.n_folds_total,
+        "output_rows": summary.output_rows,
+    }
+
+
+def evaluate_impl(
+    *,
+    challenger_dir: Path,
+    benchmark_dir: Path,
+    compose_configs_dir: Path,
+    out_dir: Path,
+) -> EvaluateSummary:
+    """Score one run's challenger against its benchmark and write its four tables.
+
+    Keyword-only, and the hazard is worse than backtest's: a transposed pair never
+    surfaces, since inverted skill ratios are a complete and plausible table. No
+    model names and no provenance scalars, both read instead from sources the
+    wrapper does not mediate, because a guard is only as good as the independence
+    of its two sides. The completion marker is deleted once the guards pass, so a
+    failed rerun leaves none over a half-rewritten directory.
+
+    Args:
+        challenger_dir: The challenger's backtest sidecar.
+        benchmark_dir: The benchmark's, which is the same directory when one
+            model holds both roles.
+        compose_configs_dir: Holds `modeling.yaml`, with `run_identity.json`
+            beside it. Not derivable from `out_dir`: the run-root check needs two
+            independently supplied values or it compares `out_dir` to itself.
+        out_dir: This run's evaluate directory, created if missing.
+
+    Raises:
+        ValueError: If `out_dir` is not this run's evaluate directory, if
+            `run_identity.json` is absent, or on a failed role, lineage, config,
+            calendar or base-frame check.
+        ValidationError: If the identity or `modeling.yaml` fails to revalidate.
+
+    Returns:
+        EvaluateSummary: The run's headline result, for a wrapper or the runner.
+    """
+    if out_dir.name != _STEP_DIR_NAME:
+        raise ValueError(
+            f"out_dir {out_dir} must be named {_STEP_DIR_NAME!r}: a sibling step "
+            "directory satisfies the run-root check and fails only this one."
+        )
+
+    identity_path = compose_configs_dir.parent / "run_identity.json"
+    if not identity_path.is_file():
+        raise ValueError(
+            f"No run_identity.json at {identity_path}: compose_configs writes it "
+            "beside its step directory, so that path is wrong or the step failed."
+        )
+    identity = TrainRunIdentity.model_validate_json(identity_path.read_text())
+
+    # Against the parsed id, not compose_configs_dir.parent as paths: the two arrive by
+    # different channels, so two spellings of one place would fire on correct wiring.
+    if out_dir.parent.name != identity.train_run_id:
+        raise ValueError(
+            f"out_dir {out_dir} must sit under the run root "
+            f"{identity.train_run_id!r}: every row of four tables would otherwise "
+            "state a run the tables are not filed under."
+        )
+
+    modeling = TrainModelingConfig.model_validate(
+        yaml.safe_load((compose_configs_dir / "modeling.yaml").read_text())
+    )
+    roles = modeling.model_roles
+    _check_directories_match_roles(challenger_dir, benchmark_dir, roles)
+
+    manifests = {
+        "challenger": json.loads((challenger_dir / _SIDECAR_MANIFEST).read_text()),
+        "benchmark": json.loads((benchmark_dir / _SIDECAR_MANIFEST).read_text()),
+    }
+    _check_sidecar_manifests(manifests, identity, modeling)
+
+    # The challenger's calendar is the one used, the challenger being the subject.
+    calendar_df = pd.read_parquet(challenger_dir / _SIDECAR_CALENDAR)
+    _check_calendars_agree(
+        calendar_df, pd.read_parquet(benchmark_dir / _SIDECAR_CALENDAR)
+    )
+
+    # Otherwise a failed rerun leaves the old manifest over a mix of two runs' tables.
+    (out_dir / _MANIFEST_FILENAME).unlink(missing_ok=True)
+
+    outputs = compute_evaluate_outputs(
+        challenger_ms=pd.read_parquet(challenger_dir / _SIDECAR_MONTHLY_SERIES),
+        benchmark_ms=pd.read_parquet(benchmark_dir / _SIDECAR_MONTHLY_SERIES),
+        calendar_df=calendar_df,
+        challenger_model=roles.challenger,
+        benchmark_model=roles.benchmark,
+        tier_labels=tuple(modeling.tiering.tier_labels),
+        identity=identity,
+    )
+    summary = _build_summary(outputs, identity, roles)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for field, filename in _OUTPUT_FILENAMES.items():
+        getattr(outputs, field).to_parquet(out_dir / filename, index=False)
+
+    manifest = _build_manifest(summary, identity, modeling)
+    # evaluate_manifest.json written is the step's completion marker. Keep this last.
+    (out_dir / _MANIFEST_FILENAME).write_text(json.dumps(manifest, indent=2) + "\n")
+
+    _log.info(
+        "evaluate complete: challenger=%s benchmark=%s folds=%d %s=%s out_dir=%s",
+        summary.challenger_model,
+        summary.benchmark_model,
+        summary.n_folds_total,
+        summary.hero_metric_name,
+        summary.hero_metric_values,
+        out_dir,
+    )
+    return summary

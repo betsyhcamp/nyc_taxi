@@ -10,6 +10,7 @@ import yaml
 
 from fcstnyctaxi.core.train.evaluate_impl import (
     _FOLD_KEYS,
+    _OUTPUT_FILENAMES,
     _PERIOD_KEYS,
     _RELATIVE_METRIC_FNS,
     _SCORE_KEYS,
@@ -19,6 +20,7 @@ from fcstnyctaxi.core.train.evaluate_impl import (
     _model_view,
     _score_folds,
     compute_evaluate_outputs,
+    evaluate_impl,
 )
 from fcstnyctaxi.lib.config.bindings import (
     model_names_from_roles,
@@ -1417,3 +1419,312 @@ def test_lineage_values_propagate_into_every_table(
         frame = getattr(outputs, table)
         for column, value in stamped.items():
             assert set(frame[column]) == {value}
+
+
+# ================================================
+# evaluate_impl: the shell guards, the manifest and the write loop
+#
+# The staged run is per-test, so every break below works on its own copy.
+# ================================================
+
+
+def _reject_json_constant(token: str) -> float:
+    """json.loads calls this for the three tokens JSON itself has no words for."""
+    raise AssertionError(f"the manifest carries a bare {token}")
+
+
+def _rewrite_sidecar_manifest(sidecar_dir: Path, **changes: object) -> None:
+    """Apply one nested change to a staged sidecar's manifest, by dotted path."""
+    path = sidecar_dir / "backtest_manifest.json"
+    manifest = json.loads(path.read_text())
+    for dotted, value in changes.items():
+        target = manifest
+        *branch, leaf = dotted.split(".")
+        for step in branch:
+            target = target[step]
+        target[leaf] = value
+    path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+
+def test_an_out_dir_that_is_not_the_evaluate_step_is_refused(
+    staged_run: dict[str, Path],
+) -> None:
+    """A sibling step directory satisfies the run-root check, so this is the only
+    thing stopping four tables landing among the sidecars."""
+    out_dir = staged_run["challenger_dir"].parent
+
+    with pytest.raises(ValueError, match="must be named 'evaluate'"):
+        evaluate_impl(**{**staged_run, "out_dir": out_dir})
+
+    assert not (out_dir / "evaluate_manifest.json").exists()
+    assert not list(out_dir.glob("*.parquet"))
+
+
+def test_an_out_dir_outside_the_declared_run_root_is_refused(
+    staged_run: dict[str, Path], tmp_path: Path
+) -> None:
+    """Otherwise every row of four tables states a run they are not filed under."""
+    out_dir = tmp_path / "a-different-run" / "evaluate"
+
+    with pytest.raises(ValueError, match="must sit under the run root"):
+        evaluate_impl(**{**staged_run, "out_dir": out_dir})
+
+    assert not out_dir.exists()
+
+
+def test_a_missing_run_identity_names_what_should_have_written_it(
+    staged_run: dict[str, Path],
+) -> None:
+    """A bare FileNotFoundError would not say which step failed to produce it."""
+    (staged_run["compose_configs_dir"].parent / "run_identity.json").unlink()
+
+    with pytest.raises(ValueError, match="No run_identity.json"):
+        evaluate_impl(**staged_run)
+
+
+def test_two_roles_naming_two_models_must_read_two_sidecars(
+    staged_run: dict[str, Path],
+) -> None:
+    """The inverse a flat "the directories must differ" check misses: one sidecar
+    scored against itself reads 1.0 and looks like a passing smoke test."""
+    both = {**staged_run, "benchmark_dir": staged_run["challenger_dir"]}
+
+    with pytest.raises(ValueError, match="one sidecar scored twice"):
+        evaluate_impl(**both)
+
+
+def test_one_model_in_both_roles_must_read_one_sidecar(
+    tmp_path: Path, modeling: TrainModelingConfig
+) -> None:
+    """ModelRoles permits the duplicate, which makes two directories the error."""
+    same = modeling.model_copy(
+        update={
+            "model_roles": modeling.model_roles.model_copy(
+                update={"benchmark": modeling.model_roles.challenger}
+            )
+        }
+    )
+    paths = stage_run(tmp_path, same)
+    elsewhere = {**paths, "benchmark_dir": paths["challenger_dir"].parent / "other"}
+
+    with pytest.raises(ValueError, match="one sidecar scored twice"):
+        evaluate_impl(**elsewhere)
+
+
+def test_swapped_sidecars_are_caught_by_the_name_each_one_declares(
+    staged_run: dict[str, Path],
+) -> None:
+    """The transposition nothing downstream reveals: it yields a complete, well
+    formed, entirely plausible table of inverted skill ratios."""
+    swapped = {
+        **staged_run,
+        "challenger_dir": staged_run["benchmark_dir"],
+        "benchmark_dir": staged_run["challenger_dir"],
+    }
+
+    with pytest.raises(ValueError, match="in that role"):
+        evaluate_impl(**swapped)
+
+
+@pytest.mark.parametrize(
+    ("field", "message"),
+    [
+        ("train_run_id", "two runs' sidecars are wired together"),
+        ("feature_run_id", "scored different actuals"),
+    ],
+)
+def test_a_sidecar_from_another_run_is_refused(
+    staged_run: dict[str, Path], field: str, message: str
+) -> None:
+    """Both ids are read off run_identity.json, which no sidecar wrote."""
+    _rewrite_sidecar_manifest(
+        staged_run["benchmark_dir"], **{f"lineage.{field}": "another-run"}
+    )
+
+    with pytest.raises(ValueError, match=message):
+        evaluate_impl(**staged_run)
+
+
+@pytest.mark.parametrize("block", ["tiering", "weighting"])
+def test_a_sidecar_scored_under_other_settings_is_refused(
+    staged_run: dict[str, Path], block: str
+) -> None:
+    """Re-composing under an existing run id overwrites modeling.yaml in place,
+    and the two sidecars go on agreeing with each other."""
+    _rewrite_sidecar_manifest(
+        staged_run["challenger_dir"], **{f"config.{block}.trailing_weeks": 99}
+    )
+
+    with pytest.raises(ValueError, match=f"{block} disagrees with modeling.yaml"):
+        evaluate_impl(**staged_run)
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [("fiscal_year_month", 202403), ("origin_month_fraction_elapsed", 0.75)],
+)
+def test_two_calendars_disagreeing_about_an_origin_are_refused(
+    staged_run: dict[str, Path], column: str, value: object
+) -> None:
+    """Both columns, because horizon labelling reads both: a moved boundary or a
+    bent fraction shifts rows between horizons rather than raising."""
+    calendar_path = staged_run["benchmark_dir"] / "fiscal_calendar.parquet"
+    calendar = pd.read_parquet(calendar_path)
+    origin = _WEEKS[_ORIGIN_TARGETS[0][0]]
+    calendar.loc[calendar["ds"] == origin, column] = value
+    calendar.to_parquet(calendar_path, index=False)
+
+    with pytest.raises(ValueError, match="shared date"):
+        evaluate_impl(**staged_run)
+
+
+def test_a_calendar_missing_an_origin_the_other_carries_is_refused(
+    staged_run: dict[str, Path],
+) -> None:
+    """The other shape of drift, and the one whose message has dates present on
+    one side only to format."""
+    calendar_path = staged_run["benchmark_dir"] / "fiscal_calendar.parquet"
+    calendar = pd.read_parquet(calendar_path)
+    kept = calendar["ds"] != _WEEKS[_ORIGIN_TARGETS[0][0]]
+    calendar[kept].to_parquet(calendar_path, index=False)
+
+    with pytest.raises(ValueError, match="one of them lacks"):
+        evaluate_impl(**staged_run)
+
+
+def test_the_summary_carries_what_it_discovered_rather_than_what_it_was_told(
+    staged_run: dict[str, Path], modeling: TrainModelingConfig
+) -> None:
+    """None of the four is a parameter: the impl reads them from files the wrapper
+    does not mediate, so the return value is the only place the verified set is."""
+    summary = evaluate_impl(**staged_run)
+
+    assert summary.train_run_id == TRAIN_RUN_ID
+    assert summary.feature_run_id == FEATURE_RUN_ID
+    assert summary.challenger_model == modeling.model_roles.challenger
+    assert summary.benchmark_model == modeling.model_roles.benchmark
+
+
+def test_one_model_in_both_roles_scores_itself_at_one(
+    tmp_path: Path, modeling: TrainModelingConfig
+) -> None:
+    """The smoke test ModelRoles blesses, end to end: the cheapest check that the
+    whole path from two directories to a hero metric is wired correctly."""
+    same = modeling.model_copy(
+        update={
+            "model_roles": modeling.model_roles.model_copy(
+                update={"benchmark": modeling.model_roles.challenger}
+            )
+        }
+    )
+
+    summary = evaluate_impl(**stage_run(tmp_path, same))
+
+    assert summary.hero_metric_values
+    for value in summary.hero_metric_values.values():
+        assert value == pytest.approx(1.0)
+
+
+def test_the_manifest_agrees_with_the_tables_beside_it(
+    staged_run: dict[str, Path],
+) -> None:
+    """A manifest a reader cannot check against the directory records nothing."""
+    evaluate_impl(**staged_run)
+    out_dir = staged_run["out_dir"]
+    manifest = json.loads((out_dir / "evaluate_manifest.json").read_text())
+
+    for filename, rows in manifest["output_rows"].items():
+        assert len(pd.read_parquet(out_dir / filename)) == rows
+    base = pd.read_parquet(out_dir / "per_series_comparison.parquet")
+    assert manifest["n_series"] == base["unique_id"].nunique()
+    assert manifest["origins"]["n_origins"] == base["forecast_origin_date"].nunique()
+    assert manifest["n_folds_total"] == len(base[_FOLD_KEYS].drop_duplicates())
+
+
+def test_the_hero_metric_is_the_cell_the_summary_table_carries(
+    staged_run: dict[str, Path], modeling: TrainModelingConfig
+) -> None:
+    """Recomputing it would let the manifest disagree with the file beside it."""
+    evaluate_impl(**staged_run)
+    out_dir = staged_run["out_dir"]
+    hero = json.loads((out_dir / "evaluate_manifest.json").read_text())["hero_metric"]
+
+    table = pd.read_parquet(out_dir / "summary_metrics.parquet")
+    cells = table[
+        (table["model"] == modeling.model_roles.challenger)
+        & (table["tier"] == hero["tier"])
+        & (table["metric"] == hero["name"])
+    ]
+
+    assert hero["values"]
+    assert hero["values"] == pytest.approx(
+        dict(zip(cells["horizon"], cells["value"], strict=True))
+    )
+
+
+def test_an_unscoreable_hero_metric_reaches_the_marker_as_null(
+    staged_run: dict[str, Path],
+) -> None:
+    """A benchmark forecasting the actual exactly excludes every fold, and the
+    nan that leaves reaches the completion marker as a token only JSON lacks."""
+    benchmark_path = staged_run["benchmark_dir"] / "monthly_series.parquet"
+    exact = pd.read_parquet(benchmark_path)
+    exact["monthly_forecast"] = exact["actual_monthly_total"]
+    exact.to_parquet(benchmark_path, index=False)
+
+    summary = evaluate_impl(**staged_run)
+
+    written = (staged_run["out_dir"] / "evaluate_manifest.json").read_text()
+    manifest = json.loads(written, parse_constant=_reject_json_constant)
+    assert set(manifest["hero_metric"]["values"].values()) == {None}
+    assert set(summary.as_dict()["hero_metric_values"].values()) == {None}
+    # The dataclass keeps the honest reading; the two json paths are where it goes.
+    assert all(np.isnan(value) for value in summary.hero_metric_values.values())
+
+
+def test_summary_as_dict_survives_strict_json_serialisation(
+    staged_run: dict[str, Path],
+) -> None:
+    """KFP serialises artifact metadata through a protobuf Struct that has no NaN
+    and no numpy, so either would break a run after all the work was done."""
+    json.dumps(evaluate_impl(**staged_run).as_dict(), allow_nan=False)
+
+
+def test_tier_survives_every_written_table_as_an_ordered_categorical(
+    staged_run: dict[str, Path],
+) -> None:
+    """Parquet sits between the frames and a dashboard, and a dropped dtype leaves
+    it sorting high, low, middle, very_high."""
+    evaluate_impl(**staged_run)
+
+    for filename in _OUTPUT_FILENAMES.values():
+        tier = pd.read_parquet(staged_run["out_dir"] / filename)["tier"]
+
+        assert tier.cat.ordered
+        assert list(tier.cat.categories) != sorted(tier.cat.categories)
+
+
+@pytest.mark.parametrize(
+    "failing_collaborator", ["compute_evaluate_outputs", "_build_manifest"]
+)
+def test_a_failed_rerun_leaves_no_completion_marker(
+    staged_run: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    failing_collaborator: str,
+) -> None:
+    """Both failure positions: before the writes, and partway through them."""
+
+    def _fail(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("attempt failed")
+
+    evaluate_impl(**staged_run)
+    marker = staged_run["out_dir"] / "evaluate_manifest.json"
+    assert marker.is_file()
+
+    monkeypatch.setattr(
+        f"fcstnyctaxi.core.train.evaluate_impl.{failing_collaborator}", _fail
+    )
+    with pytest.raises(RuntimeError):
+        evaluate_impl(**staged_run)
+
+    assert not marker.exists()
