@@ -78,6 +78,7 @@ def build_train_pipeline(
             env=env,
             train_run_id=train_run_id,
             feature_run_id=feature_run_id,
+            declared_model_names=list(model_names),
             panel=panel.output,
             calendar=calendar.output,
         )
