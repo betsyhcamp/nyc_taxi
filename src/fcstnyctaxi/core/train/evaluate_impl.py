@@ -613,27 +613,27 @@ def _check_sidecar_manifests(
 
 
 def _check_calendars_agree(
-    challenger_calendar: pd.DataFrame, benchmark_calendar: pd.DataFrame
+    challenger_calendar: pd.DataFrame,
+    benchmark_calendar: pd.DataFrame,
+    forecast_origins: pd.Series,
 ) -> None:
-    """The two sidecars map origins to the same attributes. Not covered by the
-    lineage check: the snapshot is trimmed at write time, so it can drift."""
-    challenger_origins = _origin_attribute_lookup(challenger_calendar).sort_index()
-    benchmark_origins = _origin_attribute_lookup(benchmark_calendar).sort_index()
-    if challenger_origins.equals(benchmark_origins):
-        return
+    """The two sidecars map the forecast origins to the same attributes. Those
+    rows and by value: nothing else here can change a number this step emits."""
+    # Not normalized to ORIGIN_TIME_UNIT: reindex bridges units; index never written
+    origins = pd.Index(forecast_origins.unique(), name="ds").sort_values()
+    challenger_origins = _origin_attribute_lookup(challenger_calendar).reindex(origins)
+    benchmark_origins = _origin_attribute_lookup(benchmark_calendar).reindex(origins)
 
-    one_sided = challenger_origins.index.symmetric_difference(benchmark_origins.index)
-    shared = challenger_origins.index.intersection(benchmark_origins.index)
-    disagreeing = shared[
-        (challenger_origins.loc[shared] != benchmark_origins.loc[shared]).any(axis=1)
+    disagreeing = origins[
+        (challenger_origins != benchmark_origins).any(axis=1).to_numpy()
     ]
-    sample = [str(ds.date()) for ds in list(one_sided[:3]) + list(disagreeing[:3])]
-    raise ValueError(
-        f"the two sidecars' calendars carry {len(one_sided)} origin date(s) one "
-        f"of them lacks and map {len(disagreeing)} shared date(s) differently; "
-        f"first few: {sample}. A shifted month boundary moves rows between "
-        "horizons rather than raising."
-    )
+    if len(disagreeing):
+        raise ValueError(
+            f"the two sidecars' calendars disagree on {len(disagreeing)} forecast "
+            "origin(s), by value or by one of them lacking it; first few: "
+            f"{[str(ds.date()) for ds in disagreeing[:5]]}. A shifted month "
+            "boundary moves rows between horizons rather than raising."
+        )
 
 
 def _hero_metric_values(
@@ -730,8 +730,8 @@ def evaluate_impl(
     surfaces, since inverted skill ratios are a complete and plausible table. No
     model names and no provenance scalars, both read instead from sources the
     wrapper does not mediate, because a guard is only as good as the independence
-    of its two sides. The completion marker is deleted once the guards pass, so a
-    failed rerun leaves none over a half-rewritten directory.
+    of its two sides. The completion marker is deleted before the first frame is
+    read, so a failed rerun leaves none over a half-rewritten directory.
 
     Args:
         challenger_dir: The challenger's backtest sidecar.
@@ -786,18 +786,23 @@ def evaluate_impl(
     }
     _check_sidecar_manifests(manifests, identity, modeling)
 
-    # The challenger's calendar is the one used, the challenger being the subject.
-    calendar_df = pd.read_parquet(challenger_dir / _SIDECAR_CALENDAR)
-    _check_calendars_agree(
-        calendar_df, pd.read_parquet(benchmark_dir / _SIDECAR_CALENDAR)
-    )
-
     # Otherwise a failed rerun leaves the old manifest over a mix of two runs' tables.
     (out_dir / _MANIFEST_FILENAME).unlink(missing_ok=True)
 
+    # Every frame is read below the unlink, so an unreadable one leaves no marker.
+    challenger_ms = pd.read_parquet(challenger_dir / _SIDECAR_MONTHLY_SERIES)
+    benchmark_ms = pd.read_parquet(benchmark_dir / _SIDECAR_MONTHLY_SERIES)
+    # The challenger's calendar is the one used, the challenger being the subject.
+    calendar_df = pd.read_parquet(challenger_dir / _SIDECAR_CALENDAR)
+    _check_calendars_agree(
+        calendar_df,
+        pd.read_parquet(benchmark_dir / _SIDECAR_CALENDAR),
+        challenger_ms["forecast_origin_date"],
+    )
+
     outputs = compute_evaluate_outputs(
-        challenger_ms=pd.read_parquet(challenger_dir / _SIDECAR_MONTHLY_SERIES),
-        benchmark_ms=pd.read_parquet(benchmark_dir / _SIDECAR_MONTHLY_SERIES),
+        challenger_ms=challenger_ms,
+        benchmark_ms=benchmark_ms,
         calendar_df=calendar_df,
         challenger_model=roles.challenger,
         benchmark_model=roles.benchmark,

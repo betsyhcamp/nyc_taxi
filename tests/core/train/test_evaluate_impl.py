@@ -800,7 +800,7 @@ def test_an_origin_absent_from_the_calendar_raises(
         _base(challenger_ms, benchmark_ms, trimmed, modeling)
 
 
-def test_the_sidecars_origin_fraction_is_ignored_in_favour_of_the_calendar(
+def test_the_sidecars_origin_fraction_is_ignored_in_favor_of_the_calendar(
     challenger_ms: pd.DataFrame,
     benchmark_ms: pd.DataFrame,
     calendar_df: pd.DataFrame,
@@ -1092,7 +1092,7 @@ def test_a_tier_with_no_rows_in_a_fold_scores_nan(
     fold_metrics: pd.DataFrame,
 ) -> None:
     """The nan a nanmean drops one grain up. Without a fold missing a tier the
-    derivation's exclusion behaviour is never exercised."""
+    derivation's exclusion behavior is never exercised."""
     empty = fold_metrics[fold_metrics["n_obs"] == 0]
 
     assert not empty.empty
@@ -1574,7 +1574,7 @@ def test_two_calendars_disagreeing_about_an_origin_are_refused(
     calendar.loc[calendar["ds"] == origin, column] = value
     calendar.to_parquet(calendar_path, index=False)
 
-    with pytest.raises(ValueError, match="shared date"):
+    with pytest.raises(ValueError, match="disagree on 1 forecast origin"):
         evaluate_impl(**staged_run)
 
 
@@ -1588,8 +1588,59 @@ def test_a_calendar_missing_an_origin_the_other_carries_is_refused(
     kept = calendar["ds"] != _WEEKS[_ORIGIN_TARGETS[0][0]]
     calendar[kept].to_parquet(calendar_path, index=False)
 
-    with pytest.raises(ValueError, match="one of them lacks"):
+    with pytest.raises(ValueError, match="disagree on 1 forecast origin"):
         evaluate_impl(**staged_run)
+
+
+def test_a_calendar_differing_away_from_every_origin_is_accepted(
+    staged_run: dict[str, Path],
+) -> None:
+    """The guard covers what horizon labelling reads. A row at no origin cannot
+    move a number, so refusing it would refuse valid sidecars."""
+    calendar_path = staged_run["benchmark_dir"] / "fiscal_calendar.parquet"
+    calendar = pd.read_parquet(calendar_path)
+    origins = [_WEEKS[week] for week, _ in _ORIGIN_TARGETS]
+    calendar.loc[~calendar["ds"].isin(origins), "origin_month_fraction_elapsed"] = 0.99
+    calendar.to_parquet(calendar_path, index=False)
+
+    summary = evaluate_impl(**staged_run)
+
+    assert summary.n_origins == len(origins)
+
+
+def test_a_calendar_differing_only_in_dtype_is_accepted(
+    staged_run: dict[str, Path],
+) -> None:
+    """Equal values in a narrower dtype change no number, and an exact frame
+    comparison would refuse them while naming nothing that disagreed."""
+    calendar_path = staged_run["benchmark_dir"] / "fiscal_calendar.parquet"
+    calendar = pd.read_parquet(calendar_path)
+    calendar["fiscal_year_month"] = calendar["fiscal_year_month"].astype("int32")
+    calendar["origin_month_fraction_elapsed"] = calendar[
+        "origin_month_fraction_elapsed"
+    ].astype("float32")
+    calendar.to_parquet(calendar_path, index=False)
+
+    evaluate_impl(**staged_run)
+
+    assert (staged_run["out_dir"] / "evaluate_manifest.json").is_file()
+
+
+def test_an_absent_monthly_series_leaves_no_completion_marker(
+    staged_run: dict[str, Path],
+) -> None:
+    """Every frame is read below the unlink. Hoisting one above it to feed a
+    guard would leave a marker over tables the failed run never refreshed."""
+    evaluate_impl(**staged_run)
+    marker = staged_run["out_dir"] / "evaluate_manifest.json"
+    assert marker.is_file()
+
+    (staged_run["benchmark_dir"] / "monthly_series.parquet").unlink()
+
+    with pytest.raises(FileNotFoundError):
+        evaluate_impl(**staged_run)
+
+    assert not marker.exists()
 
 
 def test_the_summary_carries_what_it_discovered_rather_than_what_it_was_told(
@@ -1682,10 +1733,10 @@ def test_an_unscoreable_hero_metric_reaches_the_marker_as_null(
     assert all(np.isnan(value) for value in summary.hero_metric_values.values())
 
 
-def test_summary_as_dict_survives_strict_json_serialisation(
+def test_summary_as_dict_survives_strict_json_serialization(
     staged_run: dict[str, Path],
 ) -> None:
-    """KFP serialises artifact metadata through a protobuf Struct that has no NaN
+    """KFP serializes artifact metadata through a protobuf Struct that has no NaN
     and no numpy, so either would break a run after all the work was done."""
     json.dumps(evaluate_impl(**staged_run).as_dict(), allow_nan=False)
 
