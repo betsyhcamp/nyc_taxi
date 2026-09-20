@@ -380,6 +380,7 @@ def _summary() -> BacktestSummary:
         first_origin="2025-02-23",
         last_origin="2025-03-23",
         n_series=pd.Series(["a", "b", "c"]).nunique(),
+        train_run_id=TRAIN_RUN_ID,
         feature_run_id=FEATURE_RUN_ID,
         output_rows={"monthly_series.parquet": pd.Series([1, 2]).size},
     )
@@ -707,6 +708,17 @@ def test_a_run_writes_the_whole_sidecar(completed_run: Path) -> None:
     """Asserted in full because the file set is the contract two compare tools read,
     and a missing file is not detectable from inside the run that omitted it."""
     assert {path.name for path in completed_run.iterdir()} == _SIDECAR_FILENAMES
+
+
+def test_the_summary_carries_the_run_ids_it_discovered(
+    staged: dict[str, Any],
+) -> None:
+    """Neither id is a parameter: both are read off run_identity.json, so a wrapper
+    that never opens the sidecar has the return value as its only source."""
+    summary = backtest_impl(**staged)
+
+    assert summary.train_run_id == TRAIN_RUN_ID
+    assert summary.feature_run_id == FEATURE_RUN_ID
 
 
 @pytest.mark.parametrize(

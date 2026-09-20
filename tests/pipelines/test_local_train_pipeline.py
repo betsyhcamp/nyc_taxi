@@ -2,23 +2,29 @@
 
 `main()` runs end to end against a config tree copied under `tmp_path`, with
 everything needing a repo, a bucket or real parquet patched out, so what is left
-to assert is the order of the local steps.
+to assert is which local steps run, and in what order.
 """
 
 import logging
 import shutil
 import sys
 from pathlib import Path
+from typing import cast
 
 import pytest
 from pytest_mock import MockerFixture
 
 from fcstnyctaxi.core.train.backtest_impl import BacktestSummary
-from fcstnyctaxi.core.train.compose_configs_impl import ComposeConfigsSummary
+from fcstnyctaxi.core.train.compose_configs_impl import (
+    ComposeConfigsSummary,
+    compose_train_static_configs,
+)
+from fcstnyctaxi.core.train.evaluate_impl import EvaluateSummary
 from fcstnyctaxi.lib import run_outputs
 from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.pipelines import local_train_pipeline
+from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.run_outputs import FeatureArtifacts, FeatureRunOutputs
 
 ENV = "dev"
@@ -52,9 +58,40 @@ BACKTEST_SUMMARY = BacktestSummary(
     first_origin="2025-05-18",
     last_origin="2025-05-18",
     n_series=3,
+    train_run_id=RUN_ID,
     feature_run_id=FEATURE_RUN_ID,
     output_rows={"monthly_series.parquet": 6},
 )
+# One origin over a two month horizon is two folds, matching the summary above.
+EVALUATE_SUMMARY = EvaluateSummary(
+    train_run_id=RUN_ID,
+    challenger_model="lightgbm",
+    benchmark_model="naive",
+    feature_run_id=FEATURE_RUN_ID,
+    n_origins=1,
+    first_origin="2025-05-18",
+    last_origin="2025-05-18",
+    n_series=3,
+    n_folds_total=2,
+    hero_metric_name="wrmae_pooled",
+    hero_metric_values={"horizon_1": 0.92, "horizon_2": 0.88},
+    output_rows={"fold_metrics.parquet": 4},
+)
+
+
+def _backtest_outputs(*, out_dir: Path, **_: object) -> BacktestSummary:
+    """Write what the patched impl would: the marker the per-model publish sends
+    and the scoring step reads to decide the sidecar is finished."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "backtest_manifest.json").write_text("{}")
+    return BACKTEST_SUMMARY
+
+
+def _evaluate_outputs(*, out_dir: Path, **_: object) -> EvaluateSummary:
+    """The same, for the directory the final publish sends."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "evaluate_manifest.json").write_text("{}")
+    return EVALUATE_SUMMARY
 
 
 @pytest.fixture
@@ -149,9 +186,8 @@ def test_each_backtest_is_published_before_the_next_one_runs(
     monkeypatch: pytest.MonkeyPatch,
     mocker: MockerFixture,
 ) -> None:
-    """Two orderings. Published second, a failed sync would leave no record of what
-    the run read; and running both backtests before publishing either would lose the
-    first model's finished sidecar whenever the second one failed."""
+    """Three orderings, each with a loss of its own: no record of what the run read,
+    a finished sidecar dropped when a later model fails, scoring an absent pair."""
     root = tmp_path / "project"
     shutil.copytree(get_project_root_dir() / "config", root / "config")
     monkeypatch.setenv("PROJECT_ROOT", str(root))
@@ -166,8 +202,9 @@ def test_each_backtest_is_published_before_the_next_one_runs(
     )
     sync = mocker.patch.object(local_train_pipeline, "sync_to_gcs", return_value=(7, 0))
     # One manager, so the assertion is about order across the calls rather than each
-    # in isolation. backtest_impl belongs in it for the same reason: left out, a run
-    # that backtested both models before publishing either would look identical.
+    # in isolation. Both impls belong in it for the same reason: left out, a run that
+    # backtested both models before publishing either, or scored before the second
+    # sidecar existed, would look identical.
     publishes = mocker.MagicMock()
     publishes.attach_mock(
         mocker.patch.object(local_train_pipeline, "upload_to_gcs"), "identity"
@@ -175,9 +212,15 @@ def test_each_backtest_is_published_before_the_next_one_runs(
     publishes.attach_mock(sync, "sync")
     publishes.attach_mock(
         mocker.patch.object(
-            local_train_pipeline, "backtest_impl", return_value=BACKTEST_SUMMARY
+            local_train_pipeline, "backtest_impl", side_effect=_backtest_outputs
         ),
         "backtest",
+    )
+    publishes.attach_mock(
+        mocker.patch.object(
+            local_train_pipeline, "evaluate_impl", side_effect=_evaluate_outputs
+        ),
+        "evaluate",
     )
 
     monkeypatch.setattr(
@@ -210,17 +253,20 @@ def test_each_backtest_is_published_before_the_next_one_runs(
         "sync",
         "backtest",
         "sync",
+        "evaluate",
+        "sync",
     ]
     assert publishes.mock_calls[0].args[1] == run_prefix
     assert [call.kwargs["completion_marker"] for call in sync.call_args_list] == [
         "manifest.json",
         "backtest_manifest.json",
         "backtest_manifest.json",
+        "evaluate_manifest.json",
     ]
     # out_dir is mirrored from these, so pinning the URIs pins both locations.
     assert [call.args[1] for call in sync.call_args_list[1:]] == [
         f"{run_prefix}backtest/{name}/" for name in COMPOSE_SUMMARY.model_names
-    ]
+    ] + [f"{run_prefix}evaluate/"]
 
 
 def test_the_published_destinations_are_ones_the_transport_accepts(
@@ -238,12 +284,6 @@ def test_the_published_destinations_are_ones_the_transport_accepts(
         (out_dir / "manifest.json").write_text("{}")
         return COMPOSE_SUMMARY
 
-    def _backtest_outputs(*, out_dir: Path, **_: object) -> BacktestSummary:
-        """The same, for the sidecar the per-model publish sends."""
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "backtest_manifest.json").write_text("{}")
-        return BACKTEST_SUMMARY
-
     root = tmp_path / "project"
     shutil.copytree(get_project_root_dir() / "config", root / "config")
     monkeypatch.setenv("PROJECT_ROOT", str(root))
@@ -258,6 +298,9 @@ def test_the_published_destinations_are_ones_the_transport_accepts(
     )
     mocker.patch.object(
         local_train_pipeline, "backtest_impl", side_effect=_backtest_outputs
+    )
+    mocker.patch.object(
+        local_train_pipeline, "evaluate_impl", side_effect=_evaluate_outputs
     )
     mocker.patch.object(
         run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
@@ -291,6 +334,94 @@ def test_the_published_destinations_are_ones_the_transport_accepts(
         assert (
             published / "backtest" / model_name / "backtest_manifest.json"
         ).is_file()
+    assert (published / "evaluate" / "evaluate_manifest.json").is_file()
+
+
+def test_a_narrowed_rerun_scores_the_pair_the_run_id_has_accumulated(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Two narrowed invocations complete one run's pair and the second scores it.
+    Tie scoring to the invocation and recovering a run costs a second backtest."""
+    root = tmp_path / "project"
+    shutil.copytree(get_project_root_dir() / "config", root / "config")
+    monkeypatch.setenv("PROJECT_ROOT", str(root))
+    mocker.patch.object(
+        local_train_pipeline, "require_git_hash", return_value="abc1234"
+    )
+    mocker.patch.object(
+        local_train_pipeline, "download_from_gcs", side_effect=lambda uri, d: d / "f"
+    )
+    mocker.patch.object(
+        local_train_pipeline, "compose_configs_impl", return_value=COMPOSE_SUMMARY
+    )
+    mocker.patch.object(
+        local_train_pipeline, "backtest_impl", side_effect=_backtest_outputs
+    )
+    mocker.patch.object(local_train_pipeline, "upload_to_gcs")
+    mocker.patch.object(local_train_pipeline, "sync_to_gcs", return_value=(7, 0))
+    mocker.patch.object(
+        run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
+    )
+    evaluate = mocker.patch.object(
+        local_train_pipeline, "evaluate_impl", side_effect=_evaluate_outputs
+    )
+    # Composed here rather than named, so the assertion is about which role each
+    # directory fills and not about the models this repo happens to ship.
+    _, _, modeling = compose_train_static_configs(root / "config", ENV)
+    roles = cast(TrainModelingConfig, modeling.config).model_roles
+    # One model in both roles is a legal config, and under it the first invocation
+    # below would complete the pair by itself, leaving nothing for the second.
+    assert roles.challenger != roles.benchmark
+
+    scratch = tmp_path / "scratch"
+    run_prefix = resolve_run_prefix(root / "config", ENV, "train", RUN_ID)
+    # What an interrupted backtest leaves behind: that impl deletes its marker
+    # first and writes it last, so outputs without one are a half-written sidecar.
+    partial = local_train_pipeline._mirror_path(
+        local_train_pipeline._backtest_uri(run_prefix, roles.challenger), scratch
+    )
+    partial.mkdir(parents=True)
+    (partial / "monthly_series.parquet").write_text("half of a sidecar")
+
+    def _back(model_name: str) -> None:
+        """One invocation narrowed to a single model, under a shared run id."""
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "local_train_pipeline",
+                "--env",
+                ENV,
+                "--feature-run-id",
+                FEATURE_RUN_ID,
+                "--run-id",
+                RUN_ID,
+                "--model",
+                model_name,
+                "--scratch-dir",
+                str(scratch),
+            ],
+        )
+        local_train_pipeline.main()
+
+    with caplog.at_level(logging.WARNING):
+        _back(roles.benchmark)
+
+    # A present directory is not a finished one, and scoring the partial above
+    # would read frames whose writer stopped partway.
+    assert evaluate.call_count == 0
+    assert any(record.levelname == "WARNING" for record in caplog.records)
+
+    _back(roles.challenger)
+
+    assert evaluate.call_count == 1
+    scored = evaluate.call_args.kwargs
+    # A transposed pair is the one wiring error the tables never reveal.
+    assert scored["challenger_dir"].name == roles.challenger
+    assert scored["benchmark_dir"].name == roles.benchmark
 
 
 def test_the_local_runner_resolves_both_uris_from_the_feature_run_id_alone(

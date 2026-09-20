@@ -227,6 +227,81 @@ def test_compute_wrmae_per_series_near_zero_benchmark_row_excluded():
     np.testing.assert_allclose(result, 0.5, rtol=1e-7)
 
 
+def test_compute_wrmae_per_series_zero_weight_fold_returns_nan():
+    """A fold carrying no weight returns nan, not a perfect score.
+
+    Every normalized weight is 0/0, so the group is all-nan and the reduction
+    used to read it as 0.0.
+    """
+    # Both series dormant: tier looks back 52 weeks, series_weight only 26.
+    origins = [_ORIGIN_1, _ORIGIN_1]
+    months = [_MONTH_1, _MONTH_1]
+
+    challenger = pd.DataFrame(
+        {
+            "forecast_origin_date": origins,
+            "predicted_fiscal_year_month": months,
+            "unique_id": ["A", "B"],
+            "monthly_forecast": [110.0, 220.0],
+            "actual_monthly_total": [100.0, 200.0],
+            "series_weight": [0.0, 0.0],
+            "tier": ["top", "bottom"],
+            "horizon": ["horizon_1", "horizon_1"],
+        }
+    )
+
+    benchmark = pd.DataFrame(
+        {
+            "forecast_origin_date": origins,
+            "predicted_fiscal_year_month": months,
+            "unique_id": ["A", "B"],
+            "monthly_forecast": [120.0, 240.0],
+            "tier": ["top", "bottom"],
+            "horizon": ["horizon_1", "horizon_1"],
+        }
+    )
+
+    assert np.isnan(compute_wrmae_per_series(challenger, benchmark))
+
+
+def test_compute_wrmae_per_series_nan_ratio_row_excluded_not_diluted():
+    """A row with no computable ratio leaves the fold, its weight with it.
+
+    The weight used to stay in the denominator while the row added nothing to
+    the numerator: two rows matching the benchmark plus one nan read 0.667.
+    """
+    origins = [_ORIGIN_1] * 3
+    months = [_MONTH_1] * 3
+
+    challenger = pd.DataFrame(
+        {
+            "forecast_origin_date": origins,
+            "predicted_fiscal_year_month": months,
+            "unique_id": ["A", "B", "C"],
+            # A and B err exactly as much as the benchmark; C has no forecast.
+            "monthly_forecast": [120.0, 240.0, np.nan],
+            "actual_monthly_total": [100.0, 200.0, 300.0],
+            "series_weight": [1.0, 1.0, 1.0],
+            "tier": ["top"] * 3,
+            "horizon": ["horizon_1"] * 3,
+        }
+    )
+
+    benchmark = pd.DataFrame(
+        {
+            "forecast_origin_date": origins,
+            "predicted_fiscal_year_month": months,
+            "unique_id": ["A", "B", "C"],
+            "monthly_forecast": [80.0, 160.0, 330.0],
+            "tier": ["top"] * 3,
+            "horizon": ["horizon_1"] * 3,
+        }
+    )
+
+    result = compute_wrmae_per_series(challenger, benchmark)
+    np.testing.assert_allclose(result, 1.0, rtol=1e-7)
+
+
 # ================================================
 # compute_signed_bias_pooled
 # ================================================
@@ -285,6 +360,57 @@ def test_compute_signed_bias_per_series_near_zero_actual_excluded():
 
     result = compute_signed_bias_per_series(challenger)
     np.testing.assert_allclose(result, 0.05, rtol=1e-7)
+
+
+def test_compute_signed_bias_per_series_zero_weight_fold_returns_nan():
+    """A fold carrying no weight returns nan, not a perfectly unbiased score.
+
+    Every normalized weight is 0/0, so the group is all-nan and the reduction
+    used to read it as 0.0.
+    """
+    origins = [_ORIGIN_1, _ORIGIN_1]
+    months = [_MONTH_1, _MONTH_1]
+
+    challenger = pd.DataFrame(
+        {
+            "forecast_origin_date": origins,
+            "predicted_fiscal_year_month": months,
+            "unique_id": ["A", "B"],
+            "monthly_forecast": [110.0, 220.0],
+            "actual_monthly_total": [100.0, 200.0],
+            "series_weight": [0.0, 0.0],
+            "tier": ["top", "bottom"],
+            "horizon": ["horizon_1", "horizon_1"],
+        }
+    )
+
+    assert np.isnan(compute_signed_bias_per_series(challenger))
+
+
+def test_compute_signed_bias_per_series_nan_bias_row_excluded_not_diluted():
+    """A row with no computable bias leaves the fold, its weight with it.
+
+    Two rows over-forecasting by 10% plus one nan row used to read 0.067.
+    """
+    origins = [_ORIGIN_1] * 3
+    months = [_MONTH_1] * 3
+
+    challenger = pd.DataFrame(
+        {
+            "forecast_origin_date": origins,
+            "predicted_fiscal_year_month": months,
+            "unique_id": ["A", "B", "C"],
+            # A and B over-forecast by 10%; C has no forecast, so no bias.
+            "monthly_forecast": [110.0, 220.0, np.nan],
+            "actual_monthly_total": [100.0, 200.0, 300.0],
+            "series_weight": [1.0, 1.0, 1.0],
+            "tier": ["top"] * 3,
+            "horizon": ["horizon_1"] * 3,
+        }
+    )
+
+    result = compute_signed_bias_per_series(challenger)
+    np.testing.assert_allclose(result, 0.1, rtol=1e-7)
 
 
 # ================================================
