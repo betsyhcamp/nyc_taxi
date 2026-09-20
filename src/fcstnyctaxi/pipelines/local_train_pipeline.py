@@ -12,6 +12,7 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
+from typing import cast
 
 from fcstnyctaxi.core.train.backtest_impl import backtest_impl
 from fcstnyctaxi.core.train.compose_configs_impl import (
@@ -19,6 +20,7 @@ from fcstnyctaxi.core.train.compose_configs_impl import (
     compose_configs_impl,
     compose_train_static_configs,
 )
+from fcstnyctaxi.core.train.evaluate_impl import evaluate_impl
 from fcstnyctaxi.lib.io import (
     download_from_gcs,
     require_gcs_uri,
@@ -33,6 +35,7 @@ from fcstnyctaxi.lib.utils import (
     require_git_hash,
     require_path_safe_run_id,
 )
+from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,10 @@ logger = logging.getLogger(__name__)
 # which only the loop knows.
 _COMPOSE_STEP = "compose_configs"
 _BACKTEST_STEP = "backtest"
+_EVALUATE_STEP = "evaluate"
+
+# Shared with the readiness check below, which would otherwise skip every run.
+_BACKTEST_MARKER = "backtest_manifest.json"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -50,7 +57,8 @@ def _parse_args() -> argparse.Namespace:
     location, so `require_known_environment` is the whole guard.
     """
     parser = argparse.ArgumentParser(
-        description="Compose every Training config for one run, then back each model."
+        description="Compose every Training config for one run, back each model, "
+        "then score the challenger against the benchmark."
     )
     parser.add_argument(
         "--env",
@@ -85,7 +93,7 @@ def _parse_args() -> argparse.Namespace:
         "--model",
         default=None,
         help="Back only this model instead of every model in model_roles; must "
-        "name one this run composed.",
+        "name one this run composed. Scoring runs only if both sidecars are complete.",
     )
     parser.add_argument(
         "--scratch-dir",
@@ -116,6 +124,12 @@ def _mirror_path(gcs_uri: str, root: Path) -> Path:
     return root / key
 
 
+def _backtest_uri(run_prefix: str, model_name: str) -> str:
+    """One model's sidecar prefix, built here alone because the scoring step
+    resolves two of them by role, outside the loop that publishes them."""
+    return f"{run_prefix}{_BACKTEST_STEP}/{model_name}/"
+
+
 def _select_models(model_names: list[str], selected: str | None) -> list[str]:
     """The models to back, narrowed to `selected` when one was asked for.
 
@@ -133,18 +147,21 @@ def _select_models(model_names: list[str], selected: str | None) -> list[str]:
 
 
 def main() -> None:
-    """Compose one Training run's configs, then back each model, publishing both.
+    """Compose one Training run's configs, back each model, then score the pair.
 
     A failing model stops the run rather than being collected: the publish is per
     model and inside the loop, so an earlier model's sidecar is already complete.
+    Scoring reads the sidecars the run id has accumulated rather than the ones this
+    invocation wrote, so a narrowed rerun that completes the pair scores it instead
+    of costing a second backtest of the model that already succeeded.
 
     Raises:
         ValueError: If either run id is not path-safe, if exactly one URI override
             was given, if the Feature run published no manifest, if an input URI
             cannot be mirrored to a distinct local path, if `--env` has no
             `environments/<env>.yaml`, if `--model` names no model this run
-            composed, on a failed lineage check, or on any composition or
-            backtest failure.
+            composed, on a failed lineage check, or on any composition, backtest
+            or evaluation failure.
         RuntimeError: If the git hash cannot be determined, since a run whose
             commit is unknown cannot be reproduced from its own record.
         ValidationError: If an identity field or an override URI is malformed.
@@ -174,8 +191,10 @@ def main() -> None:
     mirror_root = args.scratch_dir
     compose_dir = _mirror_path(compose_uri, mirror_root)
 
-    # Called for the raise. Above the rmtree, and above the resolve's network read.
-    compose_train_static_configs(config_dir, args.env)
+    # Above the rmtree and the resolve, so a bad config raises as itself. Roles
+    # from here, not evaluate_impl's modeling.yaml, so its role check has two sides.
+    _, _, modeling = compose_train_static_configs(config_dir, args.env)
+    roles = cast(TrainModelingConfig, modeling.config).model_roles
 
     artifacts = resolve_feature_artifacts(
         config_dir=config_dir,
@@ -255,7 +274,7 @@ def main() -> None:
     )
 
     for model_name in model_names:
-        model_uri = f"{run_prefix}{_BACKTEST_STEP}/{model_name}/"
+        model_uri = _backtest_uri(run_prefix, model_name)
         # Derived from the URI, like the compose step above, so the published
         # location and the local one cannot disagree.
         model_dir = _mirror_path(model_uri, mirror_root)
@@ -271,7 +290,7 @@ def main() -> None:
         )
         # Inside the loop, so a later model failing leaves this sidecar complete.
         uploaded, removed = sync_to_gcs(
-            model_dir, model_uri, completion_marker="backtest_manifest.json"
+            model_dir, model_uri, completion_marker=_BACKTEST_MARKER
         )
 
         # Row counts are the one summary field backtest_impl does not log itself.
@@ -283,6 +302,56 @@ def main() -> None:
             model_uri,
             backtest_summary.output_rows,
         )
+
+    # The run id is the unit of work, not the invocation. backtest_impl deletes its
+    # marker first and writes it last, so its presence means a finished sidecar.
+    challenger_dir = _mirror_path(
+        _backtest_uri(run_prefix, roles.challenger), mirror_root
+    )
+    benchmark_dir = _mirror_path(
+        _backtest_uri(run_prefix, roles.benchmark), mirror_root
+    )
+    unscored = [
+        f"{role} ({name})"
+        for role, name, sidecar_dir in (
+            ("challenger", roles.challenger, challenger_dir),
+            ("benchmark", roles.benchmark, benchmark_dir),
+        )
+        if not (sidecar_dir / _BACKTEST_MARKER).is_file()
+    ]
+    if unscored:
+        logger.warning(
+            "evaluate skipped, no complete sidecar for %s under %s. Any scores in "
+            "that run's evaluate directory predate the sidecars it now holds; "
+            "rerun without --model to refresh them.",
+            unscored,
+            run_prefix,
+        )
+        return
+
+    evaluate_uri = f"{run_prefix}{_EVALUATE_STEP}/"
+    evaluate_dir = _mirror_path(evaluate_uri, mirror_root)
+
+    # No model names passed: the impl reads model_roles itself, which is what makes
+    # its check that the two directories match the two roles independent of here.
+    evaluate_summary = evaluate_impl(
+        challenger_dir=challenger_dir,
+        benchmark_dir=benchmark_dir,
+        compose_configs_dir=compose_dir,
+        out_dir=evaluate_dir,
+    )
+    uploaded, removed = sync_to_gcs(
+        evaluate_dir, evaluate_uri, completion_marker="evaluate_manifest.json"
+    )
+
+    # Row counts are the one summary field evaluate_impl does not log itself.
+    logger.info(
+        "evaluate published: uploaded=%d removed=%d uri=%s rows=%s",
+        uploaded,
+        removed,
+        evaluate_uri,
+        evaluate_summary.output_rows,
+    )
 
 
 if __name__ == "__main__":
