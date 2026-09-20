@@ -56,7 +56,7 @@ _VIEW_COLUMNS = _JOIN_KEYS + [
 ]
 
 # Read off the calendar per origin, not off monthly_series: backtest transcribes
-# the second of these into every row, and horizon labelling turns on its value.
+# the second of these into every row, and horizon labeling turns on its value.
 _ORIGIN_ATTRIBUTES = ["fiscal_year_month", "origin_month_fraction_elapsed"]
 
 _FOLD_GRAIN = ["model", "horizon", "tier"] + _FOLD_KEYS

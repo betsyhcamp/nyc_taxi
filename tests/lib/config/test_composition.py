@@ -533,7 +533,7 @@ def test_compose_config_records_the_full_shadowing_history(
 def test_compose_config_merges_a_runtime_override_last(
     synthetic_config_dir: Path,
 ) -> None:
-    """An override wins over every file and is labelled, not given a path."""
+    """An override wins over every file and is labeled, not given a path."""
     composed = compose_config(
         synthetic_config_dir, _modeling_bindings(), overrides={"label": "injected"}
     )

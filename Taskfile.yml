@@ -140,7 +140,7 @@ tasks:
   # ===========================================
   # TRAINING IMAGE
   # ===========================================
-  # Training-specific, not generalised past the extract targets: with ingress
+  # Training-specific, not generalized past the extract targets: with ingress
   # dead and due for rebuild, only the buildx shape is shared.
 
   verify-train-image:

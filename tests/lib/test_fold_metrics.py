@@ -746,9 +746,9 @@ def test_compute_wrmae_by_progress_takes_cohorts_from_the_spine(progress_dfs):
     by either version.
     """
     challenger, benchmark, spine = progress_dfs
-    relabelled = spine.assign(weeks_in_month=[5, 4], weeks_actualized=[3, 0])
+    relabeled = spine.assign(weeks_in_month=[5, 4], weeks_actualized=[3, 0])
 
-    out = compute_wrmae_by_progress(challenger, benchmark, relabelled)
+    out = compute_wrmae_by_progress(challenger, benchmark, relabeled)
 
     cohorts = set(
         out[["weeks_in_month", "weeks_actualized"]].itertuples(index=False, name=None)

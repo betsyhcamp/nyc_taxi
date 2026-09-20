@@ -199,7 +199,7 @@ def test_last_complete_actual_month_does_not_mutate_calendar_df(
 def test_last_complete_actual_month_returns_a_plain_int(
     calendar_df: pd.DataFrame,
 ) -> None:
-    """np.int64 is not JSON-serialisable and this value reaches the run summary."""
+    """np.int64 is not JSON-serializable and this value reaches the run summary."""
     result = last_complete_actual_month(
         max_actual_date=pd.Timestamp("2025-02-23"), calendar_df=calendar_df
     )

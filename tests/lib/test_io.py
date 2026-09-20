@@ -299,7 +299,7 @@ def test_upload_to_gcs_rejects_destination_without_trailing_slash(
 ) -> None:
     """Test that a destination prefix missing its trailing "/" raises, writing nothing.
 
-    Rejected, not normalised: every object is written and a plausible count comes
+    Rejected, not normalized: every object is written and a plausible count comes
     back, and fsspec forgives the omission once the prefix exists, so only a fresh
     run_id would surface it.
     """
@@ -501,7 +501,7 @@ def test_sync_to_gcs_leaves_a_prefix_with_no_extras_unchanged(
 ) -> None:
     """Test that re-publishing an unchanged directory removes nothing.
 
-    The reconcile must recognise what this function itself just wrote; a wrongly
+    The reconcile must recognize what this function itself just wrote; a wrongly
     derived relative path makes every object an extra, and the second publish deletes
     the run the first one wrote.
     """

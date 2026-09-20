@@ -60,7 +60,7 @@ _WEEKS = pd.date_range("2024-01-07", periods=_N_WEEKS, freq="W-SUN")
 _MONTHS = [202401 + month for month in range(_N_WEEKS // _WEEKS_PER_MONTH)]
 
 # (week index, the months that origin forecasts). Stated rather than derived, so
-# a reader sees the expected horizons; a self-check confirms the labeller agrees.
+# a reader sees the expected horizons; a self-check confirms the labeler agrees.
 _ORIGIN_TARGETS = (
     (5, (202402, 202403)),
     (7, (202403, 202404)),
@@ -397,10 +397,10 @@ def test_the_fixture_reaches_one_month_at_two_horizons(
     challenger_ms: pd.DataFrame, calendar_df: pd.DataFrame
 ) -> None:
     """A fixture whose months each have one horizon cannot separate the two axes."""
-    labelled = challenger_ms.assign(horizon=_horizons(challenger_ms, calendar_df))
+    labeled = challenger_ms.assign(horizon=_horizons(challenger_ms, calendar_df))
 
-    per_month = labelled.groupby("predicted_fiscal_year_month")["horizon"].nunique()
-    assert set(labelled["horizon"]) == {"horizon_1", "horizon_2"}
+    per_month = labeled.groupby("predicted_fiscal_year_month")["horizon"].nunique()
+    assert set(labeled["horizon"]) == {"horizon_1", "horizon_2"}
     assert (per_month > 1).any()
 
 
@@ -408,11 +408,11 @@ def test_the_month_end_origin_shifts_its_own_horizons(
     challenger_ms: pd.DataFrame, calendar_df: pd.DataFrame
 ) -> None:
     """Getting the frac == 1.0 branch wrong moves labels rather than raising."""
-    labelled = challenger_ms.assign(horizon=_horizons(challenger_ms, calendar_df))
-    month_end = labelled[labelled["origin_month_fraction_elapsed"] == 1.0]
+    labeled = challenger_ms.assign(horizon=_horizons(challenger_ms, calendar_df))
+    month_end = labeled[labeled["origin_month_fraction_elapsed"] == 1.0]
 
     assert not month_end.empty
-    assert (labelled["origin_month_fraction_elapsed"] < 1.0).any()
+    assert (labeled["origin_month_fraction_elapsed"] < 1.0).any()
     # Its own fiscal month counts as completed, so it forecasts the next one first.
     assert month_end["predicted_fiscal_year_month"].min() == 202403
 
@@ -912,11 +912,11 @@ def test_a_tier_outside_the_configured_vocabulary_raises(
 ) -> None:
     """Coercion nulls an unknown label, which then vanishes from every tier slice
     while still counting in global."""
-    relabelled = challenger_ms.assign(tier=challenger_ms["tier"].astype(str))
-    relabelled.loc[relabelled.index[0], "tier"] = "enormous"
+    relabeled = challenger_ms.assign(tier=challenger_ms["tier"].astype(str))
+    relabeled.loc[relabeled.index[0], "tier"] = "enormous"
 
     with pytest.raises(ValueError, match="not a prefix"):
-        _base(relabelled, benchmark_ms, calendar_df, modeling)
+        _base(relabeled, benchmark_ms, calendar_df, modeling)
 
 
 def test_a_tier_set_that_skips_a_configured_label_raises(
@@ -1566,7 +1566,7 @@ def test_a_sidecar_scored_under_other_settings_is_refused(
 def test_two_calendars_disagreeing_about_an_origin_are_refused(
     staged_run: dict[str, Path], column: str, value: object
 ) -> None:
-    """Both columns, because horizon labelling reads both: a moved boundary or a
+    """Both columns, because horizon labeling reads both: a moved boundary or a
     bent fraction shifts rows between horizons rather than raising."""
     calendar_path = staged_run["benchmark_dir"] / "fiscal_calendar.parquet"
     calendar = pd.read_parquet(calendar_path)
@@ -1595,7 +1595,7 @@ def test_a_calendar_missing_an_origin_the_other_carries_is_refused(
 def test_a_calendar_differing_away_from_every_origin_is_accepted(
     staged_run: dict[str, Path],
 ) -> None:
-    """The guard covers what horizon labelling reads. A row at no origin cannot
+    """The guard covers what horizon labeling reads. A row at no origin cannot
     move a number, so refusing it would refuse valid sidecars."""
     calendar_path = staged_run["benchmark_dir"] / "fiscal_calendar.parquet"
     calendar = pd.read_parquet(calendar_path)

@@ -187,6 +187,6 @@ def test_a_completed_sidecar_prefix_is_accepted(tmp_path: Path) -> None:
 
 
 def test_a_prefix_without_a_trailing_slash_names_the_flag_that_carried_it() -> None:
-    """Normalising would hide it and the marker check would blame the sidecar."""
+    """Normalizing would hide it and the marker check would blame the sidecar."""
     with pytest.raises(ValueError, match="--impl-prefix"):
         verify._require_prefix("gs://bucket/run/backtest/naive", "--impl-prefix")

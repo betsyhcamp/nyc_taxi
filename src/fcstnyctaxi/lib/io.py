@@ -61,7 +61,7 @@ def require_gcs_uri(gcs_uri: str) -> None:
 def _require_gcs_prefix(gcs_uri: str) -> None:
     """Reject a destination that is not a gs:// prefix ending in "/".
 
-    The slash marks a prefix, not an object name; normalising hides the error.
+    The slash marks a prefix, not an object name; normalizing hides the error.
     """
     require_gcs_uri(gcs_uri)
     if not gcs_uri.endswith("/"):
@@ -158,7 +158,7 @@ def upload_to_gcs(local_path: Path, gcs_uri: str) -> int:
 
     Raises:
         ValueError: gcs_uri is not a gs:// URI, or does not end in "/". The
-            missing slash is rejected rather than normalised, since the mistake
+            missing slash is rejected rather than normalized, since the mistake
             is otherwise invisible.
     """
     _require_gcs_prefix(gcs_uri)

@@ -287,7 +287,7 @@ def test_the_derived_origins_reach_every_model_config(
 def test_summary_survives_json_serialisation(
     composed: tuple[ComposeConfigsSummary, Path],
 ) -> None:
-    """KFP serialises artifact metadata to JSON, so a numpy scalar would break a run."""
+    """KFP serializes artifact metadata to JSON, so a numpy scalar would break a run."""
     summary, _ = composed
 
     json.dumps(summary.as_dict())

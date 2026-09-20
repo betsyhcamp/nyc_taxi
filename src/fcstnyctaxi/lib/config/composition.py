@@ -365,7 +365,7 @@ def _check_cross_field(config: BaseModel) -> None:
 
 
 def _preflight_bindings(bindings: Sequence[ConfigBinding]) -> None:
-    """Reject a bindings sequence `compose_config` cannot honour.
+    """Reject a bindings sequence `compose_config` cannot honor.
 
     Four rejections, each guarding a stated contract. `compose_config` is
     per-destination, so a mixed sequence has no single schema to validate against.
@@ -451,7 +451,7 @@ def compose_config(
         bindings (Sequence[ConfigBinding]): Fragments in precedence order, later
             wins. All must name the same destination.
         overrides (dict | None): Values injected at runtime, merged last and
-            labelled `RUNTIME_SOURCE`.
+            labeled `RUNTIME_SOURCE`.
 
     Raises:
         FileNotFoundError: If a fragment does not exist.

@@ -62,7 +62,7 @@ def fake_gcs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Resolve gs:// URIs onto a LocalFileSystem under tmp_path; return its root.
 
     Runs the real fsspec calls in CI with no credentials. Two details are
-    load-bearing: auto_mkdir=True is GCS's implicit-parents behaviour, and the path
+    load-bearing: auto_mkdir=True is GCS's implicit-parents behavior, and the path
     is built by string substitution because _strip_protocol strips the trailing "/"
     that marks a prefix rather than an object name.
     """

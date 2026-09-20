@@ -537,7 +537,7 @@ display(
 
 # %%
 # The comparison must be able to fail, or every PASS above proves nothing. Feed
-# it the benchmark's scores where the challenger's belong, relabelled first:
+# it the benchmark's scores where the challenger's belong, relabeled first:
 # otherwise it fails on the model name and never reaches a number.
 wrong_scores = to_notebook_wide(impl_summary, ["model", "horizon"], BENCHMARK_MODEL)
 wrong_scores["model"] = CHALLENGER_MODEL

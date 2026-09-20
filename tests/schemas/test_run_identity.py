@@ -35,7 +35,7 @@ def test_valid_dict_constructs_train_run_identity(valid_train_identity: dict) ->
 def test_null_git_hash_raises(valid_train_identity: dict) -> None:
     """get_git_hash() returns None on failure; this is where that must stop.
 
-    A dataclass would accept None, serialise null, and stamp a null column on
+    A dataclass would accept None, serialize null, and stamp a null column on
     every downstream table — the failure that already produced two registered
     benchmarks whose git_hash cannot reproduce their artifacts.
     """

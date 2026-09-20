@@ -65,7 +65,7 @@ class ComposeConfigsSummary:
         """Coerce to JSON-safe primitives for KFP's `artifact.metadata`.
 
         Hand written so JSON-safety is guaranteed continuing to coerce the two integer
-        fields off the calendar's `int64` & every value JSON-serialisable.
+        fields off the calendar's `int64` & every value JSON-serializable.
         """
         return {
             "n_origins": self.n_origins,

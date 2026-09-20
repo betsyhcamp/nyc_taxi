@@ -128,9 +128,9 @@ def _dict_diff(new_obj, ref_obj, path: str = "") -> list[tuple[str, str]]:
 
 
 def _require_prefix(uri: str, flag: str) -> None:
-    """Reject a prefix with no trailing slash rather than normalising it.
+    """Reject a prefix with no trailing slash rather than normalizing it.
 
-    The slash marks a prefix, not an object name; normalising hides the error and
+    The slash marks a prefix, not an object name; normalizing hides the error and
     the marker check would blame the sidecar for a typo in the flag.
     """
     if not uri.endswith("/"):

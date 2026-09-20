@@ -387,7 +387,7 @@ def test_a_model_name_escaping_the_tree_is_rejected_by_the_spine() -> None:
     """The other omitted check: `..` belongs to the bindings preflight.
 
     `ModelRoles` pins names to `[a-z0-9_]+`, so this cannot arrive through the
-    production path — but the guard is what makes that a second line of defence
+    production path — but the guard is what makes that a second line of defense
     rather than the only one.
     """
     with pytest.raises(ValueError, match="must not contain"):

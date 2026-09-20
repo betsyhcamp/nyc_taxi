@@ -387,7 +387,7 @@ def _summary() -> BacktestSummary:
 
 
 def test_summary_as_dict_survives_json_serialisation() -> None:
-    """KFP serialises artifact metadata, so a numpy scalar would break a run."""
+    """KFP serializes artifact metadata, so a numpy scalar would break a run."""
     json.dumps(_summary().as_dict())
 
 
