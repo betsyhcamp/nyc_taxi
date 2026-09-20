@@ -24,7 +24,8 @@ from pytest_mock import MockerFixture
 from fcstnyctaxi.lib import run_outputs
 from fcstnyctaxi.lib.config.bindings import (
     environment_bindings,
-    resolve_model_names,
+    model_names_from_roles,
+    resolve_model_roles,
     train_infra_bindings,
 )
 from fcstnyctaxi.lib.config.composition import compose_config
@@ -73,9 +74,10 @@ VERTEX_ORCHESTRATION_FLAGS = frozenset({"--template-path", "--wait", "--no-cachi
 def template(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """The real Training pipeline, compiled once against the seeded image."""
     path = tmp_path_factory.mktemp("build") / "fcst-train-pipeline.yaml"
+    model_roles = resolve_model_roles(get_project_root_dir() / "config")
     compiler.Compiler().compile(
         pipeline_func=build_train_pipeline(
-            model_names=resolve_model_names(get_project_root_dir() / "config")
+            model_names=model_names_from_roles(model_roles), model_roles=model_roles
         ),
         package_path=str(path),
     )

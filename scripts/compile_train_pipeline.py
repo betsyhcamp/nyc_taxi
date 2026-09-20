@@ -5,7 +5,7 @@ from typing import Any
 import yaml
 from kfp import compiler
 
-from fcstnyctaxi.lib.config.bindings import resolve_model_names
+from fcstnyctaxi.lib.config.bindings import model_names_from_roles, resolve_model_roles
 from fcstnyctaxi.lib.container_images import artifact_registry_prefix
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.pipelines.train_pipeline import build_train_pipeline
@@ -53,9 +53,12 @@ def _compile(project_root: Path, template_path: Path) -> None:
     expected = os.environ["FCST_TRAIN_IMAGE"]
     template_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # One composition, two derived values, so the template's model set and its
+    # role map cannot disagree with each other.
+    model_roles = resolve_model_roles(project_root / "config")
     compiler.Compiler().compile(
         pipeline_func=build_train_pipeline(
-            model_names=resolve_model_names(project_root / "config")
+            model_names=model_names_from_roles(model_roles), model_roles=model_roles
         ),
         package_path=str(template_path),
     )

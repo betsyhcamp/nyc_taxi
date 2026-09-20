@@ -4,6 +4,8 @@ from kfp import dsl
 
 from fcstnyctaxi.components.train.backtest_component import backtest
 from fcstnyctaxi.components.train.compose_configs_component import compose_configs
+from fcstnyctaxi.components.train.evaluate_component import evaluate
+from fcstnyctaxi.schemas.config.train import ModelRoles
 
 
 def _require_fannable_model_names(model_names: tuple[str, ...]) -> None:
@@ -32,7 +34,7 @@ def _require_fannable_model_names(model_names: tuple[str, ...]) -> None:
 
 
 def build_train_pipeline(
-    *, model_names: tuple[str, ...]
+    *, model_names: tuple[str, ...], model_roles: ModelRoles
 ) -> dsl.base_component.BaseComponent:
     """The Training DAG for one compiled model set.
 
@@ -42,6 +44,8 @@ def build_train_pipeline(
 
     Args:
         model_names (tuple[str, ...]): One backtest task per entry, in order.
+        model_roles (ModelRoles): The roles evaluate's two edges are wired from;
+            both must name entries in `model_names`.
 
     Raises:
         ValueError: If `model_names` is empty or repeats a name.
@@ -84,13 +88,26 @@ def build_train_pipeline(
         )
         # Plain Python at decoration time: one task per model. Both importer
         # handles are reused, so every task reads the artifact compose validated.
+        # Kept by name so evaluate can select two of them by role.
+        backtest_tasks = {}
         for model_name in model_names:
-            backtest(  # type: ignore[call-arg]
+            backtest_tasks[model_name] = backtest(  # type: ignore[call-arg]
                 run_prefix=compose.outputs["run_prefix"],
                 model_name=model_name,
                 composed_configs=compose.outputs["composed_configs"],
                 panel=panel.output,
                 calendar=calendar.output,
             ).set_display_name(f"backtest-{model_name}")
+
+        # No importer handles: the sidecars hold every input. No set_display_name:
+        # one task, so taskInfo.name already reads "evaluate".
+        challenger = backtest_tasks[model_roles.challenger]
+        benchmark = backtest_tasks[model_roles.benchmark]
+        evaluate(  # type: ignore[call-arg]
+            run_prefix=compose.outputs["run_prefix"],
+            composed_configs=compose.outputs["composed_configs"],
+            challenger_sidecar=challenger.outputs["sidecar"],
+            benchmark_sidecar=benchmark.outputs["sidecar"],
+        )
 
     return train_pipeline
