@@ -46,10 +46,11 @@ binding alone, which is what ``config/README.md``'s parity rule asks for — and
 is why a slice with no project-owned destinations never calls ``compose_config``
 with an empty sequence.
 
-``available_environments``, ``require_known_environment`` and
-``resolve_model_names`` are the only functions here that touch the filesystem,
-and the only ones that take ``config_dir``. The first two discover the
-environment set; the third composes the destination that holds the model set.
+``available_environments``, ``require_known_environment``,
+``resolve_model_roles`` and ``resolve_model_names`` are the only functions here
+that touch the filesystem, and the only ones that take ``config_dir``. The first
+two discover the environment set; the last two compose the destination that
+holds the model set, ``resolve_model_names`` over ``resolve_model_roles``.
 Every other function is a pure declaration.
 """
 
@@ -285,6 +286,29 @@ def model_names_from_roles(model_roles: ModelRoles) -> tuple[str, ...]:
     return tuple(dict.fromkeys(model_roles.model_dump().values()))
 
 
+def resolve_model_roles(config_dir: Path) -> ModelRoles:
+    """The role map, composed from ``train/modeling.yaml`` under ``config_dir``.
+
+    Takes no ``env``: the compile script that reads it has none.
+
+    Args:
+        config_dir (Path): Root of the config tree.
+
+    Raises:
+        FileNotFoundError: If ``train/modeling.yaml`` does not exist.
+        ValueError: On any composition failure.
+        ValidationError: If the file does not satisfy ``TrainModelingConfig``.
+
+    Returns:
+        ModelRoles: Which model holds each role.
+    """
+    modeling = cast(
+        TrainModelingConfig,
+        compose_config(config_dir, train_modeling_bindings()).config,
+    )
+    return modeling.model_roles
+
+
 def resolve_model_names(config_dir: Path) -> tuple[str, ...]:
     """The model set, composed from ``train/modeling.yaml`` under ``config_dir``.
 
@@ -301,8 +325,4 @@ def resolve_model_names(config_dir: Path) -> tuple[str, ...]:
     Returns:
         tuple[str, ...]: Model names, deduplicated, in declaration order.
     """
-    modeling = cast(
-        TrainModelingConfig,
-        compose_config(config_dir, train_modeling_bindings()).config,
-    )
-    return model_names_from_roles(modeling.model_roles)
+    return model_names_from_roles(resolve_model_roles(config_dir))
