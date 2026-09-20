@@ -63,7 +63,7 @@ def build_train_pipeline(
         panel_uri: str,
         calendar_uri: str,
     ) -> None:
-        """Compose every Training config for one run, then back each model.
+        """Compose every Training config for one run, back each model, then score.
 
         Feature is a separate pipeline, so its two artifacts arrive as URIs rather than
         from an upstream task; dsl.importer types each and registers it in ML Metadata.
