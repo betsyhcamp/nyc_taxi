@@ -57,6 +57,11 @@ def _model_names_of(tasks: dict[str, Any]) -> list[str]:
     ]
 
 
+def _compose_parameters(ir: dict[str, Any]) -> dict[str, Any]:
+    """The parameter wiring of the compose task every backtest task depends on."""
+    return ir["root"]["dag"]["tasks"]["compose-configs"]["inputs"]["parameters"]
+
+
 def _executor_of(ir: dict[str, Any], task_name: str) -> dict[str, Any]:
     """The deployment spec that runs one task; its name alone cannot tell an importer
     from an ordinary component."""
@@ -79,6 +84,17 @@ def test_the_dag_emits_one_backtest_task_per_model_it_was_built_for(
     ir = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)
 
     assert _model_names_of(_backtest_tasks(ir)) == list(SYNTHETIC_MODEL_NAMES)
+
+
+def test_the_compose_task_is_told_the_model_set_the_dag_was_built_for(
+    tmp_path: Path,
+) -> None:
+    """Test that the claim compose checks is built from this DAG's own model set."""
+    ir = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)
+
+    # compose_configs refuses a claim disagreeing with the image's baked tree.
+    declared = _compose_parameters(ir)["declared_model_names"]
+    assert declared["runtimeValue"]["constant"] == list(SYNTHETIC_MODEL_NAMES)
 
 
 def test_each_backtest_task_runs_its_own_executor(tmp_path: Path) -> None:
@@ -163,6 +179,17 @@ def test_each_artifact_input_comes_from_its_own_importer(tmp_path: Path) -> None
         assert uri["componentInputParameter"] == expected_parameter
 
 
+def test_the_compose_task_takes_each_selector_from_its_own_parameter(
+    tmp_path: Path,
+) -> None:
+    """Test that env and the two run ids each arrive from the parameter of that name."""
+    parameters = _compose_parameters(_compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES))
+
+    # A transposition compiles and runs, writing to a prefix named for the Feature run.
+    for name in ("env", "train_run_id", "feature_run_id"):
+        assert parameters[name]["componentInputParameter"] == name
+
+
 def test_every_backtest_task_reuses_the_compose_importer_handles(
     tmp_path: Path,
 ) -> None:
@@ -200,6 +227,18 @@ def test_every_backtest_task_takes_its_run_prefix_from_compose(tmp_path: Path) -
         source = task["inputs"]["parameters"]["run_prefix"]["taskOutputParameter"]
         assert source["producerTask"] == "compose-configs"
         assert source["outputParameterKey"] == "run_prefix"
+
+
+def test_every_backtest_task_reads_the_configs_compose_wrote(tmp_path: Path) -> None:
+    """Test that each backtest task's composed_configs comes from the compose task."""
+    backtest_tasks = _backtest_tasks(_compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES))
+
+    # KFP accepts a Dataset for Input[Artifact], so a misrouting compiles silently.
+    assert backtest_tasks  # non-vacuity
+    for task in backtest_tasks.values():
+        source = task["inputs"]["artifacts"]["composed_configs"]["taskOutputArtifact"]
+        assert source["producerTask"] == "compose-configs"
+        assert source["outputArtifactKey"] == "composed_configs"
 
 
 def test_each_importer_takes_its_uri_as_a_runtime_parameter(tmp_path: Path) -> None:
