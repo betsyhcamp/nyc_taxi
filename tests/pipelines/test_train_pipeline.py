@@ -15,9 +15,10 @@ import pytest
 import yaml
 from kfp import compiler
 
-from fcstnyctaxi.lib.config.bindings import resolve_model_names
+from fcstnyctaxi.lib.config.bindings import resolve_model_names, resolve_model_roles
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.pipelines.train_pipeline import build_train_pipeline
+from fcstnyctaxi.schemas.config.train import ModelRoles
 
 CONFIG_DIR = get_project_root_dir() / "config"
 
@@ -25,12 +26,22 @@ CONFIG_DIR = get_project_root_dir() / "config"
 # entry all fail against a set the shipped tree cannot supply.
 SYNTHETIC_MODEL_NAMES = ("model_a", "model_b", "model_c")
 
+# Chosen so a positional read fails: the challenger is the middle name and model_c
+# holds no role, so neither edge can be reached from the tuple's ends.
+SYNTHETIC_MODEL_ROLES = ModelRoles(benchmark="model_a", challenger="model_b")
 
-def _compiled_ir(tmp_path: Path, model_names: tuple[str, ...]) -> dict[str, Any]:
+
+def _compiled_ir(
+    tmp_path: Path,
+    model_names: tuple[str, ...],
+    model_roles: ModelRoles = SYNTHETIC_MODEL_ROLES,
+) -> dict[str, Any]:
     """Compile the DAG for one model set to tmp_path and return the parsed IR."""
     out = tmp_path / "pipeline.yaml"
     compiler.Compiler().compile(
-        pipeline_func=build_train_pipeline(model_names=model_names),
+        pipeline_func=build_train_pipeline(
+            model_names=model_names, model_roles=model_roles
+        ),
         package_path=str(out),
     )
     return yaml.safe_load(out.read_text())
@@ -135,7 +146,7 @@ def test_each_backtest_task_is_display_named_for_its_model(tmp_path: Path) -> No
 def test_the_shipped_tree_is_a_legal_model_set(tmp_path: Path) -> None:
     """Test the real config composes into a DAG, without naming any model."""
     model_names = resolve_model_names(CONFIG_DIR)
-    ir = _compiled_ir(tmp_path, model_names)
+    ir = _compiled_ir(tmp_path, model_names, resolve_model_roles(CONFIG_DIR))
 
     assert _model_names_of(_backtest_tasks(ir)) == list(model_names)
 
@@ -154,7 +165,7 @@ def test_a_model_set_the_dag_cannot_fan_out_over_is_refused(
     KFP: duplicates compile to two tasks racing on one sidecar directory.
     """
     with pytest.raises(ValueError, match=match):
-        build_train_pipeline(model_names=model_names)
+        build_train_pipeline(model_names=model_names, model_roles=SYNTHETIC_MODEL_ROLES)
 
 
 def test_each_artifact_input_comes_from_its_own_importer(tmp_path: Path) -> None:
@@ -239,6 +250,45 @@ def test_every_backtest_task_reads_the_configs_compose_wrote(tmp_path: Path) -> 
         source = task["inputs"]["artifacts"]["composed_configs"]["taskOutputArtifact"]
         assert source["producerTask"] == "compose-configs"
         assert source["outputArtifactKey"] == "composed_configs"
+
+
+def test_each_evaluate_edge_reaches_the_model_its_role_names(tmp_path: Path) -> None:
+    """Test each role edge resolves to that role's model: a transposition inverts
+    every skill ratio and still writes a complete, plausible table.
+    """
+    ir = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)
+    tasks = ir["root"]["dag"]["tasks"]
+
+    for role_input, model_name in (
+        ("challenger_sidecar", SYNTHETIC_MODEL_ROLES.challenger),
+        ("benchmark_sidecar", SYNTHETIC_MODEL_ROLES.benchmark),
+    ):
+        source = tasks["evaluate"]["inputs"]["artifacts"][role_input][
+            "taskOutputArtifact"
+        ]
+
+        assert source["outputArtifactKey"] == "sidecar"
+        assert _model_names_of({"producer": tasks[source["producerTask"]]}) == [
+            model_name
+        ]
+
+
+def test_one_model_in_both_roles_puts_both_edges_on_one_task(tmp_path: Path) -> None:
+    """Test that a one-model set emits one backtest task feeding both role edges."""
+    roles = ModelRoles(benchmark="model_a", challenger="model_a")
+    ir = _compiled_ir(tmp_path, ("model_a",), roles)
+    tasks = ir["root"]["dag"]["tasks"]
+
+    backtest_names = set(_backtest_tasks(ir))
+    assert len(backtest_names) == 1
+
+    producers = {
+        tasks["evaluate"]["inputs"]["artifacts"][role]["taskOutputArtifact"][
+            "producerTask"
+        ]
+        for role in ("challenger_sidecar", "benchmark_sidecar")
+    }
+    assert producers == backtest_names
 
 
 def test_each_importer_takes_its_uri_as_a_runtime_parameter(tmp_path: Path) -> None:

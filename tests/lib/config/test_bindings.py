@@ -1,3 +1,4 @@
+import itertools
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from fcstnyctaxi.lib.config.bindings import (
     model_names_from_roles,
     require_known_environment,
     resolve_model_names,
+    resolve_model_roles,
     train_backtest_bindings,
     train_infra_bindings,
     train_modeling_bindings,
@@ -286,6 +288,44 @@ def test_resolve_model_names_reads_the_tree_it_is_given(
 ) -> None:
     """A name in both roles resolves once, from the passed tree rather than config/."""
     assert resolve_model_names(duplicated_roles_tree) == ("model_a",)
+
+
+def test_resolve_model_roles_composes_the_shipped_tree() -> None:
+    """Both roles the real tree declares name a model with a config file."""
+    model_roles = resolve_model_roles(CONFIG_DIR)
+
+    for model_name in (model_roles.benchmark, model_roles.challenger):
+        assert (CONFIG_DIR / "train" / "models" / f"{model_name}.yaml").is_file()
+
+
+def test_resolve_model_roles_reads_the_tree_it_is_given(
+    duplicated_roles_tree: Path,
+) -> None:
+    """One model in both roles resolves from the passed tree rather than config/."""
+    assert resolve_model_roles(duplicated_roles_tree) == ModelRoles(
+        benchmark="model_a", challenger="model_a"
+    )
+
+
+def test_the_ordered_model_set_is_injective_over_the_role_map() -> None:
+    """No two role maps share an ordered name tuple, which is what lets
+    `declared_model_names` reject every role divergence including a swap.
+    """
+    role_fields = tuple(ModelRoles.model_fields)
+    alphabet = ("model_a", "model_b", "model_c")
+
+    # Non-vacuity: a single role field is injective for free, so the property
+    # would hold without saying anything.
+    assert len(role_fields) > 1
+
+    name_tuples = [
+        model_names_from_roles(
+            ModelRoles(**dict(zip(role_fields, assignment, strict=True)))
+        )
+        for assignment in itertools.product(alphabet, repeat=len(role_fields))
+    ]
+
+    assert len(set(name_tuples)) == len(name_tuples)
 
 
 # ================================================

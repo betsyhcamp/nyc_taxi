@@ -138,7 +138,7 @@ Should list two objects:
 
 ### Building, compiling, and submitting the Training pipeline
 
-End-to-end workflow for the Training pipeline: build the image, push it, compile a template against the pushed digest, then submit that template to Vertex AI Pipelines. The DAG composes every config for the run, then backtests each model in `model_roles`, one task per model fixed at compile time.
+End-to-end workflow for the Training pipeline: build the image, push it, compile a template against the pushed digest, then submit that template to Vertex AI Pipelines. The DAG composes every config for the run, backtests each model in `model_roles`, one task per model fixed at compile time, then scores the challenger against the benchmark.
 
 Compiling and submitting are separate programs on purpose. The image reference is a compile-time input, since `@dsl.component` binds `base_image` when the module is imported, so a compiled template already names every image it will run. The submitter therefore takes a template and never sees a tag, a digest, or `FCST_TRAIN_IMAGE`. That is also what lets a production trigger, which submits a published template with no compiler anywhere, use the same shape.
 
@@ -216,6 +216,6 @@ The submitter logs the console URL for the run. The artifacts land under the run
 gsutil ls -r gs://nyc-taxi-ehc--modeling/dev/train/<run_id>/
 ```
 
-`run_identity.json` sits at the run root rather than inside a step directory, because its reader is outside the pipeline and can construct only `<bucket>/<env>/train/<run_id>`. `compose_configs/` holds the five configs plus `manifest.json`, and each model named in `config/train/modeling.yaml`'s `model_roles` gets its own eight-file sidecar under `backtest/<model_name>/`, ending in `backtest_manifest.json`. The Vertex UI names those tasks `backtest-<model_name>`; the compiled template's task keys are positional.
+`run_identity.json` sits at the run root rather than inside a step directory, because its reader is outside the pipeline and can construct only `<bucket>/<env>/train/<run_id>`. `compose_configs/` holds the five configs plus `manifest.json`, and each model named in `config/train/modeling.yaml`'s `model_roles` gets its own eight-file sidecar under `backtest/<model_name>/`, ending in `backtest_manifest.json`. The Vertex UI names those tasks `backtest-<model_name>`; the compiled template's task keys are positional. `evaluate/` holds the run's four score tables and `evaluate_manifest.json`, scored from the two sidecars `model_roles` names.
 
 `task build-clean` removes compiled templates; `task scratch-clean` removes the local scratch mirror, `.last_run_id` included.
