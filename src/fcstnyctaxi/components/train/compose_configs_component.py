@@ -21,6 +21,7 @@ def compose_configs(
     env: str,
     train_run_id: str,
     feature_run_id: str,
+    declared_model_names: list[str],
     panel: Input[Dataset],
     calendar: Input[Dataset],
     composed_configs: Output[Artifact],
@@ -31,13 +32,24 @@ def compose_configs(
     recomputes from .uri and the impl cannot supply it. Acts as a wrapper for impl func
     which composes configs.
 
+    Args:
+        env (str): Environment selector.
+        train_run_id (str): This run's identifier.
+        feature_run_id (str): A claim, checked against the frames.
+        declared_model_names (list[str]): The compiler's claim, checked against this
+            image's baked tree then discarded.
+        panel (Input[Dataset]): The actuals, from Feature.
+        calendar (Input[Dataset]): The fiscal calendar, same source.
+        composed_configs (Output[Artifact]): The step directory this run writes.
+
     Returns:
         Outputs: run_prefix, the run root each Training step appends its name to.
 
     Raises:
         RuntimeError: If the image carries no FCST_GIT_HASH.
-        ValueError: If env has no config file, on a failed lineage check, or on
-            any composition failure.
+        ValueError: If declared_model_names disagrees with the image's baked set,
+            if env has no config file, on a failed lineage check, or on any
+            composition failure.
     """
     import os
     from pathlib import Path
@@ -46,6 +58,7 @@ def compose_configs(
         SourcedPath,
         compose_configs_impl,
     )
+    from fcstnyctaxi.lib.config.bindings import resolve_model_names
     from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
     from fcstnyctaxi.runtime_paths import CONFIG_DIR  # noqa: TID251
 
@@ -55,6 +68,15 @@ def compose_configs(
         raise RuntimeError(
             "FCST_GIT_HASH is unset; the image was built without --build-arg GIT_HASH, "
             "so this run cannot record the commit that produced it."
+        )
+
+    # A template from another tree silently backs fewer models than it composes.
+    # Ordered: a reorder means two trees. Before the impl writes its marker.
+    baked_model_names = resolve_model_names(CONFIG_DIR)
+    if tuple(declared_model_names) != baked_model_names:
+        raise ValueError(
+            f"template declares {tuple(declared_model_names)}, image composes "
+            f"{baked_model_names}: different trees. Rebuild and recompile."
         )
 
     run_prefix = resolve_run_prefix(CONFIG_DIR, env, "train", train_run_id)

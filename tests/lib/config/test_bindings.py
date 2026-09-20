@@ -1,19 +1,7 @@
-"""Tests for the per-slice binding declarations.
-
-Unlike `test_composition.py`, which uses a synthetic fixture slice under
-`tmp_path` so the spine is demonstrably generic, this file reads the **real**
-`config/` tree. That is the point: `bindings.py` names this project's own files,
-so a test that avoided them would check nothing the module is for.
-
-The division from `tests/config/test_config_tree.py` is what each one owns.
-There: do the shipped files still satisfy their schemas. Here: does
-`bindings.py` name the right files, in the right order, with the right allowed
-sets — and is every tuple it returns a legal `compose_config` argument.
-"""
-
 from pathlib import Path
 
 import pytest
+import yaml
 from tsbricks.backtesting.schema import BacktestConfig
 
 from fcstnyctaxi.lib.config.bindings import (
@@ -23,6 +11,7 @@ from fcstnyctaxi.lib.config.bindings import (
     inference_bindings,
     model_names_from_roles,
     require_known_environment,
+    resolve_model_names,
     train_backtest_bindings,
     train_infra_bindings,
     train_modeling_bindings,
@@ -63,6 +52,20 @@ def environments_dir(tmp_path: Path) -> Path:
     for filename in ("prod.yaml", "dev.yaml", "staging.yml"):
         (config_dir / "environments" / filename).write_text("compute: {}\n")
 
+    return config_dir
+
+
+@pytest.fixture
+def duplicated_roles_tree(tmp_path: Path) -> Path:
+    """A tree whose `model_roles` name one model in both slots."""
+    document = yaml.safe_load((CONFIG_DIR / "train" / "modeling.yaml").read_text())
+    document["model_roles"] = {"benchmark": "model_a", "challenger": "model_a"}
+
+    config_dir = tmp_path / "config"
+    (config_dir / "train").mkdir(parents=True)
+    (config_dir / "train" / "modeling.yaml").write_text(yaml.dump(document))
+
+    TrainModelingConfig.model_validate(document)
     return config_dir
 
 
@@ -266,6 +269,23 @@ def test_model_names_from_roles_deduplicates_a_repeated_name() -> None:
     roles = ModelRoles(benchmark="naive", challenger="naive")
 
     assert model_names_from_roles(roles) == ("naive",)
+
+
+def test_resolve_model_names_composes_the_shipped_tree() -> None:
+    """Every name the real tree resolves to has a model file behind it."""
+    model_names = resolve_model_names(CONFIG_DIR)
+
+    # Non-vacuity: an empty tuple would satisfy the loop below.
+    assert model_names
+    for model_name in model_names:
+        assert (CONFIG_DIR / "train" / "models" / f"{model_name}.yaml").is_file()
+
+
+def test_resolve_model_names_reads_the_tree_it_is_given(
+    duplicated_roles_tree: Path,
+) -> None:
+    """A name in both roles resolves once, from the passed tree rather than config/."""
+    assert resolve_model_names(duplicated_roles_tree) == ("model_a",)
 
 
 # ================================================

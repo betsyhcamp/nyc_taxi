@@ -24,12 +24,13 @@ from pytest_mock import MockerFixture
 from fcstnyctaxi.lib import run_outputs
 from fcstnyctaxi.lib.config.bindings import (
     environment_bindings,
+    resolve_model_names,
     train_infra_bindings,
 )
 from fcstnyctaxi.lib.config.composition import compose_config
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.pipelines import local_train_pipeline
-from fcstnyctaxi.pipelines.train_pipeline import train_pipeline
+from fcstnyctaxi.pipelines.train_pipeline import build_train_pipeline
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import TrainInfraConfig
 from fcstnyctaxi.schemas.run_outputs import FeatureArtifacts, FeatureRunOutputs
@@ -73,7 +74,9 @@ def template(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """The real Training pipeline, compiled once against the seeded image."""
     path = tmp_path_factory.mktemp("build") / "fcst-train-pipeline.yaml"
     compiler.Compiler().compile(
-        pipeline_func=train_pipeline,  # type: ignore[arg-type]
+        pipeline_func=build_train_pipeline(
+            model_names=resolve_model_names(get_project_root_dir() / "config")
+        ),
         package_path=str(path),
     )
     return path

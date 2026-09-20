@@ -15,7 +15,10 @@ import pytest
 import yaml
 from pytest_mock import MockerFixture
 
+from fcstnyctaxi.lib.utils import get_project_root_dir
 from scripts import compile_train_pipeline
+
+PROJECT_ROOT = get_project_root_dir()
 
 REPO = "us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers"
 EXPECTED = f"{REPO}/train@sha256:" + "d" * 64
@@ -68,34 +71,33 @@ def test_project_owned_images_must_equal_the_expected_digest(
         compile_train_pipeline._require_pinned_project_images(_ir(*images), expected)
 
 
-def test_main_compiles_the_real_pipeline_and_pins_its_image(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Test main() end to end against a real compile, under a redirected PROJECT_ROOT.
+def test_compile_builds_the_real_pipeline_and_pins_its_image(tmp_path: Path) -> None:
+    """Test _compile end to end against a real compile, writing outside the tree.
 
     The specs above are hand-built, so without this they would pass unchanged if kfp
-    moved container.image and the check stopped reading anything real.
+    moved container.image and the check stopped reading anything real. The two roots
+    are separated here for the reason they exist: tmp_path has no config tree to
+    read the model set from.
     """
-    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
-
-    compile_train_pipeline.main()
-
     template = tmp_path / "build" / "fcst-train-pipeline.yaml"
+
+    compile_train_pipeline._compile(PROJECT_ROOT, template)
+
     ir = yaml.safe_load(template.read_text())
     assert compile_train_pipeline._executor_images(ir) == {
         os.environ["FCST_TRAIN_IMAGE"]
     }
 
 
-def test_main_removes_the_template_when_validation_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+def test_compile_removes_the_template_when_validation_fails(
+    tmp_path: Path, mocker: MockerFixture
 ) -> None:
     """Test that a rejected spec is not left on disk.
 
     compile() has already overwritten any previous template by then, so leaving the
     rejected one is the state a later --template-path would submit successfully.
     """
-    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    template = tmp_path / "build" / "fcst-train-pipeline.yaml"
     mocker.patch.object(
         compile_train_pipeline,
         "_require_pinned_project_images",
@@ -103,6 +105,6 @@ def test_main_removes_the_template_when_validation_fails(
     )
 
     with pytest.raises(RuntimeError, match="rejected"):
-        compile_train_pipeline.main()
+        compile_train_pipeline._compile(PROJECT_ROOT, template)
 
-    assert not (tmp_path / "build" / "fcst-train-pipeline.yaml").exists()
+    assert not template.exists()

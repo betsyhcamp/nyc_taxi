@@ -19,6 +19,7 @@ from fcstnyctaxi.core.train.compose_configs_impl import (
     ComposeConfigsSummary,
     SourcedPath,
 )
+from fcstnyctaxi.lib.config.bindings import resolve_model_names
 from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
 from fcstnyctaxi.lib.utils import get_project_root_dir
 
@@ -33,6 +34,11 @@ ENV = "dev"
 TRAIN_RUN_ID = "t-sentinel"
 FEATURE_RUN_ID = "f-sentinel"
 GIT_HASH = "abc1234-dirty"
+
+# Derived, so the claim matches by construction and a role edit cannot redden it.
+DECLARED_MODEL_NAMES = list(resolve_model_names(CONFIG_DIR))
+# With one name, the reordered case below would silently become the matching case.
+assert len(DECLARED_MODEL_NAMES) >= 2
 
 # Distinct, so pairing assertions also prove panel and calendar were not swapped.
 PANEL_URI = "gs://sentinel-bucket/feature/f-sentinel/panel.parquet"
@@ -104,6 +110,7 @@ def test_wrapper_wires_inputs_outputs_and_metadata(
         env=ENV,
         train_run_id=TRAIN_RUN_ID,
         feature_run_id=FEATURE_RUN_ID,
+        declared_model_names=DECLARED_MODEL_NAMES,
         panel=panel,
         calendar=calendar,
         composed_configs=composed_configs,
@@ -155,6 +162,7 @@ def test_missing_git_hash_raises_naming_the_variable(
             env=ENV,
             train_run_id=TRAIN_RUN_ID,
             feature_run_id=FEATURE_RUN_ID,
+            declared_model_names=DECLARED_MODEL_NAMES,
             panel=panel,
             calendar=calendar,
             composed_configs=composed_configs,
@@ -175,6 +183,7 @@ def test_impl_failure_propagates_and_leaves_metadata_unstamped(
             env=ENV,
             train_run_id=TRAIN_RUN_ID,
             feature_run_id=FEATURE_RUN_ID,
+            declared_model_names=DECLARED_MODEL_NAMES,
             panel=panel,
             calendar=calendar,
             composed_configs=composed_configs,
@@ -184,6 +193,39 @@ def test_impl_failure_propagates_and_leaves_metadata_unstamped(
     # Not "untouched": .uri is assigned before the impl call, so asserting a pristine
     # artifact would assert the ordering bug back in.
     assert composed_configs.uri == f"{_expected_run_prefix()}compose_configs/"
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [
+        list(reversed(DECLARED_MODEL_NAMES)),
+        DECLARED_MODEL_NAMES[:-1],
+        [f"{name}_renamed" for name in DECLARED_MODEL_NAMES],
+    ],
+    ids=["reordered", "subset", "renamed"],
+)
+def test_a_template_from_another_tree_is_refused_naming_both_sides(
+    real_config_dir: Path, mock_impl: Any, baked_git_hash: str, declared: list[str]
+) -> None:
+    """Test that a declared model set diverging from the image's own is refused."""
+    panel, calendar, composed_configs = _artifacts()
+
+    with pytest.raises(ValueError) as excinfo:
+        COMPONENT.execute(
+            env=ENV,
+            train_run_id=TRAIN_RUN_ID,
+            feature_run_id=FEATURE_RUN_ID,
+            declared_model_names=declared,
+            panel=panel,
+            calendar=calendar,
+            composed_configs=composed_configs,
+        )
+
+    # Both sides, so the message says what to rebuild against what.
+    message = str(excinfo.value)
+    assert str(tuple(declared)) in message
+    assert str(tuple(DECLARED_MODEL_NAMES)) in message
+    mock_impl.assert_not_called()
 
 
 def test_the_generated_container_module_defines_the_named_output() -> None:
