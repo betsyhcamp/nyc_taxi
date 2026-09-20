@@ -1,12 +1,14 @@
 import os
+from pathlib import Path
 from typing import Any
 
 import yaml
 from kfp import compiler
 
+from fcstnyctaxi.lib.config.bindings import resolve_model_names
 from fcstnyctaxi.lib.container_images import artifact_registry_prefix
 from fcstnyctaxi.lib.utils import get_project_root_dir
-from fcstnyctaxi.pipelines.train_pipeline import train_pipeline
+from fcstnyctaxi.pipelines.train_pipeline import build_train_pipeline
 
 _TEMPLATE = "fcst-train-pipeline.yaml"
 
@@ -31,25 +33,47 @@ def _require_pinned_project_images(spec: dict[str, Any], expected: str) -> None:
         )
 
 
-def main() -> None:
-    """Compile to build/ and refuse to leave a spec that pins the wrong image."""
+def _compile(project_root: Path, template_path: Path) -> None:
+    """Compile the DAG for one tree's model set, refusing a wrongly pinned spec.
+
+    Two roots, not one: the model set is read from `project_root/config` while the
+    template goes wherever the caller asks, and the test that redirects the output
+    writes to a temp directory with no config tree in it.
+
+    Args:
+        project_root (Path): Root whose `config/` tree names the model set.
+        template_path (Path): Where the compiled template is written.
+
+    Raises:
+        RuntimeError: If the spec's project-owned images are not exactly
+            FCST_TRAIN_IMAGE.
+        ValueError: If the model set is empty or repeats a name.
+    """
     # The import above already refused an unset or malformed value.
     expected = os.environ["FCST_TRAIN_IMAGE"]
-    template = get_project_root_dir() / "build" / _TEMPLATE
-    template.parent.mkdir(parents=True, exist_ok=True)
+    template_path.parent.mkdir(parents=True, exist_ok=True)
 
     compiler.Compiler().compile(
-        pipeline_func=train_pipeline,  # type: ignore[arg-type]
-        package_path=str(template),
+        pipeline_func=build_train_pipeline(
+            model_names=resolve_model_names(project_root / "config")
+        ),
+        package_path=str(template_path),
     )
     try:
-        _require_pinned_project_images(yaml.safe_load(template.read_text()), expected)
+        spec = yaml.safe_load(template_path.read_text())
+        _require_pinned_project_images(spec, expected)
     except Exception:
         # compile() overwrote any previous one; a rejected spec here is submittable.
-        template.unlink(missing_ok=True)
+        template_path.unlink(missing_ok=True)
         raise
 
-    print(f"\n  compiled : {template}\n  pinned   : {expected}\n")
+    print(f"\n  compiled : {template_path}\n  pinned   : {expected}\n")
+
+
+def main() -> None:
+    """Compile to build/ for the working tree's own model set."""
+    project_root = get_project_root_dir()
+    _compile(project_root, project_root / "build" / _TEMPLATE)
 
 
 if __name__ == "__main__":

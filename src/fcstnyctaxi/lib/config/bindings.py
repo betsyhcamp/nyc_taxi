@@ -46,17 +46,19 @@ binding alone, which is what ``config/README.md``'s parity rule asks for — and
 is why a slice with no project-owned destinations never calls ``compose_config``
 with an empty sequence.
 
-``available_environments`` and ``require_known_environment`` are the **only**
-functions here that touch the filesystem, and the only ones that take
-``config_dir``. Discovery is their whole job. Every other function is a pure
-declaration.
+``available_environments``, ``require_known_environment`` and
+``resolve_model_names`` are the only functions here that touch the filesystem,
+and the only ones that take ``config_dir``. The first two discover the
+environment set; the third composes the destination that holds the model set.
+Every other function is a pure declaration.
 """
 
 from pathlib import Path
+from typing import cast
 
 from tsbricks.backtesting.schema import BacktestConfig
 
-from fcstnyctaxi.lib.config.composition import ConfigBinding
+from fcstnyctaxi.lib.config.composition import ConfigBinding, compose_config
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import (
     ModelRoles,
@@ -76,7 +78,7 @@ _TRAIN_MODELS_DIR = Path("train/models")
 
 
 # ================================================
-# The environment selector — the only filesystem access in this module
+# The environment selector
 # ================================================
 
 
@@ -134,7 +136,7 @@ def require_known_environment(config_dir: Path, env: str) -> None:
 
 
 # ================================================
-# Binding declarations — pure, no filesystem access
+# Binding declarations, pure: every function in this section opens nothing
 # ================================================
 
 
@@ -273,10 +275,34 @@ def model_names_from_roles(model_roles: ModelRoles) -> tuple[str, ...]:
     One name per ``train/models/<name>.yaml`` to compose. A name in both roles
     composes once — ``benchmark == challenger`` is a legitimate smoke test — and
     deduplicating here rather than downstream is what stops the compile-time
-    loop emitting two KFP tasks with one name, a DAG error several PRs from the
-    line of ``train/modeling.yaml`` that caused it.
+    loop emitting two KFP tasks with one name. KFP does not reject that: it
+    emits a second positional task carrying the same name, and both resolve to
+    one sidecar directory.
     """
     # model_dump() yields fields in declaration order; dict.fromkeys dedups
     # without losing it. sorted(set(...)) passes today only because the shipped
     # roles are alphabetical. Order is contract: benchmark first.
     return tuple(dict.fromkeys(model_roles.model_dump().values()))
+
+
+def resolve_model_names(config_dir: Path) -> tuple[str, ...]:
+    """The model set, composed from ``train/modeling.yaml`` under ``config_dir``.
+
+    Takes no ``env``: the compile script that reads it has none.
+
+    Args:
+        config_dir (Path): Root of the config tree.
+
+    Raises:
+        FileNotFoundError: If ``train/modeling.yaml`` does not exist.
+        ValueError: On any composition failure.
+        ValidationError: If the file does not satisfy ``TrainModelingConfig``.
+
+    Returns:
+        tuple[str, ...]: Model names, deduplicated, in declaration order.
+    """
+    modeling = cast(
+        TrainModelingConfig,
+        compose_config(config_dir, train_modeling_bindings()).config,
+    )
+    return model_names_from_roles(modeling.model_roles)
