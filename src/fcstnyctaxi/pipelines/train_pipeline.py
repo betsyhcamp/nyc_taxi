@@ -6,6 +6,7 @@ from fcstnyctaxi.components.train.backtest_component import backtest
 from fcstnyctaxi.components.train.compose_configs_component import compose_configs
 from fcstnyctaxi.components.train.evaluate_component import evaluate
 from fcstnyctaxi.components.train.final_fit_component import final_fit
+from fcstnyctaxi.components.train.register_model_component import register_model
 from fcstnyctaxi.schemas.config.train import ModelRoles
 
 
@@ -55,6 +56,9 @@ def build_train_pipeline(
         BaseComponent: The traced pipeline, for `Compiler().compile()`.
     """
     _require_fannable_model_names(model_names)
+    # The register task's own image, so the runtime a version records is the one the
+    # task ran on: no second source exists to disagree with it.
+    serving_image = register_model.component_spec.implementation.container.image  # type: ignore[attr-defined]
 
     @dsl.pipeline(name="fcst-train-pipeline")
     def train_pipeline(
@@ -64,7 +68,8 @@ def build_train_pipeline(
         panel_uri: str,
         calendar_uri: str,
     ) -> None:
-        """Compose every Training config for one run, back each model, score, then fit.
+        """Compose every Training config for one run, back each model, score, fit, then
+        register.
 
         Feature is a separate pipeline, so its two artifacts arrive as URIs rather than
         from an upstream task; dsl.importer types each and registers it in ML Metadata.
@@ -114,12 +119,23 @@ def build_train_pipeline(
         # The challenger, the model just scored against the benchmark. After evaluate
         # so a crash there leaves no bundle; by .after, since final_fit reads none of
         # its output. Labeled though one task: the label names the model fitted.
-        final_fit(  # type: ignore[call-arg]
-            run_prefix=compose.outputs["run_prefix"],
-            model_name=model_roles.challenger,
+        fit = (
+            final_fit(  # type: ignore[call-arg]
+                run_prefix=compose.outputs["run_prefix"],
+                model_name=model_roles.challenger,
+                composed_configs=compose.outputs["composed_configs"],
+                panel=panel.output,
+                calendar=calendar.output,
+            )
+            .after(scoring)
+            .set_display_name(f"final_fit-{model_roles.challenger}")
+        )
+
+        # Task labeled for the model it registers, as final_fit is for the one it fits.
+        register_model(  # type: ignore[call-arg]
+            serving_container_image_uri=serving_image,
             composed_configs=compose.outputs["composed_configs"],
-            panel=panel.output,
-            calendar=calendar.output,
-        ).after(scoring).set_display_name(f"final_fit-{model_roles.challenger}")
+            bundle=fit.outputs["bundle"],
+        ).set_display_name(f"register_model-{model_roles.challenger}")
 
     return train_pipeline
