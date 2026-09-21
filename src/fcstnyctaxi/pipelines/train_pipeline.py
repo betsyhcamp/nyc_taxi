@@ -5,6 +5,7 @@ from kfp import dsl
 from fcstnyctaxi.components.train.backtest_component import backtest
 from fcstnyctaxi.components.train.compose_configs_component import compose_configs
 from fcstnyctaxi.components.train.evaluate_component import evaluate
+from fcstnyctaxi.components.train.final_fit_component import final_fit
 from fcstnyctaxi.schemas.config.train import ModelRoles
 
 
@@ -44,8 +45,8 @@ def build_train_pipeline(
 
     Args:
         model_names (tuple[str, ...]): One backtest task per entry, in order.
-        model_roles (ModelRoles): The roles evaluate's two edges are wired from;
-            both must name entries in `model_names`.
+        model_roles (ModelRoles): The roles wiring evaluate's two edges and naming
+            final_fit's model; both must name entries in `model_names`.
 
     Raises:
         ValueError: If `model_names` is empty or repeats a name.
@@ -63,7 +64,7 @@ def build_train_pipeline(
         panel_uri: str,
         calendar_uri: str,
     ) -> None:
-        """Compose every Training config for one run, back each model, then score.
+        """Compose every Training config for one run, back each model, score, then fit.
 
         Feature is a separate pipeline, so its two artifacts arrive as URIs rather than
         from an upstream task; dsl.importer types each and registers it in ML Metadata.
@@ -103,11 +104,22 @@ def build_train_pipeline(
         # one task, so taskInfo.name already reads "evaluate".
         challenger = backtest_tasks[model_roles.challenger]
         benchmark = backtest_tasks[model_roles.benchmark]
-        evaluate(  # type: ignore[call-arg]
+        scoring = evaluate(  # type: ignore[call-arg]
             run_prefix=compose.outputs["run_prefix"],
             composed_configs=compose.outputs["composed_configs"],
             challenger_sidecar=challenger.outputs["sidecar"],
             benchmark_sidecar=benchmark.outputs["sidecar"],
         )
+
+        # The challenger, the model just scored against the benchmark. After evaluate
+        # so a crash there leaves no bundle; by .after, since final_fit reads none of
+        # its output. Labeled though one task: the label names the model fitted.
+        final_fit(  # type: ignore[call-arg]
+            run_prefix=compose.outputs["run_prefix"],
+            model_name=model_roles.challenger,
+            composed_configs=compose.outputs["composed_configs"],
+            panel=panel.output,
+            calendar=calendar.output,
+        ).after(scoring).set_display_name(f"final_fit-{model_roles.challenger}")
 
     return train_pipeline
