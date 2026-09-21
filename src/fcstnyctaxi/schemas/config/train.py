@@ -129,6 +129,11 @@ class ModelSettings(BaseModel):
 
     Project-owned rather than ``ModelConfig.hyperparameters``, which is
     ``dict[str, Any]`` and so hides a typo from every validation stage.
+
+    ``exog_features`` picks what one model trains on, within what
+    ``CALENDAR_ALLOWED_COLUMNS`` lets Feature deliver; editing it moves that model's
+    numbers. The callables come as a pair: only the model's own save can write out
+    the opaque object its fit returns.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
