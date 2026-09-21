@@ -62,6 +62,14 @@ def duplicated_roles_tree(tmp_path: Path) -> Path:
     """A tree whose `model_roles` name one model in both slots."""
     document = yaml.safe_load((CONFIG_DIR / "train" / "modeling.yaml").read_text())
     document["model_roles"] = {"benchmark": "model_a", "challenger": "model_a"}
+    # Renaming the roles orphans the shipped settings; a challenger needs callables.
+    document["model_settings"] = {
+        "model_a": {
+            "exog_features": [],
+            "fit_callable": "a.b.fit",
+            "save_callable": "a.b.save",
+        }
+    }
 
     config_dir = tmp_path / "config"
     (config_dir / "train").mkdir(parents=True)

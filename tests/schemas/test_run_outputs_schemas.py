@@ -4,6 +4,8 @@ from pydantic import ValidationError
 from fcstnyctaxi.schemas.run_outputs import (
     CALENDAR_ALLOWED_COLUMNS,
     CALENDAR_REQUIRED_COLUMNS,
+    JOIN_KEYS,
+    PANEL_REQUIRED_COLUMNS,
     FeatureArtifacts,
     FeatureRunOutputs,
 )
@@ -99,3 +101,18 @@ def test_the_calendar_allows_more_than_it_requires() -> None:
     pipeline down when Feature changed it without coordinating.
     """
     assert set(CALENDAR_ALLOWED_COLUMNS) > set(CALENDAR_REQUIRED_COLUMNS)
+
+
+# ================================================
+# JOIN_KEYS
+# ================================================
+
+
+def test_the_join_keys_are_columns_the_panel_carries() -> None:
+    """A key the panel does not carry makes the merge unwritable."""
+    assert set(JOIN_KEYS) <= set(PANEL_REQUIRED_COLUMNS)
+
+
+def test_exactly_one_join_key_is_also_a_calendar_column() -> None:
+    """Why exog_features needs two checks: `ds` passes an unknown-column test."""
+    assert set(JOIN_KEYS) & set(CALENDAR_ALLOWED_COLUMNS) == {"ds"}

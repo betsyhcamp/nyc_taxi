@@ -23,3 +23,22 @@ model_roles:
   # must have a config/train/models/<name>.yaml.
   benchmark: naive
   challenger: lightgbm
+
+# Which columns each model consumes, and the callables final_fit resolves. Here
+# rather than in model.hyperparameters, which is dict[str, Any] and so hides a
+# typo from every validation stage.
+model_settings:
+  naive:
+    # No callables: a naive model's parameters are its last observed values, so
+    # freezing one registers a stale model. Inference refits from the panel.
+    exog_features: []
+
+  lightgbm:
+    # The feature set the model trains on, so editing it moves every number.
+    exog_features:
+      - fiscal_week_of_month
+      - fiscal_month
+      - weeks_in_month
+      - count_workdays
+    fit_callable: fcstnyctaxi.models.lightgbm_weekly.lightgbm_weekly_fit
+    save_callable: fcstnyctaxi.models.lightgbm_weekly.lightgbm_weekly_save
