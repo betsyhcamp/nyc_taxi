@@ -11,9 +11,9 @@ the normal case for a model under active development, not an exception.
 
 A callable cannot tell the two frames apart, so one module cannot serve both.
 
-| contract | `future_x_df` is | who selects columns |
-| --- | --- | --- |
-| development, here | the raw `ds`-keyed fiscal calendar | the callable, from its own constant |
+| contract                        | `future_x_df` is                                     | who selects columns                           |
+| ------------------------------- | ---------------------------------------------------- | --------------------------------------------- |
+| development, here               | the raw `ds`-keyed fiscal calendar                   | the callable, from its own constant           |
 | pipeline, `fcstnyctaxi/models/` | a frame keyed `["unique_id", "ds"]`, already trimmed | the impl, from `model_settings.exog_features` |
 
 tsbricks permits the split: `invoke_model` passes two positional arguments and the
