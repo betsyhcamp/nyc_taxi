@@ -47,16 +47,37 @@ def _compiled_ir(
     return yaml.safe_load(out.read_text())
 
 
-def _backtest_tasks(ir: dict[str, Any]) -> dict[str, Any]:
-    """Tasks carrying a model_name, selected by input rather than by name.
+def _output_artifacts_of(ir: dict[str, Any], task: dict[str, Any]) -> set[str]:
+    """The artifact keys one task's component declares as outputs."""
+    component = ir["components"][task["componentRef"]["name"]]
+    return set(component.get("outputDefinitions", {}).get("artifacts", {}))
 
-    set_display_name changes taskInfo.name only, so IR keys stay positional and
-    keying off them would assert KFP's numbering instead of this DAG's fan-out.
-    """
+
+def _backtest_tasks(ir: dict[str, Any]) -> dict[str, Any]:
+    """Tasks producing a sidecar. Not by model_name, which final_fit takes too; not by
+    IR key, which is KFP's positional numbering rather than this DAG's fan-out."""
     return {
         name: task
         for name, task in ir["root"]["dag"]["tasks"].items()
-        if "model_name" in task.get("inputs", {}).get("parameters", {})
+        if "sidecar" in _output_artifacts_of(ir, task)
+    }
+
+
+def _tasks_taking_parameter(ir: dict[str, Any], name: str) -> dict[str, Any]:
+    """Every task whose compiled inputs carry a parameter of that name."""
+    return {
+        task_name: task
+        for task_name, task in ir["root"]["dag"]["tasks"].items()
+        if name in task.get("inputs", {}).get("parameters", {})
+    }
+
+
+def _tasks_reading_artifact(ir: dict[str, Any], name: str) -> dict[str, Any]:
+    """Every task whose compiled inputs carry an input artifact of that name."""
+    return {
+        task_name: task
+        for task_name, task in ir["root"]["dag"]["tasks"].items()
+        if name in task.get("inputs", {}).get("artifacts", {})
     }
 
 
@@ -201,16 +222,10 @@ def test_the_compose_task_takes_each_selector_from_its_own_parameter(
         assert parameters[name]["componentInputParameter"] == name
 
 
-def test_every_backtest_task_reuses_the_compose_importer_handles(
-    tmp_path: Path,
-) -> None:
-    """Test that one importer per artifact feeds compose and every backtest task.
-
-    A second importer would let a backtest task read different bytes than compose
-    validated, which no check inside a task can see: a task cannot know its siblings.
-    """
+def test_every_panel_and_calendar_reader_shares_one_importer(tmp_path: Path) -> None:
+    """Test that one importer per artifact feeds every reader: a second would hand a
+    task bytes compose never validated, and a task cannot see its siblings."""
     ir = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)
-    tasks = ir["root"]["dag"]["tasks"]
     backtest_names = set(_backtest_tasks(ir))
 
     for artifact_name in ("panel", "calendar"):
@@ -218,35 +233,38 @@ def test_every_backtest_task_reuses_the_compose_importer_handles(
             name: task["inputs"]["artifacts"][artifact_name]["taskOutputArtifact"][
                 "producerTask"
             ]
-            for name, task in tasks.items()
-            if artifact_name in task.get("inputs", {}).get("artifacts", {})
+            for name, task in _tasks_reading_artifact(ir, artifact_name).items()
         }
         # Non-vacuity: compose and every backtest task must be among the readers.
         assert backtest_names | {"compose-configs"} <= set(producer_of)
         assert len(set(producer_of.values())) == 1
 
 
-def test_every_backtest_task_takes_its_run_prefix_from_compose(tmp_path: Path) -> None:
-    """Test that run_prefix arrives from the compose task rather than being re-derived.
-
-    Re-deriving it would need the environment destination composed a second time,
-    which is the exception the compose wrapper was granted and this one was not.
-    """
+def test_every_task_taking_a_run_prefix_takes_it_from_compose(tmp_path: Path) -> None:
+    """Test that no task re-derives run_prefix: that would compose the environment
+    destination a second time, the exception only the compose wrapper was granted."""
     ir = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)
+    takers = _tasks_taking_parameter(ir, "run_prefix")
 
-    for task in _backtest_tasks(ir).values():
+    # Non-vacuity, naming evaluate so a selection narrowed to backtests fails.
+    assert set(_backtest_tasks(ir)) | {"evaluate"} <= set(takers)
+    for task in takers.values():
         source = task["inputs"]["parameters"]["run_prefix"]["taskOutputParameter"]
         assert source["producerTask"] == "compose-configs"
         assert source["outputParameterKey"] == "run_prefix"
 
 
-def test_every_backtest_task_reads_the_configs_compose_wrote(tmp_path: Path) -> None:
-    """Test that each backtest task's composed_configs comes from the compose task."""
-    backtest_tasks = _backtest_tasks(_compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES))
+def test_every_task_reading_composed_configs_reads_what_compose_wrote(
+    tmp_path: Path,
+) -> None:
+    """Test that every task reading composed_configs takes it from the compose task."""
+    ir = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)
+    readers = _tasks_reading_artifact(ir, "composed_configs")
 
     # KFP accepts a Dataset for Input[Artifact], so a misrouting compiles silently.
-    assert backtest_tasks  # non-vacuity
-    for task in backtest_tasks.values():
+    # Non-vacuity, naming evaluate so a selection narrowed to backtests fails.
+    assert set(_backtest_tasks(ir)) | {"evaluate"} <= set(readers)
+    for task in readers.values():
         source = task["inputs"]["artifacts"]["composed_configs"]["taskOutputArtifact"]
         assert source["producerTask"] == "compose-configs"
         assert source["outputArtifactKey"] == "composed_configs"
