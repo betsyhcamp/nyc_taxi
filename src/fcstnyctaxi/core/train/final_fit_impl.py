@@ -44,13 +44,14 @@ class FinalFitSummary:
     feature_run_id: str
 
     def as_dict(self) -> dict[str, Any]:
-        """Coerce to JSON-safe primitives: a dataclass accepts a Timestamp as a str."""
+        """Coerce what a frame can hand over as a Timestamp or numpy scalar. The run
+        ids stay bare: `TrainRunIdentity` has already validated them as `str`."""
         return {
             "train_end_ds": str(self.train_end_ds),
             "n_series": int(self.n_series),
             "n_obs": int(self.n_obs),
-            "train_run_id": str(self.train_run_id),
-            "feature_run_id": str(self.feature_run_id),
+            "train_run_id": self.train_run_id,
+            "feature_run_id": self.feature_run_id,
         }
 
 
