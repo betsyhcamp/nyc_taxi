@@ -1,4 +1,5 @@
 import json
+import shutil
 from pathlib import Path
 
 import pandas as pd
@@ -13,6 +14,7 @@ from fcstnyctaxi.core.train.compose_configs_impl import (
     compose_train_static_configs,
 )
 from fcstnyctaxi.lib.config.composition import RUNTIME_SOURCE
+from fcstnyctaxi.lib.registry_ids import compose_model_id
 from fcstnyctaxi.lib.storage_layout import SourcedPath
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
@@ -100,6 +102,7 @@ def _run(
     panel_df: pd.DataFrame | None = None,
     calendar_df: pd.DataFrame | None = None,
     expected_feature_run_id: str = FEATURE_RUN_ID,
+    config_dir: Path = CONFIG_DIR,
 ) -> ComposeConfigsSummary:
     """Compose one run into its step directory, defaulting to a consistent pair."""
     panel, calendar = _write_inputs(
@@ -108,7 +111,7 @@ def _run(
         _calendar_frame() if calendar_df is None else calendar_df,
     )
     return compose_configs_impl(
-        config_dir=CONFIG_DIR,
+        config_dir=config_dir,
         env="dev",
         panel=panel,
         calendar=calendar,
@@ -117,6 +120,13 @@ def _run(
         git_hash=GIT_HASH,
         out_dir=_step_dir(tmp_path),
     )
+
+
+def _copied_config_dir(tmp_path: Path) -> Path:
+    """The real tree under tmp_path, for a test to edit one fragment of."""
+    config_dir = tmp_path / "config"
+    shutil.copytree(CONFIG_DIR, config_dir)
+    return config_dir
 
 
 @pytest.fixture
@@ -359,6 +369,55 @@ def test_nothing_is_written_when_an_identity_field_is_invalid(tmp_path: Path) ->
         )
 
     assert not _run_dir(tmp_path).exists()
+
+
+@pytest.mark.parametrize(
+    ("field", "prefix", "name"),
+    [
+        ("model_id_prefix", "p" * 60, "model_id"),
+        ("display_name_prefix", "d" * 123, "display_name"),
+    ],
+    ids=["model_id", "display_name"],
+)
+def test_nothing_is_written_when_a_registry_name_exceeds_its_cap(
+    tmp_path: Path, field: str, prefix: str, name: str
+) -> None:
+    """An infra.yaml the schema accepts, whose name would fail only at registration."""
+    config_dir = _copied_config_dir(tmp_path)
+    infra_path = config_dir / "train" / "infra.yaml"
+    infra = yaml.safe_load(infra_path.read_text())
+    infra["model_registry"][field] = prefix
+    infra_path.write_text(yaml.safe_dump(infra))
+    # Self-check: the schema accepts it, so the refusal below is the cap's.
+    TrainInfraConfig(**infra)
+
+    with pytest.raises(ValueError, match=name):
+        _run(tmp_path, config_dir=config_dir)
+
+    assert not _run_dir(tmp_path).exists()
+
+
+def test_a_role_model_without_callables_is_not_held_to_the_registry_caps(
+    tmp_path: Path,
+) -> None:
+    """final_fit never fits it, so a name too long to register must not fail the run."""
+    config_dir = _copied_config_dir(tmp_path)
+    long_name = "naive_" + "a" * 40
+    models_dir = config_dir / "train" / "models"
+    shutil.copy(models_dir / "naive.yaml", models_dir / f"{long_name}.yaml")
+    modeling_path = config_dir / "train" / "modeling.yaml"
+    modeling = yaml.safe_load(modeling_path.read_text())
+    modeling["model_roles"]["benchmark"] = long_name
+    modeling["model_settings"][long_name] = {"exog_features": []}
+    modeling_path.write_text(yaml.safe_dump(modeling))
+    # Self-check: gated, this name would be refused.
+    infra = yaml.safe_load((config_dir / "train" / "infra.yaml").read_text())
+    with pytest.raises(ValueError):
+        compose_model_id(infra["model_registry"]["model_id_prefix"], long_name)
+
+    summary = _run(tmp_path, config_dir=config_dir)
+
+    assert long_name in summary.model_names
 
 
 def test_one_artifact_passed_as_both_panel_and_calendar_raises(
