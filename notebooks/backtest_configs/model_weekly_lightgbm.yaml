@@ -1,6 +1,6 @@
 model:
-  fit_predict_callable: fcstnyctaxi.models.lightgbm_weekly.lightgbm_weekly
-  predict_callable: fcstnyctaxi.models.lightgbm_weekly.lightgbm_weekly_predict
+  fit_predict_callable: experimental_models.lightgbm_weekly_dev.lightgbm_weekly_dev
+  predict_callable: experimental_models.lightgbm_weekly_dev.lightgbm_weekly_dev_predict
   hyperparameters:
     freq: W-SUN
     lags: [1, 52]

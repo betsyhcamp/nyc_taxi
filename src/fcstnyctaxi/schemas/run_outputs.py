@@ -15,6 +15,9 @@ from pydantic import BaseModel, ConfigDict, Field
 PANEL_REQUIRED_COLUMNS: tuple[str, ...] = ("unique_id", "ds", "y")
 """Everything the panel must contain; required and allowed are one list."""
 
+JOIN_KEYS: tuple[str, ...] = ("unique_id", "ds")
+"""The key an assembled exogenous frame carries; `exog_features` never names these."""
+
 CALENDAR_REQUIRED_COLUMNS: tuple[str, ...] = (
     "ds",
     "fiscal_year_month",

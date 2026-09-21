@@ -2,9 +2,11 @@ import pytest
 from pydantic import ValidationError
 
 from fcstnyctaxi.schemas.config.train import (
+    ModelSettings,
     TrainInfraConfig,
     TrainModelingConfig,
 )
+from fcstnyctaxi.schemas.run_outputs import JOIN_KEYS
 
 
 @pytest.fixture
@@ -32,6 +34,14 @@ def valid_modeling_dict() -> dict:
         },
         "weighting": {"trailing_weeks": 26, "dampening": "cbrt"},
         "model_roles": {"benchmark": "naive", "challenger": "xgboost"},
+        "model_settings": {
+            "naive": {"exog_features": []},
+            "xgboost": {
+                "exog_features": ["fiscal_month"],
+                "fit_callable": "a.b.fit",
+                "save_callable": "a.b.save",
+            },
+        },
     }
 
 
@@ -171,12 +181,91 @@ def test_model_role_name_with_illegal_characters_raises(
 
 
 def test_duplicate_model_role_values_are_permitted(valid_modeling_dict: dict) -> None:
-    """benchmark == challenger yields WRMAE = 1.0, a legitimate smoke test.
-
-    Deduplication happens at model_names expansion, not here.
-    """
-    valid_modeling_dict["model_roles"] = {"benchmark": "naive", "challenger": "naive"}
+    """benchmark == challenger yields WRMAE = 1.0, a legitimate smoke test."""
+    valid_modeling_dict["model_roles"] = {
+        "benchmark": "xgboost",
+        "challenger": "xgboost",
+    }
 
     config = TrainModelingConfig(**valid_modeling_dict)
 
     assert config.model_roles.benchmark == config.model_roles.challenger
+
+
+# ================================================
+# ModelSettings and its validators
+# ================================================
+
+
+def test_a_model_may_declare_features_without_callables(
+    valid_modeling_dict: dict,
+) -> None:
+    """Only a registration candidate needs the callable pair."""
+    valid_modeling_dict["model_settings"]["naive"] = {
+        "exog_features": ["count_workdays"]
+    }
+
+    config = TrainModelingConfig(**valid_modeling_dict)
+
+    assert config.model_settings["naive"].fit_callable is None
+
+
+@pytest.mark.parametrize("declared", ["fit_callable", "save_callable"])
+def test_half_a_callable_pair_raises(declared: str) -> None:
+    """A fit with no save persists nothing, and the reverse has nothing to persist."""
+    with pytest.raises(ValidationError, match="both or neither"):
+        ModelSettings(**{declared: "a.b.c"})
+
+
+def test_an_exog_feature_outside_the_calendar_contract_raises() -> None:
+    """The gap a closed submodel alone leaves open: its contents."""
+    with pytest.raises(ValidationError, match="not in the calendar contract"):
+        ModelSettings(exog_features=["fiscal_wek_of_month"])
+
+
+@pytest.mark.parametrize("key", JOIN_KEYS)
+def test_an_exog_feature_naming_a_join_key_raises_as_a_key(key: str) -> None:
+    """Both keys must be named as keys, not as misspellings."""
+    with pytest.raises(ValidationError, match="join key"):
+        ModelSettings(exog_features=[key])
+
+
+def test_the_two_exog_feature_faults_do_not_share_a_message() -> None:
+    """Different fixes, so one message would misdirect the reader."""
+    with pytest.raises(ValidationError) as unknown:
+        ModelSettings(exog_features=["fiscal_wek_of_month"])
+    with pytest.raises(ValidationError) as join_key:
+        ModelSettings(exog_features=["ds"])
+
+    assert unknown.value.errors()[0]["msg"] != join_key.value.errors()[0]["msg"]
+
+
+def test_a_role_model_with_no_settings_entry_raises(
+    valid_modeling_dict: dict,
+) -> None:
+    """Every role model is backtested, so every one needs its exog_features."""
+    del valid_modeling_dict["model_settings"]["naive"]
+
+    with pytest.raises(ValidationError, match="no entry for role model"):
+        TrainModelingConfig(**valid_modeling_dict)
+
+
+def test_a_settings_entry_with_no_role_is_permitted(
+    valid_modeling_dict: dict,
+) -> None:
+    """A model config can exist with no role, so a parallel entry can too."""
+    valid_modeling_dict["model_settings"]["unrostered"] = {"exog_features": []}
+
+    config = TrainModelingConfig(**valid_modeling_dict)
+
+    assert "unrostered" in config.model_settings
+
+
+def test_a_challenger_without_the_callable_pair_raises(
+    valid_modeling_dict: dict,
+) -> None:
+    """final_fit fits the challenger, so only it carries this obligation."""
+    valid_modeling_dict["model_settings"]["xgboost"] = {"exog_features": []}
+
+    with pytest.raises(ValidationError, match="challenger"):
+        TrainModelingConfig(**valid_modeling_dict)

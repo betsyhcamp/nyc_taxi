@@ -21,6 +21,7 @@ from fcstnyctaxi.core.train.compose_configs_impl import (
     compose_train_static_configs,
 )
 from fcstnyctaxi.core.train.evaluate_impl import evaluate_impl
+from fcstnyctaxi.core.train.final_fit_impl import final_fit_impl
 from fcstnyctaxi.lib.io import (
     download_from_gcs,
     require_gcs_uri,
@@ -40,11 +41,12 @@ from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 logger = logging.getLogger(__name__)
 
 # Each step names its own directory under the run root. No step accepts a full
-# output path, so these are not parameters. Backtest appends the model name too,
-# which only the loop knows.
+# output path, so these are not parameters. Backtest and final_fit append the model
+# name too.
 _COMPOSE_STEP = "compose_configs"
 _BACKTEST_STEP = "backtest"
 _EVALUATE_STEP = "evaluate"
+_FINAL_FIT_STEP = "final_fit"
 
 # Shared with the readiness check below, which would otherwise skip every run.
 _BACKTEST_MARKER = "backtest_manifest.json"
@@ -58,7 +60,8 @@ def _parse_args() -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(
         description="Compose every Training config for one run, back each model, "
-        "then score the challenger against the benchmark."
+        "score the challenger against the benchmark, then fit the challenger on "
+        "the full panel."
     )
     parser.add_argument(
         "--env",
@@ -93,7 +96,8 @@ def _parse_args() -> argparse.Namespace:
         "--model",
         default=None,
         help="Back only this model instead of every model in model_roles; must "
-        "name one this run composed. Scoring runs only if both sidecars are complete.",
+        "name one this run composed. Scoring and the final fit run only if both "
+        "sidecars are complete.",
     )
     parser.add_argument(
         "--scratch-dir",
@@ -147,21 +151,23 @@ def _select_models(model_names: list[str], selected: str | None) -> list[str]:
 
 
 def main() -> None:
-    """Compose one Training run's configs, back each model, then score the pair.
+    """Compose one Training run's configs, back each model, score the pair, then fit
+    the challenger.
 
     A failing model stops the run rather than being collected: the publish is per
     model and inside the loop, so an earlier model's sidecar is already complete.
     Scoring reads the sidecars the run id has accumulated rather than the ones this
     invocation wrote, so a narrowed rerun that completes the pair scores it instead
-    of costing a second backtest of the model that already succeeded.
+    of costing a second backtest of the model that already succeeded. The final fit
+    follows scoring and runs only when scoring did.
 
     Raises:
         ValueError: If either run id is not path-safe, if exactly one URI override
             was given, if the Feature run published no manifest, if an input URI
             cannot be mirrored to a distinct local path, if `--env` has no
             `environments/<env>.yaml`, if `--model` names no model this run
-            composed, on a failed lineage check, or on any composition, backtest
-            or evaluation failure.
+            composed, on a failed lineage check, or on any composition, backtest,
+            evaluation or final fit failure.
         RuntimeError: If the git hash cannot be determined, since a run whose
             commit is unknown cannot be reproduced from its own record.
         ValidationError: If an identity field or an override URI is malformed.
@@ -184,7 +190,7 @@ def main() -> None:
     git_hash = require_git_hash(project_root)
 
     # Held as a value rather than folded into step_uri: backtest, evaluate, and
-    # final_fit will each append their own step name to this same prefix.
+    # final_fit each append their own step name to this same prefix.
     run_prefix = resolve_run_prefix(config_dir, args.env, "train", run_id)
     compose_uri = f"{run_prefix}{_COMPOSE_STEP}/"
 
@@ -321,9 +327,9 @@ def main() -> None:
     ]
     if unscored:
         logger.warning(
-            "evaluate skipped, no complete sidecar for %s under %s. Any scores in "
-            "that run's evaluate directory predate the sidecars it now holds; "
-            "rerun without --model to refresh them.",
+            "evaluate and final_fit skipped, no complete sidecar for %s under %s. "
+            "Any scores or bundle already in that run predate the sidecars it now "
+            "holds; rerun without --model to refresh them.",
             unscored,
             run_prefix,
         )
@@ -351,6 +357,33 @@ def main() -> None:
         removed,
         evaluate_uri,
         evaluate_summary.output_rows,
+    )
+
+    # After scoring, as in the DAG: a crashed evaluate must not leave a bundle with no
+    # scores. The challenger is the registration target whatever evaluate reported.
+    final_fit_uri = f"{run_prefix}{_FINAL_FIT_STEP}/{roles.challenger}/"
+    final_fit_dir = _mirror_path(final_fit_uri, mirror_root)
+
+    # No rmtree, unlike compose: the impl recreates model/ and fixes its other names.
+    final_fit_impl(
+        panel_path=panel.path,
+        calendar_path=calendar.path,
+        compose_configs_dir=compose_dir,
+        model_name=roles.challenger,
+        out_dir=final_fit_dir,
+    )
+    uploaded, removed = sync_to_gcs(
+        final_fit_dir, final_fit_uri, completion_marker="final_fit_manifest.json"
+    )
+
+    # No summary field: final_fit_impl logs the measurements, and the run ids are
+    # logged above at compose.
+    logger.info(
+        "final_fit published: model=%s uploaded=%d removed=%d uri=%s",
+        roles.challenger,
+        uploaded,
+        removed,
+        final_fit_uri,
     )
 
 

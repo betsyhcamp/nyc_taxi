@@ -6,6 +6,7 @@ import pytest
 from fcstnyctaxi.lib.config.bindings import available_environments, environment_bindings
 from fcstnyctaxi.lib.config.composition import compose_config
 from fcstnyctaxi.lib.storage_layout import (
+    BUNDLE_MODEL_DIR_NAME,
     _build_run_prefix,
     resolve_run_outputs_uri,
     resolve_run_prefix,
@@ -118,3 +119,14 @@ def test_resolve_run_outputs_uri_names_the_run_root_not_a_step(
     uri = resolve_run_outputs_uri(CONFIG_DIR, ENV, slice_name, RUN_ID)
 
     assert uri == f"gs://{composed_bucket}/{ENV}/{slice_name}/{RUN_ID}/run_outputs.json"
+
+
+# ================================================
+# BUNDLE_MODEL_DIR_NAME tests
+# ================================================
+
+
+def test_the_bundle_model_dir_is_one_segment_below_the_bundle() -> None:
+    """A separator or a dot segment would put model-owned files outside the bundle."""
+    assert Path(BUNDLE_MODEL_DIR_NAME).name == BUNDLE_MODEL_DIR_NAME
+    assert BUNDLE_MODEL_DIR_NAME not in ("", ".", "..")

@@ -25,6 +25,10 @@ def composed_config_filename(model_name: str) -> str:
     return f"composed_config_{model_name}.yaml"
 
 
+BUNDLE_MODEL_DIR_NAME = "model"
+"""The bundle's subdirectory the save callable owns, apart from the impl's files."""
+
+
 def resolve_run_prefix(
     config_dir: Path, env: str, slice_name: SliceName, run_id: str
 ) -> str:

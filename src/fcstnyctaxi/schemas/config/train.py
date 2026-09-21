@@ -15,7 +15,9 @@ that layers.
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from fcstnyctaxi.schemas.run_outputs import CALENDAR_ALLOWED_COLUMNS, JOIN_KEYS
 
 DampeningName = Literal["cbrt", "sqrt", "none"]
 """Dampening function names.
@@ -122,6 +124,68 @@ class ModelRoles(BaseModel):
     challenger: str = Field(..., min_length=1, pattern=r"^[a-z0-9_]+$")
 
 
+class ModelSettings(BaseModel):
+    """One model's input selection and the callables ``final_fit`` resolves.
+
+    Project-owned rather than ``ModelConfig.hyperparameters``, which is
+    ``dict[str, Any]`` and so hides a typo from every validation stage.
+
+    ``exog_features`` picks what one model trains on, within what
+    ``CALENDAR_ALLOWED_COLUMNS`` lets Feature deliver; editing it moves that model's
+    numbers. The callables come as a pair: only the model's own save can write out
+    the opaque object its fit returns.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    exog_features: list[str] = Field(default_factory=list)
+    fit_callable: str | None = None
+    save_callable: str | None = None
+
+    @field_validator("exog_features")
+    @classmethod
+    def _features_must_be_selectable_calendar_columns(
+        cls, features: list[str]
+    ) -> list[str]:
+        """Reject a join key or a column the calendar contract does not declare.
+
+        Keys first: ``unique_id`` is both, and "misspelling" would be the wrong fix.
+        """
+        keys = sorted(set(features) & set(JOIN_KEYS))
+        if keys:
+            raise ValueError(
+                f"exog_features names join key(s) {keys}, already the frame's key."
+            )
+
+        unknown = sorted(set(features) - set(CALENDAR_ALLOWED_COLUMNS))
+        if unknown:
+            raise ValueError(
+                f"exog_features names {unknown}, not in the calendar contract: "
+                f"{sorted(CALENDAR_ALLOWED_COLUMNS)}."
+            )
+
+        return features
+
+    @model_validator(mode="after")
+    def _callables_are_declared_as_a_pair(self) -> "ModelSettings":
+        """Reject half a pair, which would fit a model nothing can write out."""
+        declared = {
+            name
+            for name, value in (
+                ("fit_callable", self.fit_callable),
+                ("save_callable", self.save_callable),
+            )
+            if value is not None
+        }
+        if len(declared) == 1:
+            missing = {"fit_callable", "save_callable"} - declared
+            raise ValueError(
+                f"{sorted(declared)[0]} without {sorted(missing)[0]}; "
+                "declare both or neither."
+            )
+        return self
+
+
 class TrainModelingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -129,3 +193,31 @@ class TrainModelingConfig(BaseModel):
     tiering: Tiering
     weighting: Weighting
     model_roles: ModelRoles
+    model_settings: dict[str, ModelSettings]
+
+    @model_validator(mode="after")
+    def _every_role_model_has_settings(self) -> "TrainModelingConfig":
+        """Require an entry per role model, since each is backtested. Extras are
+        legitimate: ``train/models/xgboost.yaml`` exists with no role."""
+        missing = sorted(
+            set(self.model_roles.model_dump().values()) - set(self.model_settings)
+        )
+        if missing:
+            raise ValueError(
+                f"model_settings has no entry for role model(s) {missing}."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _the_challenger_is_registrable(self) -> "TrainModelingConfig":
+        """The challenger is what ``final_fit`` fits, so it declares the pair.
+
+        Keyed on the role: a configurable target would let ``benchmark`` validate.
+        """
+        challenger = self.model_roles.challenger
+        settings = self.model_settings[challenger]
+        if settings.fit_callable is None:
+            raise ValueError(
+                f"challenger {challenger!r} declares no fit_callable and save_callable."
+            )
+        return self
