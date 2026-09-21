@@ -35,8 +35,8 @@ BENCHMARK_SIDECAR_URI = f"{RUN_PREFIX}backtest/{BENCHMARK_MODEL}/"
 # Derived, never a literal: a literal would restate the convention, not check it.
 SCORES_URI = f"{RUN_PREFIX}evaluate/"
 
-# Real, not a Mock: metadata.update() raises on one, for a reason unrelated to
-# anything under test. The model names reach the wrapper only on this summary.
+# Real, not a Mock: a MagicMock unpacks to {}, so the metadata loop checks nothing.
+# The model names reach the wrapper only on this summary.
 SUMMARY = EvaluateSummary(
     train_run_id="t-sentinel",
     challenger_model=CHALLENGER_MODEL,
