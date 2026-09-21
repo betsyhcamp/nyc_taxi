@@ -20,8 +20,9 @@ from fcstnyctaxi.core.train.compose_configs_impl import (
     compose_train_static_configs,
 )
 from fcstnyctaxi.core.train.evaluate_impl import EvaluateSummary
+from fcstnyctaxi.core.train.final_fit_impl import FinalFitSummary
 from fcstnyctaxi.lib import run_outputs
-from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
+from fcstnyctaxi.lib.storage_layout import BUNDLE_MODEL_DIR_NAME, resolve_run_prefix
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.pipelines import local_train_pipeline
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
@@ -77,6 +78,13 @@ EVALUATE_SUMMARY = EvaluateSummary(
     hero_metric_values={"horizon_1": 0.92, "horizon_2": 0.88},
     output_rows={"fold_metrics.parquet": 4},
 )
+FINAL_FIT_SUMMARY = FinalFitSummary(
+    train_end_ds="2025-05-18",
+    n_series=3,
+    n_obs=60,
+    train_run_id=RUN_ID,
+    feature_run_id=FEATURE_RUN_ID,
+)
 
 
 def _backtest_outputs(*, out_dir: Path, **_: object) -> BacktestSummary:
@@ -88,10 +96,25 @@ def _backtest_outputs(*, out_dir: Path, **_: object) -> BacktestSummary:
 
 
 def _evaluate_outputs(*, out_dir: Path, **_: object) -> EvaluateSummary:
-    """The same, for the directory the final publish sends."""
+    """The same, for the evaluate directory."""
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "evaluate_manifest.json").write_text("{}")
     return EVALUATE_SUMMARY
+
+
+def _final_fit_outputs(*, out_dir: Path, **_: object) -> FinalFitSummary:
+    """The same, for the bundle, whose model directory is the only subdirectory any
+    step publishes."""
+    (out_dir / BUNDLE_MODEL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+    (out_dir / BUNDLE_MODEL_DIR_NAME / "weights.bin").write_bytes(b"fitted")
+    (out_dir / "final_fit_manifest.json").write_text("{}")
+    return FINAL_FIT_SUMMARY
+
+
+def _challenger(root: Path) -> str:
+    """Composed rather than named, so assertions hold whichever model the repo ships."""
+    _, _, modeling = compose_train_static_configs(root / "config", ENV)
+    return cast(TrainModelingConfig, modeling.config).model_roles.challenger
 
 
 @pytest.fixture
@@ -186,8 +209,8 @@ def test_each_backtest_is_published_before_the_next_one_runs(
     monkeypatch: pytest.MonkeyPatch,
     mocker: MockerFixture,
 ) -> None:
-    """Three orderings, each with a loss of its own: no record of what the run read,
-    a finished sidecar dropped when a later model fails, scoring an absent pair."""
+    """Four orderings, each with its own loss: no record of what the run read, a
+    finished sidecar lost to a later failure, an absent pair scored, an unscored fit."""
     root = tmp_path / "project"
     shutil.copytree(get_project_root_dir() / "config", root / "config")
     monkeypatch.setenv("PROJECT_ROOT", str(root))
@@ -201,10 +224,7 @@ def test_each_backtest_is_published_before_the_next_one_runs(
         local_train_pipeline, "compose_configs_impl", return_value=COMPOSE_SUMMARY
     )
     sync = mocker.patch.object(local_train_pipeline, "sync_to_gcs", return_value=(7, 0))
-    # One manager, so the assertion is about order across the calls rather than each
-    # in isolation. Both impls belong in it for the same reason: left out, a run that
-    # backtested both models before publishing either, or scored before the second
-    # sidecar existed, would look identical.
+    # One manager, impls included, so the assertion sees order across every call.
     publishes = mocker.MagicMock()
     publishes.attach_mock(
         mocker.patch.object(local_train_pipeline, "upload_to_gcs"), "identity"
@@ -222,6 +242,10 @@ def test_each_backtest_is_published_before_the_next_one_runs(
         ),
         "evaluate",
     )
+    final_fit = mocker.patch.object(
+        local_train_pipeline, "final_fit_impl", side_effect=_final_fit_outputs
+    )
+    publishes.attach_mock(final_fit, "final_fit")
 
     monkeypatch.setattr(
         sys,
@@ -255,6 +279,8 @@ def test_each_backtest_is_published_before_the_next_one_runs(
         "sync",
         "evaluate",
         "sync",
+        "final_fit",
+        "sync",
     ]
     assert publishes.mock_calls[0].args[1] == run_prefix
     assert [call.kwargs["completion_marker"] for call in sync.call_args_list] == [
@@ -262,11 +288,16 @@ def test_each_backtest_is_published_before_the_next_one_runs(
         "backtest_manifest.json",
         "backtest_manifest.json",
         "evaluate_manifest.json",
+        "final_fit_manifest.json",
     ]
     # out_dir is mirrored from these, so pinning the URIs pins both locations.
+    challenger = _challenger(root)
     assert [call.args[1] for call in sync.call_args_list[1:]] == [
         f"{run_prefix}backtest/{name}/" for name in COMPOSE_SUMMARY.model_names
-    ] + [f"{run_prefix}evaluate/"]
+    ] + [f"{run_prefix}evaluate/", f"{run_prefix}final_fit/{challenger}/"]
+    # The registration target only: the benchmark is backtested and never fitted.
+    assert final_fit.call_count == 1
+    assert final_fit.call_args.kwargs["model_name"] == challenger
 
 
 def test_the_published_destinations_are_ones_the_transport_accepts(
@@ -303,6 +334,9 @@ def test_the_published_destinations_are_ones_the_transport_accepts(
         local_train_pipeline, "evaluate_impl", side_effect=_evaluate_outputs
     )
     mocker.patch.object(
+        local_train_pipeline, "final_fit_impl", side_effect=_final_fit_outputs
+    )
+    mocker.patch.object(
         run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
     )
     # Neither publisher is patched: that is the whole point of this test.
@@ -335,6 +369,10 @@ def test_the_published_destinations_are_ones_the_transport_accepts(
             published / "backtest" / model_name / "backtest_manifest.json"
         ).is_file()
     assert (published / "evaluate" / "evaluate_manifest.json").is_file()
+    # The bundle nests its model directory, which no other step publishes.
+    bundle = published / "final_fit" / _challenger(root)
+    assert (bundle / "final_fit_manifest.json").is_file()
+    assert (bundle / BUNDLE_MODEL_DIR_NAME / "weights.bin").is_file()
 
 
 def test_a_narrowed_rerun_scores_the_pair_the_run_id_has_accumulated(
@@ -367,6 +405,9 @@ def test_a_narrowed_rerun_scores_the_pair_the_run_id_has_accumulated(
     )
     evaluate = mocker.patch.object(
         local_train_pipeline, "evaluate_impl", side_effect=_evaluate_outputs
+    )
+    final_fit = mocker.patch.object(
+        local_train_pipeline, "final_fit_impl", side_effect=_final_fit_outputs
     )
     # Composed here rather than named, so the assertion is about which role each
     # directory fills and not about the models this repo happens to ship.
@@ -413,6 +454,8 @@ def test_a_narrowed_rerun_scores_the_pair_the_run_id_has_accumulated(
     # A present directory is not a finished one, and scoring the partial above
     # would read frames whose writer stopped partway.
     assert evaluate.call_count == 0
+    # Ordering, as in the DAG: nothing is fitted for a pair that was never scored.
+    assert final_fit.call_count == 0
     assert any(record.levelname == "WARNING" for record in caplog.records)
 
     _back(roles.challenger)
@@ -422,6 +465,8 @@ def test_a_narrowed_rerun_scores_the_pair_the_run_id_has_accumulated(
     # A transposed pair is the one wiring error the tables never reveal.
     assert scored["challenger_dir"].name == roles.challenger
     assert scored["benchmark_dir"].name == roles.benchmark
+    assert final_fit.call_count == 1
+    assert final_fit.call_args.kwargs["model_name"] == roles.challenger
 
 
 def test_the_local_runner_resolves_both_uris_from_the_feature_run_id_alone(
