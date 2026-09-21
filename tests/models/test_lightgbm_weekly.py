@@ -6,8 +6,8 @@ import pytest
 from mlforecast import MLForecast
 from pandas.testing import assert_frame_equal
 
+from fcstnyctaxi.lib.exog import build_exog_frame
 from fcstnyctaxi.models.lightgbm_weekly import (
-    _CALENDAR_FEATURES,
     lightgbm_weekly,
     lightgbm_weekly_fit,
     lightgbm_weekly_predict,
@@ -17,10 +17,9 @@ from fcstnyctaxi.models.lightgbm_weekly import (
 # ================================================
 # The pipeline callable contract
 #
-# The fixture is a real LightGBM fit, not a fake, and carries a calendar column
-# outside _CALENDAR_FEATURES so the selection lightgbm_weekly still performs has
-# something to drop. A wrapper that stopped selecting would train on that column
-# and forecast differently, which is what the composition test below detects.
+# These callables merge whatever frame they are handed, on ["unique_id", "ds"],
+# and select nothing. The impl decides the feature set, so the fixture hands them
+# an assembled frame and the calendar carries a column outside it.
 #
 # The truncation sweep that used to live here moved to test_lightgbm_weekly_dev.py
 # with _set_lightgbm_iteration, whose only callers are the calibration config and
@@ -38,6 +37,14 @@ _FIXTURE_HYPERPARAMETERS = {
     "min_data_in_leaf": 5,
     "n_estimators": 60,
 }
+
+# What the impl selects; `fiscal_year` is deliberately not among them.
+_EXOG_FEATURES = (
+    "fiscal_week_of_month",
+    "fiscal_month",
+    "weeks_in_month",
+    "count_workdays",
+)
 
 
 @pytest.fixture
@@ -76,48 +83,47 @@ def train_df(calendar_df: pd.DataFrame) -> pd.DataFrame:
 
 
 @pytest.fixture
-def fitted_model(train_df: pd.DataFrame, calendar_df: pd.DataFrame) -> MLForecast:
-    """A model fitted through the fit half alone, on the columns the wrapper picks."""
+def exog_df(train_df: pd.DataFrame, calendar_df: pd.DataFrame) -> pd.DataFrame:
+    """The frame the impl assembles, which is what the callables now receive."""
+    return build_exog_frame(train_df, calendar_df, exog_features=_EXOG_FEATURES)
+
+
+@pytest.fixture
+def fitted_model(train_df: pd.DataFrame, exog_df: pd.DataFrame) -> MLForecast:
+    """A model fitted through the fit half alone, on the assembled frame."""
     return lightgbm_weekly_fit(
-        train_df,
-        FREQ,
-        exog_df=calendar_df[["ds"] + _CALENDAR_FEATURES],
-        **_FIXTURE_HYPERPARAMETERS,
+        train_df, FREQ, exog_df=exog_df, **_FIXTURE_HYPERPARAMETERS
     )
 
 
 def test_the_wrapper_is_exactly_its_fit_and_predict_halves(
-    train_df: pd.DataFrame, calendar_df: pd.DataFrame, fitted_model: MLForecast
+    train_df: pd.DataFrame, exog_df: pd.DataFrame, fitted_model: MLForecast
 ) -> None:
     """The fit-predict callable must add nothing to the halves it delegates to, or
     the model the backtest scores stops being the model final_fit would register."""
     wrapper_forecast, _fitted_values, _model = lightgbm_weekly(
-        train_df,
-        _HORIZON,
-        FREQ,
-        future_x_df=calendar_df,
-        **_FIXTURE_HYPERPARAMETERS,
+        train_df, _HORIZON, FREQ, future_x_df=exog_df, **_FIXTURE_HYPERPARAMETERS
     )
 
     composed_forecast = lightgbm_weekly_predict(
-        fitted_model, _HORIZON, future_x_df=calendar_df
+        fitted_model, _HORIZON, future_x_df=exog_df
     )
 
     assert_frame_equal(wrapper_forecast, composed_forecast)
 
 
 def test_a_saved_model_reloads_and_predicts_identically(
-    calendar_df: pd.DataFrame, fitted_model: MLForecast, tmp_path: Path
+    exog_df: pd.DataFrame, fitted_model: MLForecast, tmp_path: Path
 ) -> None:
     """The data-independent half of the bundle's write check, which is why no
     load-back runs at runtime: proven once here rather than on every run."""
     model_dir = tmp_path / "model"
     model_dir.mkdir()
-    before = lightgbm_weekly_predict(fitted_model, _HORIZON, future_x_df=calendar_df)
+    before = lightgbm_weekly_predict(fitted_model, _HORIZON, future_x_df=exog_df)
 
     lightgbm_weekly_save(fitted_model, model_dir)
     after = lightgbm_weekly_predict(
-        MLForecast.load(model_dir), _HORIZON, future_x_df=calendar_df
+        MLForecast.load(model_dir), _HORIZON, future_x_df=exog_df
     )
 
     assert any(path.stat().st_size > 0 for path in model_dir.iterdir())
@@ -133,14 +139,14 @@ def test_the_fit_half_trains_on_exactly_the_columns_it_is_handed(
         fitted_model.models_["LGBMRegressor"].booster_.feature_name()
     )
 
-    assert set(_CALENDAR_FEATURES) <= booster_features
+    assert set(_EXOG_FEATURES) <= booster_features
     # Handed to neither half, so its presence would mean the caller's selection
     # was bypassed and the model trained on a wider frame than it was given.
     assert "fiscal_year" not in booster_features
 
 
 def test_the_fit_half_refuses_an_unknown_hyperparameter(
-    train_df: pd.DataFrame, calendar_df: pd.DataFrame
+    train_df: pd.DataFrame, exog_df: pd.DataFrame
 ) -> None:
     """Declaring no **kwargs is what makes a misspelled hyperparameter raise here;
     the fit-predict callable swallows the same name to stay tsbricks-compatible."""
@@ -148,7 +154,7 @@ def test_the_fit_half_refuses_an_unknown_hyperparameter(
         lightgbm_weekly_fit(
             train_df,
             FREQ,
-            exog_df=calendar_df[["ds"] + _CALENDAR_FEATURES],
+            exog_df=exog_df,
             num_leavez=31,
             **_FIXTURE_HYPERPARAMETERS,
         )

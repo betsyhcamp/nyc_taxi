@@ -1,23 +1,13 @@
 from pathlib import Path
-from typing import cast
 
 import lightgbm as lgb
-import numpy as np
 import pandas as pd
 from mlforecast import MLForecast
 from mlforecast.lag_transforms import (
     RollingMean,
 )
 
-from fcstnyctaxi.lib.calendar_utils import _build_future_calendar_df
 from fcstnyctaxi.models._utils import _align_ds_dtype
-
-_CALENDAR_FEATURES = [
-    "fiscal_week_of_month",
-    "fiscal_month",
-    "weeks_in_month",
-    "count_workdays",
-]
 
 
 def lightgbm_weekly_fit(
@@ -70,7 +60,7 @@ def lightgbm_weekly_fit(
     train_df = train_df.astype({"y": "float64"})
 
     if exog_df is not None:
-        train_df = train_df.merge(exog_df, on="ds", how="left")
+        train_df = train_df.merge(exog_df, on=["unique_id", "ds"], how="left")
 
     mlfcst = MLForecast(
         models=[
@@ -139,14 +129,10 @@ def lightgbm_weekly(
     """
     # future_x_df is the name tsbricks passes by, and **kwargs would absorb a
     # renamed parameter silently, so exogenous features would vanish with no error.
-    exog_df = (
-        future_x_df[["ds"] + _CALENDAR_FEATURES] if future_x_df is not None else None
-    )
-
     mlfcst = lightgbm_weekly_fit(
         train_df,
         freq,
-        exog_df=exog_df,
+        exog_df=future_x_df,
         lags=lags,
         rolling_mean_window=rolling_mean_window,
         num_leaves=num_leaves,
@@ -172,20 +158,15 @@ def lightgbm_weekly_predict(
     mlfcst: MLForecast, horizon: int, future_x_df: pd.DataFrame | None = None
 ) -> pd.DataFrame:
     """Predict from an already fitted MLForecast model, without refitting.
-    Derives unique_ids/last_ds from mlfcst.ts rather than a train_df
-    parameter, so this works identically whether mlfcst came from a fresh
-    .fit() (calibration, backtest) or MLForecast.load() (a production predict
-     only pipeline)."""
-    if future_x_df is not None:
-        future_calendar_df = _build_future_calendar_df(
-            unique_ids=np.asarray(mlfcst.ts.uids),
-            last_ds=cast(pd.Timestamp, mlfcst.ts.last_dates.max()),
-            calendar_df=future_x_df,
-            horizon=horizon,
-            cal_cols=_CALENDAR_FEATURES,
-        )
 
-        forecast_df = mlfcst.predict(h=horizon, X_df=future_calendar_df)
+    The assembled frame is passed straight through as X_df, with no grid built
+    and no horizon slice taken: MLForecast selects the dates it needs, and a
+    whole table spanning history predicts identically to a horizon-only slice.
+    Takes no train_df, so this works the same whether mlfcst came from a fresh
+    fit or from MLForecast.load().
+    """
+    if future_x_df is not None:
+        forecast_df = mlfcst.predict(h=horizon, X_df=future_x_df)
     else:
         forecast_df = mlfcst.predict(h=horizon)
     return forecast_df.rename(columns={"LGBMRegressor": "ypred"})[  # type: ignore

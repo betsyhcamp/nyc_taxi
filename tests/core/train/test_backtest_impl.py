@@ -64,11 +64,15 @@ _SERIES = {"a": 10.0, "b": 5.0, "c": 1.0}
 _fit_calls: list[int] = []
 """One entry per fake-model call, so a test can assert no fold ran."""
 
+_exog_columns_seen: list[list[str]] = []
+"""The columns each fake-model call was handed, so a test can assert the trim."""
+
 
 @pytest.fixture(autouse=True)
 def _reset_fit_calls() -> None:
     """Module state, so every test starts from empty."""
     _fit_calls.clear()
+    _exog_columns_seen.clear()
 
 
 def _fake_model_callable(
@@ -76,10 +80,14 @@ def _fake_model_callable(
 ) -> pd.DataFrame:
     """Repeat each series' last observed value, and record that a fold ran."""
     _fit_calls.append(horizon)
+    _exog_columns_seen.append(list(future_x_df.columns))
 
     last_ds = train_df["ds"].max()
+    # drop_duplicates before head: future_x_df is keyed (unique_id, ds), so taking
+    # rows would return one date repeated rather than `horizon` distinct dates.
     future = (
         future_x_df.loc[future_x_df["ds"] > last_ds, "ds"]
+        .drop_duplicates()
         .sort_values()
         .head(horizon)
         .tolist()
@@ -157,6 +165,10 @@ def _cfg(origins: list[tuple[int, int]]) -> BacktestConfig:
 
 _TWO_ORIGINS = [(7, 2), (11, 2)]
 
+# The 16-week calendar carries only what the fold loop reads, so there is nothing
+# for a model to consume; the 80-week fixture below declares a real feature set.
+_NO_EXOG: tuple[str, ...] = ()
+
 
 # ================================================
 # compute_backtest_outputs: the loop runs
@@ -168,7 +180,11 @@ def test_the_fold_loop_produces_one_origin_per_configured_origin(
 ) -> None:
     """The fixture's own check: without it a broken fixture reads as a broken check."""
     outputs = compute_backtest_outputs(
-        cfg=_cfg(_TWO_ORIGINS), modeling=modeling, ts_df=ts_df, calendar_df=calendar_df
+        cfg=_cfg(_TWO_ORIGINS),
+        modeling=modeling,
+        ts_df=ts_df,
+        calendar_df=calendar_df,
+        exog_features=_NO_EXOG,
     )
 
     assert len(_fit_calls) == len(_TWO_ORIGINS)
@@ -176,6 +192,24 @@ def test_the_fold_loop_produces_one_origin_per_configured_origin(
         _TWO_ORIGINS
     )
     assert not outputs.monthly_series.empty
+
+
+def test_only_the_configured_columns_reach_the_model(
+    ts_df: pd.DataFrame, calendar_df: pd.DataFrame, modeling: TrainModelingConfig
+) -> None:
+    """The impl decides the feature set now, so a calendar column outside it must
+    not reach the model, where an extra column is adopted as a feature at fit."""
+    selected = ("fiscal_year_month",)
+
+    compute_backtest_outputs(
+        cfg=_cfg([(7, 2)]),
+        modeling=modeling,
+        ts_df=ts_df,
+        calendar_df=calendar_df,
+        exog_features=selected,
+    )
+
+    assert _exog_columns_seen == [["unique_id", "ds", *selected]]
 
 
 # ================================================
@@ -198,6 +232,7 @@ def test_repeated_forecast_origins_raise_before_the_loop(
             modeling=modeling,
             ts_df=ts_df,
             calendar_df=calendar_df,
+            exog_features=_NO_EXOG,
         )
 
     assert _fit_calls == []
@@ -227,6 +262,7 @@ def test_a_fold_count_disagreeing_with_the_pairs_raises_before_the_loop(
             modeling=modeling,
             ts_df=ts_df,
             calendar_df=calendar_df,
+            exog_features=_NO_EXOG,
         )
 
     assert _fit_calls == []
@@ -259,6 +295,7 @@ def test_an_unmapped_fold_id_raises_instead_of_nulling_the_origin(
             modeling=modeling,
             ts_df=ts_df,
             calendar_df=calendar_df,
+            exog_features=_NO_EXOG,
         )
 
 
@@ -285,6 +322,7 @@ def test_duplicate_monthly_series_keys_raise(
             modeling=modeling,
             ts_df=ts_df,
             calendar_df=calendar_df,
+            exog_features=_NO_EXOG,
         )
 
 
@@ -552,6 +590,9 @@ def full_outputs(
         modeling=_shipped_modeling(),
         ts_df=full_panel,
         calendar_df=full_calendar,
+        exog_features=tuple(
+            _shipped_modeling().model_settings[MODEL_NAME].exog_features
+        ),
     )
 
 
@@ -742,6 +783,28 @@ def test_a_failed_rerun_leaves_no_completion_marker(
         backtest_impl(**staged)
 
     assert not (staged["out_dir"] / "backtest_manifest.json").exists()
+
+
+def test_the_impl_passes_the_models_own_configured_features(
+    staged: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A wiring that read no config at all would pass an empty tuple, which the
+    shipped entry for this model also is, so the staged config declares a column."""
+    document = _shipped_modeling().model_dump(by_alias=True, exclude_none=True)
+    document["model_settings"][MODEL_NAME]["exog_features"] = ["count_workdays"]
+    save_config(document, staged["compose_configs_dir"] / "modeling.yaml")
+    seen: dict[str, Any] = {}
+
+    def _capture(**kwargs: Any) -> BacktestOutputs:
+        seen["exog_features"] = kwargs["exog_features"]
+        return compute_backtest_outputs(**kwargs)
+
+    monkeypatch.setattr(
+        "fcstnyctaxi.core.train.backtest_impl.compute_backtest_outputs", _capture
+    )
+    backtest_impl(**staged)
+
+    assert seen["exog_features"] == ("count_workdays",)
 
 
 def test_the_manifest_agrees_with_the_files_beside_it(completed_run: Path) -> None:

@@ -27,6 +27,7 @@ from fcstnyctaxi.lib.column_checks import (
     require_matching_feature_run_id,
     trim_to_allowlist,
 )
+from fcstnyctaxi.lib.exog import build_exog_frame
 from fcstnyctaxi.lib.monthly_aggregation import (
     attach_tier_and_weight,
     build_monthly_forecast_vs_actual,
@@ -166,6 +167,7 @@ def compute_backtest_outputs(
     modeling: TrainModelingConfig,
     ts_df: pd.DataFrame,
     calendar_df: pd.DataFrame,
+    exog_features: tuple[str, ...],
 ) -> BacktestOutputs:
     """Run the composable fold loop for one model config.
 
@@ -176,12 +178,14 @@ def compute_backtest_outputs(
         cfg: Composed tsbricks config; its forecast_origins drive the loop.
         modeling: Only `tiering` and `weighting` are read.
         ts_df: The trimmed weekly panel.
-        calendar_df: The trimmed fiscal calendar, also the future exogenous table.
+        calendar_df: The trimmed fiscal calendar, read here as a dimension table.
+        exog_features: Calendar columns this model consumes, from its
+            `model_settings` entry. Empty for a model that takes none.
 
     Raises:
         ValueError: If origins repeat, if the fold count disagrees with the
-            origin/horizon pairs, if a raw forecast row ends with a null origin, or
-            if `monthly_series` keys are not unique.
+            origin/horizon pairs, if a raw forecast row ends with a null origin, if
+            `monthly_series` keys are not unique, or on a failed exogenous join.
 
     Returns:
         BacktestOutputs: The four frames, one per sidecar file.
@@ -210,6 +214,10 @@ def compute_backtest_outputs(
     _require_matching_fold_count(cv_folds, origin_horizon_pairs)
 
     fraction_by_origin = calendar_df.set_index("ds")["origin_month_fraction_elapsed"]
+
+    # Once, not per fold: the spine must carry every series and the frame must span
+    # the dates every fold predicts into. The model's feature set is decided here.
+    exog_df = build_exog_frame(ts_df, calendar_df, exog_features=exog_features)
 
     for fold_idx, (fold_id, splits) in enumerate(cv_folds.items()):
         fold_origin, fold_horizon = origin_horizon_pairs[fold_idx]
@@ -240,7 +248,7 @@ def compute_backtest_outputs(
         _ = apply_transforms(val, fitted_transforms)  # here for consistency
 
         forecast_df, _fitted, _model_obj = invoke_model(
-            train_t, cfg.model, fold_horizon, future_x_df=calendar_df
+            train_t, cfg.model, fold_horizon, future_x_df=exog_df
         )
 
         forecast_original_scale = inverse_transforms(forecast_df, fitted_transforms)
@@ -467,7 +475,11 @@ def backtest_impl(
     )
 
     outputs = compute_backtest_outputs(
-        cfg=cfg, modeling=modeling, ts_df=panel_df, calendar_df=calendar_df
+        cfg=cfg,
+        modeling=modeling,
+        ts_df=panel_df,
+        calendar_df=calendar_df,
+        exog_features=tuple(modeling.model_settings[model_name].exog_features),
     )
 
     # Not sorted(str(...)): 10 sorts before 2, and `2025-4-27` after `2025-05-04`.
