@@ -11,16 +11,14 @@ import yaml
 from mlforecast import MLForecast
 from pandas.testing import assert_frame_equal
 
-from fcstnyctaxi.core.train.compose_configs_impl import (
-    SourcedPath,
-    compose_configs_impl,
-)
+from fcstnyctaxi.core.train.compose_configs_impl import compose_configs_impl
 from fcstnyctaxi.core.train.final_fit_impl import FinalFitSummary, final_fit_impl
 from fcstnyctaxi.lib.config.bindings import train_modeling_bindings
 from fcstnyctaxi.lib.config.composition import compose_config, save_config
 from fcstnyctaxi.lib.exog import build_exog_frame
 from fcstnyctaxi.lib.storage_layout import (
     BUNDLE_MODEL_DIR_NAME,
+    SourcedPath,
     composed_config_filename,
 )
 from fcstnyctaxi.lib.utils import get_project_root_dir

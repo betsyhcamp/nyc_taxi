@@ -2,6 +2,7 @@
 Vertex execution modes cannot drift. Not `lib/io.py`: composing a config is not IO.
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast, get_args
 
@@ -27,6 +28,14 @@ def composed_config_filename(model_name: str) -> str:
 
 BUNDLE_MODEL_DIR_NAME = "model"
 """The bundle's subdirectory the save callable owns, apart from the impl's files."""
+
+
+@dataclass(frozen=True)
+class SourcedPath:
+    """A filepath paired w/ the URI it represents. Can't check both are same object."""
+
+    path: Path
+    uri: str
 
 
 def resolve_run_prefix(

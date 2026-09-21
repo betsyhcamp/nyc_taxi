@@ -16,7 +16,6 @@ from typing import cast
 
 from fcstnyctaxi.core.train.backtest_impl import backtest_impl
 from fcstnyctaxi.core.train.compose_configs_impl import (
-    SourcedPath,
     compose_configs_impl,
     compose_train_static_configs,
 )
@@ -29,7 +28,7 @@ from fcstnyctaxi.lib.io import (
     upload_to_gcs,
 )
 from fcstnyctaxi.lib.run_outputs import resolve_feature_artifacts
-from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
+from fcstnyctaxi.lib.storage_layout import SourcedPath, resolve_run_prefix
 from fcstnyctaxi.lib.utils import (
     generate_run_id,
     get_project_root_dir,

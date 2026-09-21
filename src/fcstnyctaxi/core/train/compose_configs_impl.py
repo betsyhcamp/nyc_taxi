@@ -33,17 +33,9 @@ from fcstnyctaxi.lib.period_utils import (
     generate_origins_for_periods,
     last_complete_actual_month,
 )
-from fcstnyctaxi.lib.storage_layout import composed_config_filename
+from fcstnyctaxi.lib.storage_layout import SourcedPath, composed_config_filename
 from fcstnyctaxi.schemas.config.train import EvaluationPeriods, TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
-
-
-@dataclass(frozen=True)
-class SourcedPath:
-    """A filepath paired w/ the URI it represents. Can't check both are same object."""
-
-    path: Path
-    uri: str
 
 
 @dataclass(frozen=True)

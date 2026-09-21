@@ -9,11 +9,11 @@ from tsbricks.backtesting.schema import BacktestConfig
 
 from fcstnyctaxi.core.train.compose_configs_impl import (
     ComposeConfigsSummary,
-    SourcedPath,
     compose_configs_impl,
     compose_train_static_configs,
 )
 from fcstnyctaxi.lib.config.composition import RUNTIME_SOURCE
+from fcstnyctaxi.lib.storage_layout import SourcedPath
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import TrainInfraConfig, TrainModelingConfig
