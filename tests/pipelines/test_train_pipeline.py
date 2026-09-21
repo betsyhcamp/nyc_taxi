@@ -309,6 +309,40 @@ def test_one_model_in_both_roles_puts_both_edges_on_one_task(tmp_path: Path) -> 
     assert producers == backtest_names
 
 
+def test_the_final_fit_task_fits_the_model_the_role_names(tmp_path: Path) -> None:
+    """Test that final_fit fits the challenger: the benchmark would register cleanly."""
+    tasks = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)["root"]["dag"]["tasks"]
+
+    assert _model_names_of({"final-fit": tasks["final-fit"]}) == [
+        SYNTHETIC_MODEL_ROLES.challenger
+    ]
+
+
+def test_the_final_fit_task_runs_after_scoring_without_reading_it(
+    tmp_path: Path,
+) -> None:
+    """Test the ordering edge, which nothing else in the template records, and that
+    it stays ordering: a data edge would draw lineage where no bytes flow."""
+    task = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)["root"]["dag"]["tasks"][
+        "final-fit"
+    ]
+
+    assert "evaluate" in task["dependentTasks"]
+    producers = {
+        artifact["taskOutputArtifact"]["producerTask"]
+        for artifact in task["inputs"]["artifacts"].values()
+    }
+    assert "evaluate" not in producers
+
+
+def test_the_final_fit_task_is_display_named_for_its_model(tmp_path: Path) -> None:
+    """Test that the operator sees which model the bundle holds."""
+    tasks = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)["root"]["dag"]["tasks"]
+
+    expected = f"final_fit-{SYNTHETIC_MODEL_ROLES.challenger}"
+    assert tasks["final-fit"]["taskInfo"]["name"] == expected
+
+
 def test_each_importer_takes_its_uri_as_a_runtime_parameter(tmp_path: Path) -> None:
     """Test that both artifact URIs stay runtime parameters, not compile-time values.
 
