@@ -67,13 +67,13 @@ def get_project_root_dir(start_path: Path | None = None) -> Path:
 def generate_run_id() -> str:
     """Return a UTC microsecond-precision timestamp suitable as a per-run identifier.
 
-    Format: YYYYMMDDTHHMMSSffffffZ (e.g. 20260502T143022123456Z).
+    Format: YYYYMMDDtHHMMSSffffffz (e.g. 20260502t143022123456z).
     Lexicographic sort matches chronological order; microsecond precision
-    avoiding collisions.
+    avoiding collisions. Lowercase, so it passes `require_label_safe_run_id`.
 
     Interim implementation pending the architecture lineage/run_id decision.
     """
-    return datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    return datetime.now(UTC).strftime("%Y%m%dt%H%M%S%fz")
 
 
 def require_path_safe_run_id(run_id: str, flag_name: str) -> None:
@@ -97,6 +97,29 @@ def require_path_safe_run_id(run_id: str, flag_name: str) -> None:
         raise ValueError(
             f"{flag_name} {run_id!r} must start with a letter or digit and "
             "contain only letters, digits, '.', '_' or '-'."
+        )
+
+
+def require_label_safe_run_id(run_id: str, flag_name: str) -> None:
+    """Reject a Training run id that is not a legal GCP label value for its model.
+
+    Stricter than `require_path_safe_run_id`, which it replaces. Not for a Feature
+    run id, whose format is not this repo's.
+
+    Args:
+        run_id (str): The identifier to check.
+        flag_name (str): The CLI flag it arrived on, named in the error.
+
+    Raises:
+        ValueError: run_id does not match `[a-z0-9][a-z0-9_-]*` or exceeds 64
+            characters.
+    """
+    # The SDK does not enforce this; the service does, at the pipeline's last task.
+    # Lowercasing there instead would collide ids differing only in case.
+    if len(run_id) > 64 or not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", run_id):
+        raise ValueError(
+            f"{flag_name} {run_id!r} must match [a-z0-9][a-z0-9_-]*, at most 64 "
+            "characters."
         )
 
 

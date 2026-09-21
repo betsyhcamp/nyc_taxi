@@ -123,7 +123,7 @@ Component completed.
     }
 ```
 
-`<run_id>` is a sortable UTC microsecond timestamp (e.g. `20260519T053021093666Z`).
+`<run_id>` is a sortable UTC microsecond timestamp (e.g. `20260519t053021093666z`).
 
 **Step 5 — Confirm GCS artifacts:**
 

@@ -23,13 +23,13 @@ from fcstnyctaxi.core.train.evaluate_impl import EvaluateSummary
 from fcstnyctaxi.core.train.final_fit_impl import FinalFitSummary
 from fcstnyctaxi.lib import run_outputs
 from fcstnyctaxi.lib.storage_layout import BUNDLE_MODEL_DIR_NAME, resolve_run_prefix
-from fcstnyctaxi.lib.utils import get_project_root_dir
+from fcstnyctaxi.lib.utils import get_project_root_dir, require_path_safe_run_id
 from fcstnyctaxi.pipelines import local_train_pipeline
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.run_outputs import FeatureArtifacts, FeatureRunOutputs
 
 ENV = "dev"
-RUN_ID = "t-20260913T000000000000Z"
+RUN_ID = "t-20260913t000000000000z"
 FEATURE_RUN_ID = "f-20260913T000000000000Z"
 PREVIOUS_OUTPUT = "the previous attempt's output"
 # A step segment Training never constructs, so an assertion on these proves the
@@ -202,6 +202,39 @@ def test_a_malformed_train_config_raises_before_the_resolve_and_the_clear(
 
     assert rmtree.call_count == 0
     assert (out_dir / "run_identity.json").read_text() == PREVIOUS_OUTPUT
+
+
+def test_a_run_id_safe_as_a_path_but_not_as_a_label_is_refused(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+) -> None:
+    """Test the label charset is refused here, not by Vertex at the last task."""
+    run_id = RUN_ID.upper()
+    # Self-check: only the stricter guard can refuse it.
+    require_path_safe_run_id(run_id, "--run-id")
+    # Keeps a run with the guard removed off the network.
+    mocker.patch.object(
+        run_outputs, "read_text_from_gcs", side_effect=FileNotFoundError
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "local_train_pipeline",
+            "--env",
+            ENV,
+            "--feature-run-id",
+            FEATURE_RUN_ID,
+            "--run-id",
+            run_id,
+            "--scratch-dir",
+            str(tmp_path / "scratch"),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="--run-id"):
+        local_train_pipeline.main()
 
 
 def test_each_backtest_is_published_before_the_next_one_runs(

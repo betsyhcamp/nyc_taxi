@@ -33,6 +33,7 @@ from fcstnyctaxi.lib.utils import (
     generate_run_id,
     get_project_root_dir,
     require_git_hash,
+    require_label_safe_run_id,
     require_path_safe_run_id,
 )
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
@@ -161,12 +162,13 @@ def main() -> None:
     follows scoring and runs only when scoring did.
 
     Raises:
-        ValueError: If either run id is not path-safe, if exactly one URI override
-            was given, if the Feature run published no manifest, if an input URI
-            cannot be mirrored to a distinct local path, if `--env` has no
-            `environments/<env>.yaml`, if `--model` names no model this run
-            composed, on a failed lineage check, or on any composition, backtest,
-            evaluation or final fit failure.
+        ValueError: If `--feature-run-id` is not path-safe or `--run-id` not
+            label-safe, if exactly one URI override was given, if the Feature
+            run published no manifest, if an input URI cannot be mirrored to a
+            distinct local path, if `--env` has no `environments/<env>.yaml`, if
+            `--model` names no model this run composed, on a failed lineage
+            check, or on any composition, backtest, evaluation or final fit
+            failure.
         RuntimeError: If the git hash cannot be determined, since a run whose
             commit is unknown cannot be reproduced from its own record.
         ValidationError: If an identity field or an override URI is malformed.
@@ -179,10 +181,11 @@ def main() -> None:
     )
     args = _parse_args()
 
-    # Only --run-id becomes a path; the other is checked for one vocabulary.
+    # Only --run-id becomes a path and a registry label. The other is Feature's, so
+    # it is held to the path vocabulary alone.
     run_id = generate_run_id() if args.run_id is None else args.run_id
     require_path_safe_run_id(args.feature_run_id, "--feature-run-id")
-    require_path_safe_run_id(run_id, "--run-id")
+    require_label_safe_run_id(run_id, "--run-id")
 
     project_root = get_project_root_dir()
     config_dir = project_root / "config"
