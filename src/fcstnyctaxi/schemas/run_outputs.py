@@ -1,16 +1,18 @@
-"""The Feature-to-Training contract: `run_outputs.json`, and the columns it promises.
+"""Each slice's `run_outputs.json`, Feature's for Training and Training's for
+Inference, and the columns Feature promises.
 
-No `extra="forbid"`, unlike `run_identity.py`: an added field in a third party's
-record must not break a consumer that never reads it. `frozen=True` carries over,
-since a `FeatureArtifacts` becomes provenance.
+Training's models forbid extras, since this repo writes and reads them; Feature's
+don't, since a third party's added field must not break a reader that ignores it.
+All are frozen, as provenance.
 
-The column tuples are a projection, not a validation: an allowlist, so a new metadata
-column on a consultant-owned artifact cannot become a model input. Feature owns shape.
+The column tuples are an allowlist, not a validation: a new column on a
+consultant-owned artifact cannot become a model input. Feature owns shape.
 """
 
+from datetime import date
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 PANEL_REQUIRED_COLUMNS: tuple[str, ...] = ("unique_id", "ds", "y")
 """Everything the panel must contain; required and allowed are one list."""
@@ -68,3 +70,45 @@ class FeatureRunOutputs(BaseModel):
     git_hash: Any = None
     completed_at: Any = None
     panel: Any = None
+
+
+class RegisteredModel(BaseModel):
+    """The registered version, and the bundle it was uploaded from.
+
+    ``model_tag`` is ``Model.versioned_resource_name`` verbatim: ``resource_name``
+    carries no version and would resolve to whatever ``default`` points at. The slot
+    after ``@`` takes a version or an alias, so ``@champion`` fits unchanged.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    model_tag: str = Field(
+        pattern=r"^projects/[^/]+/locations/[^/]+/models/[^/@]+@[^/@]+$"
+    )
+    bundle_uri: str = Field(pattern=r"^gs://")
+
+
+class TrainingData(BaseModel):
+    """Copied verbatim from ``final_fit_manifest.json``'s block of the same name."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    train_end_ds: date
+    n_series: int
+    n_obs: int
+
+
+class TrainRunOutputs(BaseModel):
+    """At Training's run root. Presence marks the pipeline finished, and
+    ``published.model_tag`` is what Inference passes to ``aiplatform.Model()``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    train_run_id: str = Field(min_length=1)
+    published: RegisteredModel
+    feature_run_id: str = Field(min_length=1)
+    env: str = Field(min_length=1)
+    schema_version: str = Field(min_length=1)
+    git_hash: str = Field(min_length=1)
+    completed_at: AwareDatetime
+    training_data: TrainingData
