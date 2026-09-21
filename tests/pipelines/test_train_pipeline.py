@@ -235,8 +235,8 @@ def test_every_panel_and_calendar_reader_shares_one_importer(tmp_path: Path) -> 
             ]
             for name, task in _tasks_reading_artifact(ir, artifact_name).items()
         }
-        # Non-vacuity: compose and every backtest task must be among the readers.
-        assert backtest_names | {"compose-configs"} <= set(producer_of)
+        # Non-vacuity: every task known to read it, so a renamed input cannot drop one.
+        assert backtest_names | {"compose-configs", "final-fit"} <= set(producer_of)
         assert len(set(producer_of.values())) == 1
 
 
@@ -246,8 +246,8 @@ def test_every_task_taking_a_run_prefix_takes_it_from_compose(tmp_path: Path) ->
     ir = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)
     takers = _tasks_taking_parameter(ir, "run_prefix")
 
-    # Non-vacuity, naming evaluate so a selection narrowed to backtests fails.
-    assert set(_backtest_tasks(ir)) | {"evaluate"} <= set(takers)
+    # Non-vacuity, naming every non-backtest reader: a renamed input would drop one.
+    assert set(_backtest_tasks(ir)) | {"evaluate", "final-fit"} <= set(takers)
     for task in takers.values():
         source = task["inputs"]["parameters"]["run_prefix"]["taskOutputParameter"]
         assert source["producerTask"] == "compose-configs"
@@ -262,8 +262,8 @@ def test_every_task_reading_composed_configs_reads_what_compose_wrote(
     readers = _tasks_reading_artifact(ir, "composed_configs")
 
     # KFP accepts a Dataset for Input[Artifact], so a misrouting compiles silently.
-    # Non-vacuity, naming evaluate so a selection narrowed to backtests fails.
-    assert set(_backtest_tasks(ir)) | {"evaluate"} <= set(readers)
+    # Non-vacuity, naming every non-backtest reader: a renamed input would drop one.
+    assert set(_backtest_tasks(ir)) | {"evaluate", "final-fit"} <= set(readers)
     for task in readers.values():
         source = task["inputs"]["artifacts"]["composed_configs"]["taskOutputArtifact"]
         assert source["producerTask"] == "compose-configs"

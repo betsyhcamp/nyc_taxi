@@ -34,8 +34,7 @@ CALENDAR_URI = "gs://sentinel-bucket/dev/feature/f-sentinel/calendar.parquet"
 # hardcoded string here would restate it rather than check it.
 SIDECAR_URI = f"{RUN_PREFIX}backtest/{MODEL_NAME}/"
 
-# Real, not a Mock: the wrapper feeds as_dict() to metadata.update(), which raises
-# on a Mock for a reason unrelated to anything under test.
+# Real, not a Mock: a MagicMock unpacks to {}, so the metadata loop checks nothing.
 SUMMARY = BacktestSummary(
     n_origins=3,
     first_origin="2025-04-20",
