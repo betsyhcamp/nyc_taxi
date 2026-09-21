@@ -30,9 +30,17 @@ forbidding the opposite direction.
 
 
 class ModelRegistry(BaseModel):
+    """Prefixes of the Vertex Model's two names; ``infra.yaml`` says why two.
+
+    The pattern is stricter than ``model_id``'s rule: every composed id is legal,
+    with no ``--`` seam. Lengths live in ``lib/registry_ids.py``, as no one model
+    sees both halves.
+    """
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    display_name: str = Field(..., min_length=1)
+    display_name_prefix: str = Field(..., min_length=1)
+    model_id_prefix: str = Field(..., pattern=r"^[a-z]([a-z0-9-]*[a-z0-9])?$")
 
 
 class TrainInfraConfig(BaseModel):

@@ -85,7 +85,10 @@ def test_train_infra_validates() -> None:
     config = TrainInfraConfig(**_load_config_file(CONFIG_DIR / "train/infra.yaml"))
 
     assert config.display_name_prefix == "fcst-train-pipeline"
-    assert config.model_registry.display_name == "fcst-monthly-revenue"
+    assert config.model_registry.display_name_prefix == "fcst-monthly-revenue"
+    # Pinned because an edit forks the registry: the next run creates a new Model
+    # resource rather than a version, and nothing raises.
+    assert config.model_registry.model_id_prefix == "fcst-monthly-revenue"
 
 
 def test_train_modeling_validates() -> None:
