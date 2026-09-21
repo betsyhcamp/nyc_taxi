@@ -44,6 +44,8 @@ train = [
     "mlforecast==1.1.0",
     "lightgbm>=4.7.0",
     "statsforecast>=2.0.1",
+    # register_model calls the Model Registry from inside the image
+    "google-cloud-aiplatform>=1.165.1,<2", # 1.x verified; 2.x breaks only agent tooling
 ]
 
 dev = [
