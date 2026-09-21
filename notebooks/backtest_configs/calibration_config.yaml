@@ -1,5 +1,5 @@
 model: notebooks/backtest_configs/model_weekly_lightgbm.yaml
-truncation_adapter: fcstnyctaxi.models.lightgbm_weekly._set_lightgbm_iteration
+truncation_adapter: experimental_models.lightgbm_weekly_dev._set_lightgbm_iteration
 
 calibration_periods:
   start_months: # calibration-only fiscal months, entirely before the backtest window

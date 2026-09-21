@@ -1,10 +1,29 @@
 # Experimental models
 
-Models used only for notebook experimentation. The rule that puts a model here
-rather than in `src/fcstnyctaxi/models/`, stated once and only here: models the
-pipeline runs live in `fcstnyctaxi/models/` and ship in the image, models used
-only for experimentation live here, and a model moves when it enters
-`model_roles`.
+Callables used only for notebook experimentation. The rule that puts one here rather
+than in `src/fcstnyctaxi/models/`, stated once and only here: **the rule is about
+callables, not models.** A model's pipeline callable lives in `fcstnyctaxi/models/`
+and ships in the image; callables serving development work live here. A model still
+moves when it enters `model_roles`, and lightgbm holding one callable of each kind is
+the normal case for a model under active development, not an exception.
+
+## The two callable contracts
+
+A callable cannot tell the two frames apart, so one module cannot serve both.
+
+| contract | `future_x_df` is | who selects columns |
+| --- | --- | --- |
+| development, here | the raw `ds`-keyed fiscal calendar | the callable, from its own constant |
+| pipeline, `fcstnyctaxi/models/` | a frame keyed `["unique_id", "ds"]`, already trimmed | the impl, from `model_settings.exog_features` |
+
+tsbricks permits the split: `invoke_model` passes two positional arguments and the
+keyword `future_x_df`, and never inspects the frame. That keyword is the one thing
+both sides share, so renaming it on either side would hide the divergence.
+
+`lightgbm_weekly_dev.py` is what the split cost: the notebooks resolve their callables
+by dotted string and must keep working against a raw calendar, so the development
+halves were copied here and the configs repointed. `src/fcstnyctaxi/lib/calibration.py`
+is written to this contract and has no consumer under `src/`.
 
 ## "Experimental" is deployment status, not code quality
 

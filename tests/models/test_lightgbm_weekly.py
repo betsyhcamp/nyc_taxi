@@ -1,27 +1,19 @@
 import numpy as np
 import pandas as pd
 import pytest
-from pandas.testing import assert_frame_equal
 
-from fcstnyctaxi.models.lightgbm_weekly import (
-    _set_lightgbm_iteration,
-    lightgbm_weekly,
-    lightgbm_weekly_predict,
-)
+from fcstnyctaxi.models.lightgbm_weekly import lightgbm_weekly
 
 # ================================================
-# Repeated-predict statelessness
+# The pipeline callable contract
 #
-# The whole fit-once-then-truncate calibration sweep rests on one assumption:
-# truncating a fitted model to k rounds and predicting does NOT mutate state
-# that contaminates a later predict at a different k. If it did, candidate k's
-# would interfere and the calibration curve would be garbage.
+# The fixture is a real LightGBM fit, not a fake: it is small enough to be fast and
+# carries enough calendar-driven signal that the calendar features change the
+# forecast, which is what makes an assertion about them meaningful.
 #
-# The fixture below is a real LightGBM fit (not a fake), deliberately given
-# enough calendar-driven signal — and small enough min_data_in_leaf — that the
-# model builds trees whose predictions genuinely change as rounds accumulate.
-# That makes the "k1 vs k2 differ" guard meaningful, so the "k1 == k1-again"
-# equality can't pass vacuously.
+# The truncation sweep that used to live here moved to test_lightgbm_weekly_dev.py
+# with _set_lightgbm_iteration, whose only callers are the calibration config and
+# that test.
 # ================================================
 
 FREQ = "W-SUN"
@@ -53,7 +45,7 @@ def calendar_df() -> pd.DataFrame:
 def train_df(calendar_df: pd.DataFrame) -> pd.DataFrame:
     """Two series over the first _N_TRAIN_WEEKS weeks. y is calendar-driven
     (plus mild noise) rather than a pure trend, so the signal lives in features
-    that are known for the future weeks too — which lets more boosting rounds
+    that are known for the future weeks too, which lets more boosting rounds
     genuinely change the forecast rather than a tree model flat-lining on
     out-of-range extrapolation."""
     cal = calendar_df.iloc[:_N_TRAIN_WEEKS]
@@ -86,35 +78,3 @@ def _fit_once(train_df: pd.DataFrame, calendar_df: pd.DataFrame):
         n_estimators=60,
     )
     return mlfcst
-
-
-def test_repeated_predict_is_stateless_across_truncation(
-    train_df: pd.DataFrame, calendar_df: pd.DataFrame
-) -> None:
-    """Fit once, then truncate-and-predict at k1, k2, and k1 again. The first
-    and third forecasts (same k) must be identical — repeated predicts don't
-    contaminate each other — and the k1/k2 forecasts must differ, proving
-    truncation actually changes the output so the equality check isn't vacuous.
-    """
-    mlfcst = _fit_once(train_df, calendar_df)
-    k1, k2 = 5, 50
-
-    _set_lightgbm_iteration(mlfcst, k1)
-    f1 = lightgbm_weekly_predict(mlfcst, _HORIZON, future_x_df=calendar_df)
-
-    _set_lightgbm_iteration(mlfcst, k2)
-    f2 = lightgbm_weekly_predict(mlfcst, _HORIZON, future_x_df=calendar_df)
-
-    _set_lightgbm_iteration(mlfcst, k1)
-    f3 = lightgbm_weekly_predict(mlfcst, _HORIZON, future_x_df=calendar_df)
-
-    # Guard against a vacuous test: truncation must actually change the forecast.
-    max_abs_diff = np.abs(f1["ypred"].to_numpy() - f2["ypred"].to_numpy()).max()
-    assert max_abs_diff > 1e-6, (
-        "k1 and k2 forecasts are identical — truncation had no effect, so the "
-        "statelessness assertion below would pass erroneously. Strengthen the "
-        "fixture's signal or widen k1/k2."
-    )
-
-    # The load-bearing property: predict at the same k is repeatable / stateless.
-    assert_frame_equal(f1, f3)

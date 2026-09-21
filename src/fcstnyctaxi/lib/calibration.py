@@ -1,3 +1,11 @@
+"""Offline calibration of a GBDT model's boosting-round count, driven from a notebook.
+
+Written to the **development** callable contract `experimental_models/README.md`
+states: the callables it resolves take `future_x_df` as the raw `ds`-keyed calendar.
+Pointing a config here at a pipeline callable is a fault neither this module nor
+`invoke_model` can detect. No consumer under `src/` reads this module.
+"""
+
 from collections.abc import Callable, Sequence
 from typing import Any, cast
 

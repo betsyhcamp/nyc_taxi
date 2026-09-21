@@ -1,3 +1,11 @@
+"""LightGBM callables for notebook work: calibration, and the weekly backtest.
+
+These carry the **development** contract `experimental_models/README.md` states:
+`future_x_df` is the raw `ds`-keyed calendar and the callable selects its own columns.
+A callable cannot tell that frame from the pipeline's trimmed one, so these are a copy
+of `fcstnyctaxi/models/lightgbm_weekly.py` rather than an import.
+"""
+
 from typing import cast
 
 import lightgbm as lgb
@@ -19,7 +27,7 @@ _CALENDAR_FEATURES = [
 ]
 
 
-def lightgbm_weekly(
+def lightgbm_weekly_dev(
     train_df: pd.DataFrame,
     horizon: int,
     freq: str,
@@ -34,7 +42,8 @@ def lightgbm_weekly(
     **kwargs,
 ) -> tuple[pd.DataFrame, pd.DataFrame, MLForecast]:
     """Produce a recursive LightGBM forecast via MLForecast, given historical
-    data, horizon, freq. future_x_df=None skips the calendar merge and
+    data, horizon, freq. future_x_df is the raw ds-keyed calendar, from which
+    _CALENDAR_FEATURES is selected; None skips the calendar merge and
     X_df-based prediction. **kwargs: Accepted for tsbricks compatibility;
     ignored.
     Return forecast, fitted values, model
@@ -70,7 +79,7 @@ def lightgbm_weekly(
 
     mlfcst.fit(train_df, static_features=[], fitted=True)
 
-    forecast_df = lightgbm_weekly_predict(
+    forecast_df = lightgbm_weekly_dev_predict(
         mlfcst=mlfcst, horizon=horizon, future_x_df=future_x_df
     )
 
@@ -82,14 +91,15 @@ def lightgbm_weekly(
     return forecast_df, fitted_df, mlfcst
 
 
-def lightgbm_weekly_predict(
+def lightgbm_weekly_dev_predict(
     mlfcst: MLForecast, horizon: int, future_x_df: pd.DataFrame | None = None
 ) -> pd.DataFrame:
     """Predict from an already fitted MLForecast model, without refitting.
-    Derives unique_ids/last_ds from mlfcst.ts rather than a train_df
-    parameter, so this works identically whether mlfcst came from a fresh
-    .fit() (calibration, backtest) or MLForecast.load() (a production predict
-     only pipeline)."""
+    Builds the horizon grid itself from the ds-keyed future_x_df, which is what
+    the development contract asks of a predict callable. Derives
+    unique_ids/last_ds from mlfcst.ts rather than a train_df parameter, so this
+    works identically whether mlfcst came from a fresh .fit() or
+    MLForecast.load()."""
     if future_x_df is not None:
         future_calendar_df = _build_future_calendar_df(
             unique_ids=np.asarray(mlfcst.ts.uids),
@@ -105,3 +115,10 @@ def lightgbm_weekly_predict(
     return forecast_df.rename(columns={"LGBMRegressor": "ypred"})[  # type: ignore
         ["unique_id", "ds", "ypred"]
     ]
+
+
+def _set_lightgbm_iteration(mlfcst: MLForecast, k: int) -> None:
+    """Truncate a fitted MLForecast's LightGBM model to k boosting rounds
+    for prediction, without retraining."""
+
+    mlfcst.models_["LGBMRegressor"].booster_.best_iteration = k  # type: ignore[union-attr]

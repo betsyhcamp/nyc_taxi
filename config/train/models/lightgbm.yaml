@@ -1,13 +1,16 @@
 # BacktestConfig, third layer. Allowed keys: {model}.
 #
-# Replicates notebooks/backtest_configs/model_weekly_lightgbm.yaml exactly: the
-# migration gate runs this model on both sides, so any difference means the two
-# sides fit different models and the comparison proves nothing. n_estimators is
-# 1050, not the 1025 the calibration note records as adopted; the config is what
-# ran, so the config is authoritative for reproduction.
+# The callables here are the pipeline's. notebooks/backtest_configs/model_weekly_lightgbm.yaml
+# deliberately names different ones: a callable cannot tell a trimmed exogenous frame
+# from a raw calendar, so one module cannot serve both contracts. Repointing these back
+# re-merges them silently. experimental_models/README.md states the split; an earlier
+# header here claimed the two files replicated each other.
+#
+# n_estimators is 1050, not the 1025 the calibration note records as adopted; the
+# config is what ran, so the config is authoritative for reproduction.
 #
 # The only model declaring predict_callable, which tsbricks resolves through
-# resolve_predict rather than resolve_model.
+# resolve_predict rather than resolve_model. No Training impl reads it yet.
 model:
   fit_predict_callable: fcstnyctaxi.models.lightgbm_weekly.lightgbm_weekly
   predict_callable: fcstnyctaxi.models.lightgbm_weekly.lightgbm_weekly_predict
