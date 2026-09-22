@@ -22,7 +22,7 @@ model_roles:
   # Values expand to the model set, deduplicated in declaration order. Each name
   # must have a config/train/models/<name>.yaml.
   benchmark: naive
-  challenger: lightgbm
+  challenger: xgboost
 
 # Which columns each model consumes, and the callables final_fit resolves. Here
 # rather than in model.hyperparameters, which is dict[str, Any] and so hides a
