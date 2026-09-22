@@ -15,7 +15,10 @@ from fcstnyctaxi.lib.run_outputs import (
     read_feature_run_outputs,
     resolve_feature_artifacts,
 )
-from fcstnyctaxi.lib.storage_layout import resolve_run_outputs_uri
+from fcstnyctaxi.lib.storage_layout import (
+    resolve_run_outputs_uri,
+    resolve_run_prefix,
+)
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.run_outputs import FeatureRunOutputs
 from scripts import publish_feature_stand_in
@@ -48,7 +51,8 @@ def _manifest(**overrides: object) -> str:
 
 @pytest.fixture
 def source_frames(mocker: MockerFixture) -> None:
-    """The two artifacts the stand-in copies, standing in for the real parquet."""
+    """The three artifacts the stand-in copies. Only the panel is read: the other
+    two are copied whole, so neither's columns reach an assertion."""
     panel = pd.DataFrame(
         {
             "unique_id": pd.Series(["a", "a", "b"], dtype="string"),
@@ -62,17 +66,15 @@ def source_frames(mocker: MockerFixture) -> None:
         }
     )
     calendar = pd.DataFrame({"fiscal_year_month": [202501, 202502]})
+    exog = pd.DataFrame({"week_sin": [0.0, 1.0]})
     mocker.patch.object(
-        publish_feature_stand_in.pd, "read_parquet", side_effect=[panel, calendar]
+        publish_feature_stand_in.pd,
+        "read_parquet",
+        side_effect=[panel, calendar, exog],
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=ValidationError,
-    reason="the stand-in cannot publish until it writes the exogenous artifact",
-)
-def test_the_manifest_lands_at_the_run_root_after_both_parquet_writes(
+def test_the_manifest_lands_at_the_run_root_after_every_parquet_write(
     source_frames: None, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Written first it would be a promise; under the step, it needs the step name."""
@@ -96,24 +98,46 @@ def test_the_manifest_lands_at_the_run_root_after_both_parquet_writes(
 
     publish_feature_stand_in.main()
 
-    assert [call[0] for call in writes.mock_calls] == ["parquet", "parquet", "manifest"]
+    calls = writes.mock_calls
+    manifest_index = next(i for i, call in enumerate(calls) if call[0] == "manifest")
+    written = {call.args[0] for call in calls[:manifest_index] if call[0] == "parquet"}
 
-    text, uri = writes.mock_calls[-1].args
+    text, uri = calls[manifest_index].args
     # resolve_run_prefix is not patched, so this is real path construction.
     assert uri == resolve_run_outputs_uri(CONFIG_DIR, ENV, "feature", FEATURE_RUN_ID)
     assert f"/{publish_feature_stand_in._STEP}/" not in uri
 
     outputs = FeatureRunOutputs.model_validate_json(text)
+    assert set(outputs.published.model_dump().values()) <= written
     assert outputs.feature_run_id == FEATURE_RUN_ID
     assert outputs.env == ENV
     assert Path(uri).parent.name == FEATURE_RUN_ID
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=ValidationError,
-    reason="the stand-in cannot publish until it writes the exogenous artifact",
-)
+def test_the_manifest_names_the_exogenous_artifact_at_its_run_scoped_path(
+    source_frames: None, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A URI under another run, or the calendar's, publishes the wrong bytes under
+    the right name."""
+    mocker.patch.object(pd.DataFrame, "to_parquet")
+    written = mocker.patch.object(publish_feature_stand_in, "write_text_to_gcs")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["publish_feature_stand_in", "--env", ENV, "--feature-run-id", FEATURE_RUN_ID],
+    )
+
+    publish_feature_stand_in.main()
+
+    # resolve_run_prefix is not patched, so this is real path construction.
+    run_prefix = resolve_run_prefix(CONFIG_DIR, ENV, "feature", FEATURE_RUN_ID)
+    outputs = FeatureRunOutputs.model_validate_json(written.call_args.args[0])
+    assert outputs.published.exogenous_uri == (
+        f"{run_prefix}{publish_feature_stand_in._STEP}/"
+        f"{publish_feature_stand_in._EXOG_FILENAME}"
+    )
+
+
 def test_what_the_stand_in_writes_reads_back_with_no_version_warning(
     source_frames: None,
     mocker: MockerFixture,
