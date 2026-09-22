@@ -13,6 +13,7 @@ import yaml
 from google.api_core.exceptions import AlreadyExists, NotFound
 from google.cloud.aiplatform.models import VersionInfo
 from pytest_mock import MockerFixture
+from stand_in_model import STAND_IN_MODEL_NAME, stand_in_config_dir
 
 from fcstnyctaxi.core.train import register_model_impl as impl_module
 from fcstnyctaxi.core.train.compose_configs_impl import (
@@ -24,7 +25,6 @@ from fcstnyctaxi.core.train.register_model_impl import (
     RegisterModelSummary,
     register_model_impl,
 )
-from fcstnyctaxi.lib.config.bindings import resolve_model_roles
 from fcstnyctaxi.lib.registry_ids import compose_display_name, compose_model_id
 from fcstnyctaxi.lib.storage_layout import RUN_OUTPUTS_FILENAME, SourcedPath
 from fcstnyctaxi.lib.utils import get_project_root_dir
@@ -42,7 +42,7 @@ FEATURE_RUN_ID = "f-20260920T000000000000Z"
 GIT_HASH = "a" * 40
 OTHER_GIT_HASH = "b" * 40
 SERVING_IMAGE = "us-central1-docker.pkg.dev/p/r/train@sha256:" + "c" * 64
-MODEL_NAME = resolve_model_roles(CONFIG_DIR).challenger
+MODEL_NAME = STAND_IN_MODEL_NAME
 # Vertex names resources by project number, never by the project id init was given.
 PROJECT_NUMBER = "123456789"
 
@@ -169,13 +169,13 @@ def _compose(
     run_id: str,
     git_hash: str,
     *,
-    config_dir: Path = CONFIG_DIR,
+    config_dir: Path | None = None,
     env: str = ENV,
 ) -> Path:
     """Run compose_configs for one run under root, returning its run root."""
     panel, calendar = inputs
     compose_configs_impl(
-        config_dir=config_dir,
+        config_dir=config_dir or stand_in_config_dir(root),
         env=env,
         panel=panel,
         calendar=calendar,
@@ -200,10 +200,8 @@ def _fit(inputs: tuple[SourcedPath, SourcedPath], run_dir: Path) -> None:
 
 
 def _copied_config_dir(tmp_path: Path) -> Path:
-    """The committed tree under tmp_path, for a test to edit one fragment of."""
-    config_dir = tmp_path / "config"
-    shutil.copytree(CONFIG_DIR, config_dir)
-    return config_dir
+    """The stand-in model's tree under tmp_path, for a test to edit one fragment of."""
+    return stand_in_config_dir(tmp_path)
 
 
 def _stage(

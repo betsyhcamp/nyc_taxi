@@ -8,8 +8,14 @@ from typing import Any, cast
 import pandas as pd
 import pytest
 import yaml
-from mlforecast import MLForecast
 from pandas.testing import assert_frame_equal
+from stand_in_model import (
+    STAND_IN_EXOG_FEATURES,
+    STAND_IN_MODEL_NAME,
+    stand_in_config_dir,
+    stand_in_fit,
+    stand_in_load,
+)
 
 from fcstnyctaxi.core.train.compose_configs_impl import compose_configs_impl
 from fcstnyctaxi.core.train.final_fit_impl import FinalFitSummary, final_fit_impl
@@ -22,33 +28,26 @@ from fcstnyctaxi.lib.storage_layout import (
     composed_config_filename,
 )
 from fcstnyctaxi.lib.utils import get_project_root_dir
-from fcstnyctaxi.models.lightgbm_weekly import (
-    lightgbm_weekly_fit,
-    lightgbm_weekly_predict,
-)
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.run_outputs import TrainingData
 
 CONFIG_DIR = get_project_root_dir() / "config"
 FEATURE_RUN_ID = "f-2026-09-21"
 TRAIN_RUN_ID = "t-2026-09-21"
-MODEL_NAME = "lightgbm"
+MODEL_NAME = STAND_IN_MODEL_NAME
 _MARKER = "final_fit_manifest.json"
 
 # ================================================
 # Fixtures
 #
 # conftest.py's panel and calendar, staged by running compose_configs on them, so every
-# file the impl reads is one the upstream step really emits. Tests then edit that
-# output only where they need a state it would not produce on the shipped config.
+# file the impl reads is one the upstream step really emits. The tree is the stand-in
+# model's, so no modeling package is needed; tests then edit that output only where they
+# need a state it would not produce.
 # ================================================
 
-# Weeks the calendar extends past the staged panel, so a reloaded bundle can predict.
+# Weeks the calendar extends past the staged panel, as a real calendar may.
 _HORIZON = 2
-
-# The shipped values fit one tree with no split on this panel, so a reload would match
-# a constant; lag 52 also outlasts the late series, which the fit then drops.
-_FIXTURE_HYPERPARAMETERS = {"lags": [1], "min_data_in_leaf": 5, "n_estimators": 60}
 
 _BOXCOX = {
     "name": "boxcox",
@@ -96,6 +95,7 @@ def _stage(
     calendar: pd.DataFrame,
     *,
     transforms: list[dict] | None = None,
+    config_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Run compose_configs on stamped frames and return final_fit_impl's arguments.
 
@@ -114,7 +114,7 @@ def _stage(
 
     step_dir = root / TRAIN_RUN_ID / "compose_configs"
     compose_configs_impl(
-        config_dir=CONFIG_DIR,
+        config_dir=config_dir or stand_in_config_dir(root),
         env="dev",
         panel=SourcedPath(path=panel_path, uri="gs://bucket/time_series.parquet"),
         calendar=SourcedPath(
@@ -126,12 +126,11 @@ def _stage(
         out_dir=step_dir,
     )
 
-    def _fixture_sized(document: dict) -> None:
-        document["model"]["hyperparameters"].update(_FIXTURE_HYPERPARAMETERS)
-        if transforms is not None:
-            document["transforms"] = transforms
+    def _with_transforms(document: dict) -> None:
+        document["transforms"] = transforms
 
-    _edit_yaml(step_dir / composed_config_filename(MODEL_NAME), _fixture_sized)
+    if transforms is not None:
+        _edit_yaml(step_dir / composed_config_filename(MODEL_NAME), _with_transforms)
     return {
         "panel_path": panel_path,
         "calendar_path": calendar_path,
@@ -171,12 +170,10 @@ def test_the_fixture_is_ragged_integer_keyed_and_leaves_a_horizon(
     panel: pd.DataFrame, full_calendar: pd.DataFrame
 ) -> None:
     """The shapes later tests lean on, so a broken fixture reads as one."""
-    exog_features = _shipped_modeling().model_settings[MODEL_NAME].exog_features
-
     assert pd.api.types.is_integer_dtype(panel["unique_id"])
     assert panel.groupby("unique_id")["ds"].min().nunique() > 1
     assert (full_calendar["ds"] > panel["ds"].max()).sum() == _HORIZON
-    assert set(full_calendar.columns) - {"ds", *exog_features}
+    assert set(full_calendar.columns) - {"ds", *STAND_IN_EXOG_FEATURES}
 
 
 # ================================================
@@ -236,8 +233,11 @@ def test_a_configured_transform_is_refused_before_the_fit(
     assert not (staged["out_dir"] / BUNDLE_MODEL_DIR_NAME).exists()
 
 
-def test_a_model_declaring_no_callables_is_refused(staged: dict[str, Any]) -> None:
+def test_a_model_declaring_no_callables_is_refused(
+    tmp_path: Path, panel: pd.DataFrame, full_calendar: pd.DataFrame
+) -> None:
     """The schema requires a pair of the challenger alone, and a caller may name any."""
+    staged = _stage(tmp_path, panel, full_calendar, config_dir=CONFIG_DIR)
     benchmark = _shipped_modeling().model_roles.benchmark
     assert _shipped_modeling().model_settings[benchmark].fit_callable is None
 
@@ -289,7 +289,7 @@ def test_a_calendar_missing_a_consumed_column_is_refused_by_name(
     tmp_path: Path, panel: pd.DataFrame, full_calendar: pd.DataFrame
 ) -> None:
     """compose_configs passes it, and the join would raise a bare KeyError instead."""
-    consumed = _shipped_modeling().model_settings[MODEL_NAME].exog_features[-1]
+    consumed = STAND_IN_EXOG_FEATURES[-1]
     staged = _stage(tmp_path, panel, full_calendar.drop(columns=[consumed]))
 
     with pytest.raises(ValueError, match="calendar is missing required columns"):
@@ -363,7 +363,7 @@ def test_a_failed_rerun_leaves_no_completion_marker(
 # ================================================
 
 
-def test_the_bundle_predicts_as_an_in_process_fit_of_its_config_does(
+def test_the_bundle_holds_an_in_process_fit_of_its_config(
     completed_run: tuple[dict[str, Any], FinalFitSummary],
     panel: pd.DataFrame,
     full_calendar: pd.DataFrame,
@@ -371,39 +371,42 @@ def test_the_bundle_predicts_as_an_in_process_fit_of_its_config_does(
     """The registered model must be this panel, feature set and hyperparameters,
     read back from where the layout puts it."""
     staged, _ = completed_run
-    composed = yaml.safe_load(
+    hyperparameters = yaml.safe_load(
         (
             staged["compose_configs_dir"] / composed_config_filename(MODEL_NAME)
         ).read_text()
-    )
-    exog_features = _shipped_modeling().model_settings[MODEL_NAME].exog_features
-    exog_df = build_exog_frame(panel, full_calendar, exog_features=tuple(exog_features))
-
-    in_process = lightgbm_weekly_fit(
-        panel, exog_df=exog_df, **composed["model"]["hyperparameters"]
-    )
-    loaded = MLForecast.load(staged["out_dir"] / BUNDLE_MODEL_DIR_NAME)
-
-    assert_frame_equal(
-        lightgbm_weekly_predict(loaded, _HORIZON, future_x_df=exog_df),
-        lightgbm_weekly_predict(in_process, _HORIZON, future_x_df=exog_df),
+    )["model"]["hyperparameters"]
+    # Self-check: were it the default, a fit handed freq alone would record the same.
+    default = stand_in_fit(panel, hyperparameters["freq"])["setting"]
+    assert hyperparameters["setting"] != default
+    exog_df = build_exog_frame(
+        panel, full_calendar, exog_features=STAND_IN_EXOG_FEATURES
     )
 
+    in_process = stand_in_fit(panel, exog_df=exog_df, **hyperparameters)
+    loaded = stand_in_load(staged["out_dir"] / BUNDLE_MODEL_DIR_NAME)
 
-def test_only_the_configured_features_reach_the_booster(
+    assert_frame_equal(loaded["train_df"], in_process["train_df"])
+    assert_frame_equal(loaded["exog_df"], in_process["exog_df"])
+    assert (loaded["freq"], loaded["setting"]) == (
+        in_process["freq"],
+        in_process["setting"],
+    )
+
+
+def test_only_the_configured_features_reach_the_model(
     completed_run: tuple[dict[str, Any], FinalFitSummary],
     full_calendar: pd.DataFrame,
 ) -> None:
-    """A fit adopts every extra column as a feature, so the impl's selection is the
-    model's, and the stamps Feature adds must not become features either."""
+    """A fit adopts every column it is handed, so the impl's selection is the model's,
+    and the stamps Feature adds must reach it through neither frame."""
     staged, _ = completed_run
-    loaded = MLForecast.load(staged["out_dir"] / BUNDLE_MODEL_DIR_NAME)
-    features = set(loaded.models_["LGBMRegressor"].booster_.feature_name())
-    configured = set(_shipped_modeling().model_settings[MODEL_NAME].exog_features)
-    unselected = set(full_calendar.columns) - configured - {"ds"}
+    handed = stand_in_load(staged["out_dir"] / BUNDLE_MODEL_DIR_NAME)
+    columns = set(handed["train_df"].columns) | set(handed["exog_df"].columns)
+    unselected = set(full_calendar.columns) - set(STAND_IN_EXOG_FEATURES) - {"ds"}
 
-    assert configured <= features
-    assert not features & (unselected | {"feature_run_id", "executed_at"})
+    assert set(STAND_IN_EXOG_FEATURES) <= set(handed["exog_df"].columns)
+    assert not columns & (unselected | {"feature_run_id", "executed_at"})
 
 
 def test_the_manifest_agrees_with_the_panel_it_describes(
@@ -442,7 +445,9 @@ def test_the_manifest_names_what_a_reader_needs_to_load_and_predict(
     which columns a predictor must assemble."""
     staged, _ = completed_run
     manifest = json.loads((staged["out_dir"] / _MARKER).read_text())
-    settings = _shipped_modeling().model_settings[MODEL_NAME]
+    settings = TrainModelingConfig.model_validate(
+        yaml.safe_load((staged["compose_configs_dir"] / "modeling.yaml").read_text())
+    ).model_settings[MODEL_NAME]
 
     assert manifest["model_name"] == MODEL_NAME
     assert manifest["config"]["save_callable"] == settings.save_callable
