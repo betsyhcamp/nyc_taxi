@@ -98,12 +98,16 @@ FINAL_FIT_SUMMARY = FinalFitSummary(
     feature_run_id=FEATURE_RUN_ID,
 )
 SERVING_IMAGE = "us-central1-docker.pkg.dev/p/r/train@sha256:" + "c" * 64
+# The challenger's, since only a run of the shipped roles could produce this summary.
+# The prefix stays fake: nothing reads it, and composing the real one would tie a
+# fully patched test to infra.yaml.
+_REGISTERED_MODEL_ID = f"fcst-a-{SHIPPED_ROLES.challenger}"
 REGISTER_SUMMARY = RegisterModelSummary(
-    model_tag="projects/123456789/locations/us-central1/models/fcst-a-lightgbm@1",
-    model_id="fcst-a-lightgbm",
+    model_tag=f"projects/123456789/locations/us-central1/models/{_REGISTERED_MODEL_ID}@1",
+    model_id=_REGISTERED_MODEL_ID,
     version_id="1",
     uploaded=True,
-    model_name="lightgbm",
+    model_name=SHIPPED_ROLES.challenger,
     train_run_id=RUN_ID,
     git_hash="abc1234",
 )
