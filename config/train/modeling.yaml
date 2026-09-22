@@ -42,3 +42,13 @@ model_settings:
       - count_workdays
     fit_callable: fcstnyctaxi.models.lightgbm_weekly.lightgbm_weekly_fit
     save_callable: fcstnyctaxi.models.lightgbm_weekly.lightgbm_weekly_save
+
+  xgboost:
+    # LightGBM's feature set, so the two differ by the learner alone.
+    exog_features:
+      - fiscal_week_of_month
+      - fiscal_month
+      - weeks_in_month
+      - count_workdays
+    fit_callable: fcstnyctaxi.models.xgboost_weekly.xgboost_weekly_fit
+    save_callable: fcstnyctaxi.models.xgboost_weekly.xgboost_weekly_save

@@ -9,8 +9,8 @@
 # n_estimators is 1050, not the 1025 the calibration note records as adopted; the
 # config is what ran, so the config is authoritative for reproduction.
 #
-# The only model declaring predict_callable, which tsbricks resolves through
-# resolve_predict rather than resolve_model. No Training impl reads it yet.
+# predict_callable is resolved by tsbricks through resolve_predict rather than
+# resolve_model. No Training impl reads it yet.
 model:
   fit_predict_callable: fcstnyctaxi.models.lightgbm_weekly.lightgbm_weekly
   predict_callable: fcstnyctaxi.models.lightgbm_weekly.lightgbm_weekly_predict
