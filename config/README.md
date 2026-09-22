@@ -80,7 +80,7 @@ config/
   train/modeling.yaml             → TrainModelingConfig       schemas/config/train.py
   train/backtest.yaml             → BacktestConfig            (tsbricks)
   train/models/<name>.yaml        → BacktestConfig, keys {model}   (tsbricks)
-                                    naive.yaml, xgboost.yaml today
+                                    naive.yaml, lightgbm.yaml, xgboost.yaml today
 
   feature/README.md               reserved; see that file    schemas/config/feature.py
   inference/README.md             reserved; see that file    schemas/config/inference.py

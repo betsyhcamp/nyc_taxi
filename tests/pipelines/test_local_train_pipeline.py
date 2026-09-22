@@ -23,6 +23,7 @@ from fcstnyctaxi.core.train.evaluate_impl import EvaluateSummary
 from fcstnyctaxi.core.train.final_fit_impl import FinalFitSummary
 from fcstnyctaxi.core.train.register_model_impl import RegisterModelSummary
 from fcstnyctaxi.lib import run_outputs
+from fcstnyctaxi.lib.config.bindings import model_names_from_roles, resolve_model_roles
 from fcstnyctaxi.lib.storage_layout import (
     BUNDLE_MODEL_DIR_NAME,
     RUN_OUTPUTS_FILENAME,
@@ -55,13 +56,15 @@ RESOLVED_MANIFEST = FeatureRunOutputs(
         exogenous_uri=RESOLVED_EXOG_URI,
     ),
 ).model_dump_json()
+# The shipped roles, so the patched steps back the models the runner goes on to score.
+SHIPPED_ROLES = resolve_model_roles(get_project_root_dir() / "config")
 COMPOSE_SUMMARY = ComposeConfigsSummary(
     n_origins=1,
     first_origin="2025-05-18",
     last_origin="2025-05-18",
     last_complete_actual_month=202505,
     start_months=[202505],
-    model_names=["naive", "lightgbm"],
+    model_names=list(model_names_from_roles(SHIPPED_ROLES)),
 )
 BACKTEST_SUMMARY = BacktestSummary(
     n_origins=1,
@@ -75,8 +78,8 @@ BACKTEST_SUMMARY = BacktestSummary(
 # One origin over a two month horizon is two folds, matching the summary above.
 EVALUATE_SUMMARY = EvaluateSummary(
     train_run_id=RUN_ID,
-    challenger_model="lightgbm",
-    benchmark_model="naive",
+    challenger_model=SHIPPED_ROLES.challenger,
+    benchmark_model=SHIPPED_ROLES.benchmark,
     feature_run_id=FEATURE_RUN_ID,
     n_origins=1,
     first_origin="2025-05-18",

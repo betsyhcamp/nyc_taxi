@@ -206,7 +206,7 @@ class TrainModelingConfig(BaseModel):
     @model_validator(mode="after")
     def _every_role_model_has_settings(self) -> "TrainModelingConfig":
         """Require an entry per role model, since each is backtested. Extras are
-        legitimate: ``train/models/xgboost.yaml`` exists with no role."""
+        legitimate: a model may keep its entry while it holds no role."""
         missing = sorted(
             set(self.model_roles.model_dump().values()) - set(self.model_settings)
         )

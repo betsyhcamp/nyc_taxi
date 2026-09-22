@@ -27,9 +27,10 @@ arrives in commit 7a (unit tests), commit 9 (emitted under tmp_path), and
 commit 11 (landed in GCS).
 """
 
+import ast
+import importlib.util
 from pathlib import Path
 
-import pytest
 from tsbricks.backtesting.schema import BacktestConfig
 
 from fcstnyctaxi.lib.config.bindings import model_names_from_roles
@@ -145,6 +146,48 @@ def test_every_model_role_has_a_config_file() -> None:
 # ================================================
 
 
+def _model_files() -> list[Path]:
+    """Every train/models/*.yaml, whether or not its model holds a role."""
+    files = sorted((CONFIG_DIR / "train" / "models").glob("*.yaml"))
+    # Self-check: an empty glob would pass every loop over it.
+    assert files
+    return files
+
+
+def _named_callables() -> tuple[list[str], list[str]]:
+    """Every dotted path in train/models/*.yaml, then every one in modeling.yaml."""
+    model_paths = [
+        path
+        for file in _model_files()
+        for key, path in _load_config_file(file)["model"].items()
+        if key.endswith("_callable")
+    ]
+    settings = _load_config_file(CONFIG_DIR / "train/modeling.yaml")["model_settings"]
+    settings_paths = [
+        path
+        for entry in settings.values()
+        for key, path in entry.items()
+        if key.endswith("_callable")
+    ]
+    return model_paths, settings_paths
+
+
+def test_every_callable_the_config_names_is_defined_where_it_points() -> None:
+    """Composition keeps a dotted path as a string, so a typo would surface on Vertex.
+    Located without importing it, so no modeling package is needed."""
+    model_paths, settings_paths = _named_callables()
+    # Self-check: both sources contribute, so neither half passes vacuously.
+    assert model_paths and settings_paths
+
+    for path in model_paths + settings_paths:
+        module_name, function_name = path.rsplit(".", 1)
+        spec = importlib.util.find_spec(module_name)
+        assert spec is not None and spec.origin is not None, path
+        tree = ast.parse(Path(spec.origin).read_text())
+        defined = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+        assert function_name in defined, path
+
+
 def test_base_data_fragment_keys() -> None:
     """base/data.yaml declares only `data`."""
     _assert_fragment_keys(CONFIG_DIR / "base/data.yaml", frozenset({"data"}))
@@ -159,16 +202,11 @@ def test_backtest_fragment_keys() -> None:
     _assert_fragment_keys(CONFIG_DIR / "train/backtest.yaml", _BACKTEST_KEYS)
 
 
-@pytest.mark.parametrize("name", ["naive", "xgboost"])
-def test_model_fragment_keys(name: str) -> None:
-    """train/models/<name>.yaml declares only `model`.
-
-    A narrower allowed set than the schema's, expressed as data rather than as a
-    branch inside a check, so relaxing it later is an edit.
-    """
-    _assert_fragment_keys(
-        CONFIG_DIR / "train" / "models" / f"{name}.yaml", frozenset({"model"})
-    )
+def test_model_fragment_keys() -> None:
+    """Every train/models/*.yaml declares only `model`, including a model holding no
+    role, whose file no composition reads. A loop: an empty parametrize would skip."""
+    for path in _model_files():
+        _assert_fragment_keys(path, frozenset({"model"}))
 
 
 def test_evaluation_periods_is_not_in_the_backtest_fragment() -> None:
@@ -196,20 +234,6 @@ def test_calendar_source_is_declared_and_null() -> None:
     assert fragment["aggregation"]["calendar_source"] is None
 
 
-def test_naive_declares_freq_and_xgboost_does_not() -> None:
-    """The asymmetry is deliberate, and gives the cross-field check both branches.
-
-    naive_weekly's freq is load-bearing; xgboost's land with its module.
-    A model may legitimately declare no freq and let its callable infer one, so
-    a universal requirement would be wrong.
-    """
-    naive = _load_config_file(CONFIG_DIR / "train/models/naive.yaml")
-    xgboost = _load_config_file(CONFIG_DIR / "train/models/xgboost.yaml")
-
-    assert naive["model"]["hyperparameters"]["freq"] == "W-SUN"
-    assert "hyperparameters" not in xgboost["model"]
-
-
 def test_model_freq_matches_base_data_freq() -> None:
     """A model's declared freq must agree with the data contract.
 
@@ -219,6 +243,11 @@ def test_model_freq_matches_base_data_freq() -> None:
     trusted.
     """
     data_freq = _load_config_file(CONFIG_DIR / "base/data.yaml")["data"]["freq"]
-    naive = _load_config_file(CONFIG_DIR / "train/models/naive.yaml")
+    declared = {}
+    for path in _model_files():
+        hyperparameters = _load_config_file(path)["model"].get("hyperparameters") or {}
+        declared[path.stem] = hyperparameters.get("freq")
 
-    assert naive["model"]["hyperparameters"]["freq"] == data_freq
+    # Required, not only checked: naive_weekly has no default for freq.
+    assert declared["naive"] == data_freq
+    assert set(declared.values()) <= {data_freq, None}, declared
