@@ -150,13 +150,13 @@ def _sdk(registry: FakeRegistry) -> MagicMock:
 def inputs(
     tmp_path: Path, full_panel: pd.DataFrame, full_calendar: pd.DataFrame
 ) -> tuple[SourcedPath, SourcedPath]:
-    """The two frames as Feature publishes them, stamped with its run id."""
+    """The two frames as Feature publishes them, the panel stamped with its run id."""
     inputs_dir = tmp_path / "inputs"
     inputs_dir.mkdir()
     panel_path = inputs_dir / "time_series.parquet"
     calendar_path = inputs_dir / "fiscal_calendar.parquet"
     full_panel.assign(feature_run_id=FEATURE_RUN_ID).to_parquet(panel_path)
-    full_calendar.assign(feature_run_id=FEATURE_RUN_ID).to_parquet(calendar_path)
+    full_calendar.to_parquet(calendar_path)
     return (
         SourcedPath(path=panel_path, uri="gs://bucket/time_series.parquet"),
         SourcedPath(path=calendar_path, uri="gs://bucket/fiscal_calendar.parquet"),

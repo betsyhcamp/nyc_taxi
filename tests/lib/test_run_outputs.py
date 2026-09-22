@@ -27,6 +27,7 @@ PANEL_URI = f"gs://BUCKET/{ENV}/feature/{FEATURE_RUN_ID}/step/time_series.parque
 CALENDAR_URI = (
     f"gs://BUCKET/{ENV}/feature/{FEATURE_RUN_ID}/step/fiscal_calendar.parquet"
 )
+EXOG_URI = f"gs://BUCKET/{ENV}/feature/{FEATURE_RUN_ID}/step/exogenous_features.parquet"
 
 
 def _manifest(**overrides: object) -> str:
@@ -35,7 +36,11 @@ def _manifest(**overrides: object) -> str:
         "schema_version": _EXPECTED_SCHEMA_VERSION,
         "feature_run_id": FEATURE_RUN_ID,
         "env": ENV,
-        "published": {"panel_uri": PANEL_URI, "calendar_uri": CALENDAR_URI},
+        "published": {
+            "panel_uri": PANEL_URI,
+            "calendar_uri": CALENDAR_URI,
+            "exogenous_uri": EXOG_URI,
+        },
     }
     fields.update(overrides)
     return json.dumps({k: v for k, v in fields.items() if v is not None})
@@ -62,6 +67,11 @@ def source_frames(mocker: MockerFixture) -> None:
     )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=ValidationError,
+    reason="the stand-in cannot publish until it writes the exogenous artifact",
+)
 def test_the_manifest_lands_at_the_run_root_after_both_parquet_writes(
     source_frames: None, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -99,6 +109,11 @@ def test_the_manifest_lands_at_the_run_root_after_both_parquet_writes(
     assert Path(uri).parent.name == FEATURE_RUN_ID
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=ValidationError,
+    reason="the stand-in cannot publish until it writes the exogenous artifact",
+)
 def test_what_the_stand_in_writes_reads_back_with_no_version_warning(
     source_frames: None,
     mocker: MockerFixture,
@@ -180,11 +195,35 @@ def test_an_env_mismatch_is_refused_but_an_absent_env_is_not(
     )
 
 
-@pytest.mark.parametrize("supplied", ["panel_uri", "calendar_uri"])
-def test_exactly_one_uri_flag_is_refused(supplied: str) -> None:
-    """A panel and a calendar from different sources would be recorded nowhere."""
-    uris: dict[str, str | None] = {"panel_uri": None, "calendar_uri": None}
-    uris[supplied] = PANEL_URI
+_OVERRIDE_URIS = {
+    "panel_uri": PANEL_URI,
+    "calendar_uri": CALENDAR_URI,
+    "additional_exog_uri": EXOG_URI,
+}
+
+
+@pytest.mark.parametrize(
+    "supplied",
+    [
+        ("panel_uri",),
+        ("calendar_uri",),
+        ("additional_exog_uri",),
+        ("panel_uri", "calendar_uri"),
+        ("panel_uri", "additional_exog_uri"),
+        ("calendar_uri", "additional_exog_uri"),
+    ],
+    ids="+".join,
+)
+def test_a_partial_set_of_uri_flags_is_refused(
+    supplied: tuple[str, ...], mocker: MockerFixture
+) -> None:
+    """Artifacts from different sources would be recorded nowhere."""
+    # So a partial set the guard lets through fails the assertion, not on credentials.
+    mocker.patch.object(run_outputs, "read_text_from_gcs", return_value=_manifest())
+    uris = {
+        flag: _OVERRIDE_URIS[flag] if flag in supplied else None
+        for flag in _OVERRIDE_URIS
+    }
 
     with pytest.raises(ValueError, match="must be given together"):
         resolve_feature_artifacts(
@@ -201,6 +240,7 @@ def test_a_non_gcs_override_uri_is_refused() -> None:
             feature_run_id=FEATURE_RUN_ID,
             panel_uri="/tmp/scratch/panel.parquet",
             calendar_uri=CALENDAR_URI,
+            additional_exog_uri=EXOG_URI,
         )
 
 
@@ -211,9 +251,49 @@ def test_the_override_path_reports_its_source(caplog: pytest.LogCaptureFixture) 
             config_dir=CONFIG_DIR,
             env=ENV,
             feature_run_id=FEATURE_RUN_ID,
-            panel_uri=PANEL_URI,
-            calendar_uri=CALENDAR_URI,
+            **_OVERRIDE_URIS,
         )
 
     assert artifacts.panel_uri == PANEL_URI
+    assert artifacts.exogenous_uri == EXOG_URI
     assert "source=supplied" in caplog.text
+    assert EXOG_URI in caplog.text
+
+
+def test_the_manifest_path_returns_and_logs_the_third_uri(
+    mocker: MockerFixture, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Nothing past the resolver reads the third URI yet, so it is pinned here."""
+    mocker.patch.object(run_outputs, "read_text_from_gcs", return_value=_manifest())
+
+    with caplog.at_level(logging.INFO):
+        artifacts = resolve_feature_artifacts(
+            config_dir=CONFIG_DIR,
+            env=ENV,
+            feature_run_id=FEATURE_RUN_ID,
+            panel_uri=None,
+            calendar_uri=None,
+            additional_exog_uri=None,
+        )
+
+    assert artifacts.exogenous_uri == EXOG_URI
+    assert "source=resolved" in caplog.text
+    assert EXOG_URI in caplog.text
+
+
+def test_a_two_uri_manifest_is_refused(mocker: MockerFixture) -> None:
+    """A run published before the third artifact existed cannot resolve without it."""
+    two_uris = {"panel_uri": PANEL_URI, "calendar_uri": CALENDAR_URI}
+    mocker.patch.object(
+        run_outputs, "read_text_from_gcs", return_value=_manifest(published=two_uris)
+    )
+
+    with pytest.raises(ValidationError, match="exogenous_uri"):
+        resolve_feature_artifacts(
+            config_dir=CONFIG_DIR,
+            env=ENV,
+            feature_run_id=FEATURE_RUN_ID,
+            panel_uri=None,
+            calendar_uri=None,
+            additional_exog_uri=None,
+        )

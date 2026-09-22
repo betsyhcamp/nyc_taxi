@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from fcstnyctaxi.schemas.run_outputs import (
+    ADDITIONAL_EXOG_REQUIRED_COLUMNS,
     CALENDAR_ALLOWED_COLUMNS,
     CALENDAR_REQUIRED_COLUMNS,
     JOIN_KEYS,
@@ -13,15 +14,26 @@ from fcstnyctaxi.schemas.run_outputs import (
 
 PANEL_URI = "gs://BUCKET/dev/feature/F1/data_prep/time_series.parquet"
 CALENDAR_URI = "gs://BUCKET/dev/feature/F1/data_prep/fiscal_calendar.parquet"
+EXOG_URI = "gs://BUCKET/dev/feature/F1/data_prep/exogenous_features.parquet"
 MODEL_RESOURCE = "projects/123456789/locations/us-central1/models/fcst-a-lightgbm"
 BUNDLE_URI = "gs://BUCKET/dev/train/t1/final_fit/lightgbm/"
+
+
+def _published(**overrides: object) -> dict:
+    """The three URIs a manifest publishes, with any replaced or added."""
+    return {
+        "panel_uri": PANEL_URI,
+        "calendar_uri": CALENDAR_URI,
+        "exogenous_uri": EXOG_URI,
+        **overrides,
+    }
 
 
 def _payload(**overrides: object) -> dict:
     """The minimum a manifest must carry, with any key replaced or added."""
     payload: dict = {
         "feature_run_id": "F1",
-        "published": {"panel_uri": PANEL_URI, "calendar_uri": CALENDAR_URI},
+        "published": _published(),
     }
     payload.update(overrides)
     return payload
@@ -33,26 +45,41 @@ def test_extra_keys_are_ignored_at_both_levels() -> None:
     outputs = FeatureRunOutputs.model_validate(
         _payload(
             sql_sha256="a" * 64,
-            published={
-                "panel_uri": PANEL_URI,
-                "calendar_uri": CALENDAR_URI,
-                "features_uri": "gs://BUCKET/dev/feature/F1/step/features.parquet",
-            },
+            published=_published(
+                features_uri="gs://BUCKET/dev/feature/F1/step/features.parquet"
+            ),
         )
     )
 
     assert outputs.published.panel_uri == PANEL_URI
 
 
-@pytest.mark.parametrize("field", ["panel_uri", "calendar_uri"])
+@pytest.mark.parametrize("field", ["panel_uri", "calendar_uri", "exogenous_uri"])
 def test_a_non_gcs_uri_is_refused(field: str) -> None:
-    """Neither role may hold a local path; a typo otherwise reaches
-    download_from_gcs."""
-    published = {"panel_uri": PANEL_URI, "calendar_uri": CALENDAR_URI}
-    published[field] = "/tmp/scratch/panel.parquet"
+    """No role may hold a local path; a typo otherwise reaches download_from_gcs."""
+    published = _published(**{field: "/tmp/scratch/panel.parquet"})
 
     with pytest.raises(ValidationError, match=field):
         FeatureRunOutputs.model_validate(_payload(published=published))
+
+
+def test_a_manifest_without_exogenous_uri_is_refused() -> None:
+    """A run published before the artifact, or a renamed key, must fail rather than
+    validate."""
+    published = _published()
+    del published["exogenous_uri"]
+
+    with pytest.raises(ValidationError, match="exogenous_uri"):
+        FeatureRunOutputs.model_validate(_payload(published=published))
+
+
+def test_an_empty_exogenous_uri_is_refused() -> None:
+    """Feature's no-file value; accepted only once every consumer can train without
+    the file."""
+    with pytest.raises(ValidationError, match="exogenous_uri"):
+        FeatureRunOutputs.model_validate(
+            _payload(published=_published(exogenous_uri=""))
+        )
 
 
 def test_env_and_schema_version_are_both_optional() -> None:
@@ -77,7 +104,9 @@ def test_opaque_fields_accept_a_shape_no_consumer_reads() -> None:
 def test_feature_artifacts_refuses_rebinding() -> None:
     """A resolved URI altered between resolution and the parameter_values carrying
     it into the job would be provenance that lies."""
-    artifacts = FeatureArtifacts(panel_uri=PANEL_URI, calendar_uri=CALENDAR_URI)
+    artifacts = FeatureArtifacts(
+        panel_uri=PANEL_URI, calendar_uri=CALENDAR_URI, exogenous_uri=EXOG_URI
+    )
 
     with pytest.raises(ValidationError):
         artifacts.panel_uri = "gs://BUCKET/other.parquet"
@@ -210,6 +239,11 @@ def test_the_calendar_allows_more_than_it_requires() -> None:
 def test_the_join_keys_are_columns_the_panel_carries() -> None:
     """A key the panel does not carry makes the merge unwritable."""
     assert set(JOIN_KEYS) <= set(PANEL_REQUIRED_COLUMNS)
+
+
+def test_the_join_keys_are_columns_the_additional_exog_file_carries() -> None:
+    """A key the file does not carry makes its join unwritable."""
+    assert set(JOIN_KEYS) <= set(ADDITIONAL_EXOG_REQUIRED_COLUMNS)
 
 
 def test_exactly_one_join_key_is_also_a_calendar_column() -> None:

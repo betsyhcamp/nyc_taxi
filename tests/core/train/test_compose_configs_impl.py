@@ -31,7 +31,7 @@ _WEEKS_PER_MONTH = 4
 _N_MONTHS = 12
 
 
-def _calendar_frame(feature_run_id: str | None = FEATURE_RUN_ID) -> pd.DataFrame:
+def _calendar_frame() -> pd.DataFrame:
     """A fiscal calendar carrying every contract column, not just the three read."""
     n_weeks = _N_MONTHS * _WEEKS_PER_MONTH
     week_of_month = [i % _WEEKS_PER_MONTH + 1 for i in range(n_weeks)]
@@ -48,7 +48,6 @@ def _calendar_frame(feature_run_id: str | None = FEATURE_RUN_ID) -> pd.DataFrame
                 w / _WEEKS_PER_MONTH for w in week_of_month
             ],
             "count_workdays": 5,
-            "feature_run_id": pd.array([feature_run_id] * n_weeks, dtype="string"),
         }
     )
 
@@ -329,19 +328,30 @@ def test_frames_carrying_only_what_this_step_reads_still_compose(
     tmp_path: Path,
 ) -> None:
     """A Feature change to columns this step never reads must not break composition."""
-    minimal_calendar = _calendar_frame()[
-        ["ds", "fiscal_year_month", "feature_run_id"]
-    ].assign(some_new_exogenous_feature=1.0)
+    minimal_calendar = _calendar_frame()[["ds", "fiscal_year_month"]].assign(
+        some_new_exogenous_feature=1.0
+    )
 
     summary = _run(tmp_path, calendar_df=minimal_calendar)
 
     assert summary.n_origins > 0
 
 
-def test_the_impl_runs_the_lineage_check_on_both_frames(tmp_path: Path) -> None:
+def test_the_impl_runs_the_lineage_check_on_the_panel(tmp_path: Path) -> None:
     """Wiring only: the check's own cases live in tests/lib/test_column_checks.py."""
-    with pytest.raises(ValueError, match="!= calendar"):
-        _run(tmp_path, calendar_df=_calendar_frame(feature_run_id="another-run"))
+    with pytest.raises(ValueError, match="not the declared"):
+        _run(tmp_path, panel_df=_panel_frame(feature_run_id="another-run"))
+
+
+def test_a_calendar_without_the_lineage_column_composes(tmp_path: Path) -> None:
+    """Feature stamps the panel alone, so a check on the calendar would refuse every
+    real run."""
+    calendar_df = _calendar_frame()
+    assert "feature_run_id" not in calendar_df.columns
+
+    summary = _run(tmp_path, calendar_df=calendar_df)
+
+    assert summary.n_origins > 0
 
 
 def test_nothing_is_written_when_the_lineage_check_fails(tmp_path: Path) -> None:

@@ -29,7 +29,7 @@ def require_single_feature_run_id(frame: pd.DataFrame, frame_name: str) -> str:
     """The one non-null `feature_run_id` a frame carries.
 
     Nulls are rejected separately because `nunique()` skips them, and
-    `require_columns` names which of the two frames lacks the column.
+    `require_columns` names the frame lacking the column.
     """
     require_columns(frame, [LINEAGE_COLUMN], frame_name)
     column = frame[LINEAGE_COLUMN]
@@ -51,28 +51,18 @@ def require_single_feature_run_id(frame: pd.DataFrame, frame_name: str) -> str:
     return str(distinct[0])
 
 
-def require_matching_feature_run_id(
-    panel_df: pd.DataFrame, calendar_df: pd.DataFrame, expected: str
-) -> str:
-    """The id both frames carry, checked against the one the caller declared.
+def require_matching_feature_run_id(panel_df: pd.DataFrame, expected: str) -> str:
+    """The id the panel carries, checked against the one the caller declared.
 
-    Consistency between frames is checked first, since a shared value must exist
-    before it can be compared. `expected` is a claim; the observation gets stamped.
+    The panel alone: Feature stamps no other artifact, so their lineage is the common
+    source of their URIs. `expected` is a claim; the observation gets stamped.
     """
     panel_id = require_single_feature_run_id(panel_df, "panel")
-    calendar_id = require_single_feature_run_id(calendar_df, "calendar")
-
-    if panel_id != calendar_id:
-        raise ValueError(
-            f"panel feature_run_id {panel_id!r} != calendar {calendar_id!r}; "
-            f"origins and actuals would come from different Feature runs."
-        )
     if panel_id != expected:
         raise ValueError(
-            f"Frames carry feature_run_id {panel_id!r}, not the declared "
-            f"{expected!r}: wrong URIs, or wrong bytes at the requested location."
+            f"panel carries feature_run_id {panel_id!r}, not the declared "
+            f"{expected!r}: wrong URI, or wrong bytes at the requested location."
         )
-
     return panel_id
 
 

@@ -34,7 +34,7 @@ accepted here — one field, one spelling.
 from pydantic import BaseModel, ConfigDict, Field
 
 LINEAGE_COLUMN = "feature_run_id"
-"""The column Feature stamps on both artifacts, and every Training impl checks.
+"""The column Feature stamps on the panel, and every Training impl checks there.
 
 A contract term, not a check: the checks that read it live in
 ``lib/column_checks.py``. Public rather than underscore-private because it crosses

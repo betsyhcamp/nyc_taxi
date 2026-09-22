@@ -75,20 +75,26 @@ def resolve_feature_artifacts(
     feature_run_id: str,
     panel_uri: str | None,
     calendar_uri: str | None,
+    additional_exog_uri: str | None,
 ) -> FeatureArtifacts:
-    """The two input URIs, from the caller's flags or from the Feature run's manifest.
+    """The three input URIs, from the caller's flags or from the Feature run's manifest.
 
-    Both flags override, neither resolves, exactly one is refused: a panel and a
-    calendar from different sources would be recorded nowhere.
+    All three flags override, none resolves, anything between is refused: artifacts
+    from different sources would be recorded nowhere.
 
     Raises:
-        ValueError: exactly one URI was supplied, or resolution failed.
-        ValidationError: a supplied override URI is not a gs:// URI.
+        ValueError: one or two URIs were supplied, or resolution failed.
+        ValidationError: a supplied override URI is not a gs:// URI, or a
+            load-bearing key in the manifest is missing or malformed.
     """
-    if (panel_uri is None) != (calendar_uri is None):
+    supplied = [
+        uri is not None for uri in (panel_uri, calendar_uri, additional_exog_uri)
+    ]
+    if any(supplied) and not all(supplied):
         raise ValueError(
-            "--panel-uri and --calendar-uri must be given together: pass both to "
-            "override resolution, or neither to resolve from --feature-run-id."
+            "--panel-uri, --calendar-uri and --additional-exog-uri must be given "
+            "together: pass all three to override resolution, or none to resolve "
+            "from --feature-run-id."
         )
     if panel_uri is None:
         artifacts = read_feature_run_outputs(
@@ -96,15 +102,20 @@ def resolve_feature_artifacts(
         ).published
         source = "resolved"
     else:
-        artifacts = FeatureArtifacts(panel_uri=panel_uri, calendar_uri=calendar_uri)
+        artifacts = FeatureArtifacts(
+            panel_uri=panel_uri,
+            calendar_uri=calendar_uri,
+            exogenous_uri=additional_exog_uri,
+        )
         source = "supplied"
 
     # One definition, because the override flags are to be retired on this evidence
     # and two callers computing it separately could disagree.
     _log.info(
-        "feature artifacts: source=%s panel=%s calendar=%s",
+        "feature artifacts: source=%s panel=%s calendar=%s additional_exog=%s",
         source,
         artifacts.panel_uri,
         artifacts.calendar_uri,
+        artifacts.exogenous_uri,
     )
     return artifacts

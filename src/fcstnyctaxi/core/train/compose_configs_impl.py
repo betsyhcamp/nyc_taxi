@@ -179,7 +179,8 @@ def compose_configs_impl(
         config_dir (Path): Root of the config tree.
         env (str): Environment selector.
         panel (SourcedPath): The actuals; opened for origins, stamped for lineage.
-        calendar (SourcedPath): The fiscal calendar, same pairing.
+        calendar (SourcedPath): The fiscal calendar; opened for origins, unstamped:
+            Feature stamps the panel alone.
         expected_feature_run_id (str): A claim, checked then discarded; the
             observed frame value is what `TrainRunIdentity` stamps.
         train_run_id (str): This run's own identifier.
@@ -204,9 +205,7 @@ def compose_configs_impl(
     environment, infra, modeling = compose_train_static_configs(config_dir, env)
     panel_df = pd.read_parquet(panel.path)
     calendar_df = pd.read_parquet(calendar.path)
-    feature_run_id = require_matching_feature_run_id(
-        panel_df, calendar_df, expected_feature_run_id
-    )
+    feature_run_id = require_matching_feature_run_id(panel_df, expected_feature_run_id)
     modeling_config = cast(TrainModelingConfig, modeling.config)
     origins, start_months, last_complete = _derive_origins(
         panel_df, calendar_df, modeling_config.evaluation_periods

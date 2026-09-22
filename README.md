@@ -148,7 +148,7 @@ Compiling and submitting are separate programs on purpose. The image reference i
 - `bash scripts/setup_train_iam.sh` run once per project. It creates the `fcst-ml-containers` repository, which Artifact Registry does not auto-create on push, and the Training runner service account.
 - `.env` filled in from `.env.example`, with `FCST_TRAIN_SERVICE_ACCOUNT` set. The submitter reads it with `python-dotenv`, so there is no sourcing step.
 - Working tree clean, so image tags do not include `-dirty`
-- A published Feature run. `uv run python scripts/publish_feature_stand_in.py --env dev` prints the `--feature-run-id` the submit step needs, with `--panel-uri` and `--calendar-uri` commented below it as optional overrides.
+- A published Feature run. The stand-in, `scripts/publish_feature_stand_in.py`, cannot publish until it writes the exogenous features artifact, and a run it published earlier cannot be resolved, since its `run_outputs.json` names no `exogenous_uri`. Until then, Step 3 takes all three override flags: an earlier stand-in run's panel and calendar URIs, listed in its `run_outputs.json`, with that run's id as `--feature-run-id`, and any `gs://` URI as `--additional-exog-uri`, which nothing reads yet.
 
 **Step 1. Build and verify the image:**
 
@@ -156,11 +156,11 @@ Compiling and submitting are separate programs on purpose. The image reference i
 task build-verify-train-image
 ```
 
-Builds the `linux/amd64` image and probes it twice: every environment in the baked config tree composes, and that tree matches `config/` file for file. Expected last lines:
+Builds the `linux/amd64` image and probes it twice: every environment in the baked config tree composes, and that tree matches `config/` file for file. Expected last lines, where `<n>` is the number of files under `config/`:
 
 ```
 image OK: ['dev'] compose
-config tree OK: 14 files
+config tree OK: <n> files
 ```
 
 **Step 2. Push the image:**
@@ -188,7 +188,7 @@ task compile-submit-train IMAGE_REF=<digest from step 2> -- \
   --feature-run-id <id from publish_feature_stand_in.py>
 ```
 
-Both artifact URIs are resolved from `--feature-run-id`, by reading the `run_outputs.json` the Feature run wrote at its run root. Pass `--panel-uri` and `--calendar-uri` together to override that; neither is accepted alone.
+All three artifact URIs are resolved from `--feature-run-id`, by reading the `run_outputs.json` the Feature run wrote at its run root. Pass `--panel-uri`, `--calendar-uri` and `--additional-exog-uri` together to override that; one or two alone are refused.
 
 `compile-submit-train` compiles a fresh template into `build/fcst-train-pipeline.yaml`, then appends its own `--template-path` after your arguments. Argparse is last-wins, so the run always submits what it just compiled.
 
@@ -200,7 +200,7 @@ To submit a template that already exists, skip the compile:
 task submit-train -- --template-path build/fcst-train-pipeline.yaml --env dev ...
 ```
 
-`task submit-train -- --help` lists every flag, and works on a machine with no `.env`. Its five domain flags are the same ones the local execution mode takes, so the two modes differ only in orchestration:
+`task submit-train -- --help` lists every flag, and works on a machine with no `.env`. Its six domain flags are the same ones the local execution mode takes, so the two modes differ only in orchestration:
 
 ```{bash}
 uv run python -m fcstnyctaxi.pipelines.local_train_pipeline --help

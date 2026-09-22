@@ -78,20 +78,26 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--feature-run-id",
         required=True,
-        help="The Feature run both artifact URIs resolve from, checked against "
-        "the feature_run_id column in both.",
+        help="The Feature run all three artifact URIs resolve from, checked against "
+        "the panel's feature_run_id column.",
     )
     parser.add_argument(
         "--panel-uri",
         default=None,
         help="Override the actuals URI --feature-run-id resolves to; requires "
-        "--calendar-uri.",
+        "the other two URI flags.",
     )
     parser.add_argument(
         "--calendar-uri",
         default=None,
         help="Override the fiscal calendar URI --feature-run-id resolves to; "
-        "requires --panel-uri.",
+        "requires the other two URI flags.",
+    )
+    parser.add_argument(
+        "--additional-exog-uri",
+        default=None,
+        help="Override the exogenous features URI --feature-run-id resolves to "
+        "(published.exogenous_uri); requires --panel-uri and --calendar-uri.",
     )
     parser.add_argument(
         "--run-id",
@@ -174,13 +180,14 @@ def main() -> None:
     again. The fit runs only when scoring did, and registration only after the fit.
 
     Raises:
-        ValueError: If a run id or `--serving-image` fails its format check, only one
-            URI override is given, the Feature run published no manifest, an input
+        ValueError: If a run id or `--serving-image` fails its format check, one or
+            two URI overrides are given, the Feature run published no manifest, an input
             URI cannot be mirrored, `--env` has no config file, `--model` names no
             composed model, or any step fails.
         RuntimeError: If the git hash cannot be determined, or more than one
             registered version carries this run id.
-        ValidationError: If an identity field or an override URI is malformed.
+        ValidationError: If an identity field or an override URI is malformed, or a
+            load-bearing key in the Feature run's manifest is missing or malformed.
     """
     logging.Formatter.converter = time.gmtime
     logging.basicConfig(
@@ -222,6 +229,7 @@ def main() -> None:
         feature_run_id=args.feature_run_id,
         panel_uri=args.panel_uri,
         calendar_uri=args.calendar_uri,
+        additional_exog_uri=args.additional_exog_uri,
     )
     # Before the clear below, so a rejected URI cannot cost the previous output.
     panel_path = _mirror_path(artifacts.panel_uri, mirror_root)

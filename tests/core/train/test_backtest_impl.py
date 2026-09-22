@@ -633,19 +633,18 @@ def _stage(
 ) -> dict[str, Any]:
     """Land the inputs and compose_configs outputs, as backtest_impl's arguments.
 
-    Both frames are stamped the way Feature delivers them, with a metadata column
-    beyond the lineage one, so the trims have something to drop.
+    Stamped as Feature delivers them: `feature_run_id` on the panel alone, and a
+    metadata column on both, so the trims have something to drop.
     """
     inputs = tmp_path / "inputs"
     inputs.mkdir()
     panel_path = inputs / "time_series.parquet"
     calendar_path = inputs / "fiscal_calendar.parquet"
-    stamps = {
-        "feature_run_id": FEATURE_RUN_ID,
-        "executed_at": pd.Timestamp("2026-09-17"),
-    }
-    full_panel.assign(**stamps).to_parquet(panel_path)
-    full_calendar.assign(**stamps).to_parquet(calendar_path)
+    executed_at = pd.Timestamp("2026-09-17")
+    full_panel.assign(
+        feature_run_id=FEATURE_RUN_ID, executed_at=executed_at
+    ).to_parquet(panel_path)
+    full_calendar.assign(executed_at=executed_at).to_parquet(calendar_path)
 
     step_dir = _stage_compose_configs(tmp_path)
     save_config(
@@ -706,6 +705,16 @@ def test_the_summary_carries_the_run_ids_it_discovered(
 
     assert summary.train_run_id == TRAIN_RUN_ID
     assert summary.feature_run_id == FEATURE_RUN_ID
+
+
+def test_a_panel_from_another_feature_run_is_refused(
+    staged: dict[str, Any], full_panel: pd.DataFrame
+) -> None:
+    """Wrong bytes at a path compose_configs already read, past its own check."""
+    full_panel.assign(feature_run_id="f-another-run").to_parquet(staged["panel_path"])
+
+    with pytest.raises(ValueError, match="not the declared"):
+        backtest_impl(**staged)
 
 
 @pytest.mark.parametrize(

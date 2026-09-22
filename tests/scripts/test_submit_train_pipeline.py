@@ -44,18 +44,24 @@ PANEL_URI = f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/data_prep/time_series.p
 CALENDAR_URI = (
     f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/data_prep/fiscal_calendar.parquet"
 )
-# Deliberately not the two URIs above: a caller that ignored the manifest would
+EXOG_URI = (
+    f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/data_prep/exogenous_features.parquet"
+)
+# Deliberately not the three URIs above: a caller that ignored the manifest would
 # still produce those, and the resolve assertions would not notice.
 RESOLVED_PANEL_URI = f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/step/panel.parquet"
 RESOLVED_CALENDAR_URI = (
     f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/step/calendar.parquet"
 )
+RESOLVED_EXOG_URI = f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/step/exogenous.parquet"
 # Through the shared model, which is what makes writer and reader agree on shape.
 RESOLVED_MANIFEST = FeatureRunOutputs(
     feature_run_id=FEATURE_RUN_ID,
     env=ENV,
     published=FeatureArtifacts(
-        panel_uri=RESOLVED_PANEL_URI, calendar_uri=RESOLVED_CALENDAR_URI
+        panel_uri=RESOLVED_PANEL_URI,
+        calendar_uri=RESOLVED_CALENDAR_URI,
+        exogenous_uri=RESOLVED_EXOG_URI,
     ),
 ).model_dump_json()
 SERVICE_ACCOUNT = "svc-train@nyc-taxi-ehc.iam.gserviceaccount.com"
@@ -108,6 +114,7 @@ def _argv(template: Path, overrides: dict[str, str | None] | None = None) -> lis
         "--feature-run-id": FEATURE_RUN_ID,
         "--panel-uri": PANEL_URI,
         "--calendar-uri": CALENDAR_URI,
+        "--additional-exog-uri": EXOG_URI,
         "--run-id": RUN_ID,
     }
     values.update(overrides or {})
@@ -380,7 +387,15 @@ def test_the_submitter_resolves_both_uris_from_the_feature_run_id_alone(
         run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
     )
     monkeypatch.setattr(
-        "sys.argv", _argv(template, {"--panel-uri": None, "--calendar-uri": None})
+        "sys.argv",
+        _argv(
+            template,
+            {
+                "--panel-uri": None,
+                "--calendar-uri": None,
+                "--additional-exog-uri": None,
+            },
+        ),
     )
 
     with caplog.at_level(logging.INFO):
@@ -405,7 +420,15 @@ def test_a_missing_template_beats_a_manifest_read_failure(
     )
     missing = tmp_path / "never-compiled.yaml"
     monkeypatch.setattr(
-        "sys.argv", _argv(missing, {"--panel-uri": None, "--calendar-uri": None})
+        "sys.argv",
+        _argv(
+            missing,
+            {
+                "--panel-uri": None,
+                "--calendar-uri": None,
+                "--additional-exog-uri": None,
+            },
+        ),
     )
 
     with pytest.raises(FileNotFoundError, match=missing.name):

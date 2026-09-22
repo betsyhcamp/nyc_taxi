@@ -82,11 +82,12 @@ dataset's location.
 
 ## How Training finds Feature's output
 
-**Rung 1: Training is told.** Both training callers take explicit `--panel-uri` and
-`--calendar-uri`. They survive as optional overrides, required together.
+**Rung 1: Training is told.** Both training callers take explicit `--panel-uri`,
+`--calendar-uri` and `--additional-exog-uri`. They survive as optional overrides, all three
+required together.
 
 **Rung 2: Training resolves, and this ships.** Given a `--feature-run-id` alone, both
-callers read the outputs file below and take the two URIs by role. Resolution is
+callers read the outputs file below and take the three URIs by role. Resolution is
 caller-side only, so the pipeline is still *told* where its inputs are; what changed is who
 computes the URIs. The reader is `src/<project_package_name>/lib/run_outputs.py`; the
 contract as a typed model is `src/<project_package_name>/schemas/run_outputs.py`.
@@ -146,6 +147,7 @@ contract as a typed model, and is the authority if the two ever disagree.
 | `feature_run_id`                                 | string                      | guard, compared against the id it was given |
 | `published.panel_uri`                            | `gs://` string              | **load-bearing**                            |
 | `published.calendar_uri`                         | `gs://` string              | **load-bearing**                            |
+| `published.exogenous_uri`                        | `gs://` string              | **load-bearing**                            |
 | `env`                                            | string                      | guard, compared when present                |
 | `git_hash`                                       | string, 7 characters        | no                                          |
 | `completed_at`                                   | ISO 8601 string with offset | no                                          |
@@ -154,14 +156,16 @@ contract as a typed model, and is the authority if the two ever disagree.
 | `panel.series_admitted` · `panel.series_dropped` | int                         | no                                          |
 | `panel.exogenous_columns`                        | list of strings             | no                                          |
 
-The keys under `published` are role names, matching what `TrainRunIdentity` already calls
-them. `env` was volunteered rather than asked for, and earns its place as a second
-copy-detector.
+The keys under `published` are role names; the first two match what `TrainRunIdentity`
+already calls them. `env` was volunteered rather than asked for, and earns its place as a
+second copy-detector.
 
-**What Training reads, and what it merely tolerates.** Only the two load-bearing keys and
-the two guards are typed. Everything else is opaque and unvalidated, and unknown keys are
-ignored at both levels. **Adding a key is always safe.** The only change that breaks
-Training is renaming or removing something under `published`.
+**What Training reads, and what it merely tolerates.** Only the three load-bearing keys,
+the two guards and `schema_version`, an optional string, are typed. Everything else is
+opaque and unvalidated, and unknown keys are ignored at both levels. **Adding a key is
+always safe.** The only change that breaks Training is renaming or removing something under
+`published`, or writing `""` as `published.exogenous_uri`: Training refuses it until every
+step can train without that file.
 
 **Two departures from the design above.**
 
@@ -184,9 +188,10 @@ with one sentence scoping when it moves:
 > block do not need a bump.
 
 The narrow scope is what makes it cheap: no bump for statistics changes, and it protects
-exactly the keys resolution depends on. Training treats it as a diagnostic, never a gate.
-An unrecognized value warns and proceeds; only a missing load-bearing key fails, so the
-reader works whether or not the field ever arrives.
+exactly the keys resolution depends on. Training types it as an optional string, such as
+`"0.1.0"`, and treats its value as a diagnostic, never a gate: an unrecognized version
+warns and proceeds, and an absent one is not an error, so the reader works whether or not
+the field ever arrives.
 
 ### Where this fits the placement rule
 
