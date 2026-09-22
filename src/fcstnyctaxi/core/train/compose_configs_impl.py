@@ -204,9 +204,7 @@ def compose_configs_impl(
     environment, infra, modeling = compose_train_static_configs(config_dir, env)
     panel_df = pd.read_parquet(panel.path)
     calendar_df = pd.read_parquet(calendar.path)
-    feature_run_id = require_matching_feature_run_id(
-        panel_df, calendar_df, expected_feature_run_id
-    )
+    feature_run_id = require_matching_feature_run_id(panel_df, expected_feature_run_id)
     modeling_config = cast(TrainModelingConfig, modeling.config)
     origins, start_months, last_complete = _derive_origins(
         panel_df, calendar_df, modeling_config.evaluation_periods

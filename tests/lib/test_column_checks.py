@@ -99,44 +99,16 @@ def test_single_feature_run_id_rejects_a_frame_mixing_two_runs() -> None:
 # ================================================
 
 
-def test_matching_feature_run_id_returns_the_id_both_frames_carry() -> None:
+def test_matching_feature_run_id_returns_the_id_the_panel_carries() -> None:
     """The observed value is what a caller stamps, so it must come back."""
-    observed = require_matching_feature_run_id(_frame(), _frame(), FEATURE_RUN_ID)
+    observed = require_matching_feature_run_id(_frame(), FEATURE_RUN_ID)
     assert observed == FEATURE_RUN_ID
 
 
-def test_matching_feature_run_id_rejects_frames_from_different_runs() -> None:
-    """Origins from one run's calendar and actuals from another's is wrong numbers."""
-    with pytest.raises(ValueError, match=r"!= calendar"):
-        require_matching_feature_run_id(
-            _frame(), _frame(feature_run_id="another-run"), FEATURE_RUN_ID
-        )
-
-
-def test_matching_feature_run_id_rejects_a_consistent_pair_from_the_wrong_run() -> None:
+def test_matching_feature_run_id_rejects_a_panel_from_the_wrong_run() -> None:
     """The check that makes pasting explicit URIs safe: right shape, wrong run."""
     with pytest.raises(ValueError, match=r"not the declared"):
-        require_matching_feature_run_id(_frame(), _frame(), "a-different-run")
-
-
-def test_matching_feature_run_id_names_which_of_the_two_frames_is_unstamped() -> None:
-    """Two frames are read here, so a bare KeyError would not say which one failed."""
-    calendar = pd.DataFrame(
-        {"ds": pd.date_range("2025-01-05", periods=3, freq="W-SUN")}
-    )
-
-    with pytest.raises(ValueError, match=r"calendar is missing required columns"):
-        require_matching_feature_run_id(_frame(), calendar, FEATURE_RUN_ID)
-
-
-def test_matching_feature_run_id_checks_frame_agreement_before_the_declaration() -> (
-    None
-):
-    """Both faults at once: a shared value must exist before it can be compared."""
-    with pytest.raises(ValueError, match=r"!= calendar"):
-        require_matching_feature_run_id(
-            _frame(), _frame(feature_run_id="another-run"), "a-third-run"
-        )
+        require_matching_feature_run_id(_frame(), "a-different-run")
 
 
 # ================================================

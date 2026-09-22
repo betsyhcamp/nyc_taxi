@@ -79,7 +79,7 @@ def _parse_args() -> argparse.Namespace:
         "--feature-run-id",
         required=True,
         help="The Feature run both artifact URIs resolve from, checked against "
-        "the feature_run_id column in both.",
+        "the panel's feature_run_id column.",
     )
     parser.add_argument(
         "--panel-uri",

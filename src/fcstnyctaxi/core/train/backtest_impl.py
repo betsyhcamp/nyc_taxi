@@ -411,7 +411,7 @@ def backtest_impl(
 
     Args:
         panel_path: The weekly actuals, stamped with a `feature_run_id`.
-        calendar_path: The fiscal calendar, same stamping.
+        calendar_path: The fiscal calendar, unstamped: Feature stamps the panel alone.
         compose_configs_dir: Holds this model's composed config and `modeling.yaml`,
             with `run_identity.json` beside it.
         model_name: Selects the composed config, and names `out_dir`.
@@ -460,8 +460,8 @@ def backtest_impl(
 
     panel_df = pd.read_parquet(panel_path)
     calendar_df = pd.read_parquet(calendar_path)
-    # Catches frames from two Feature runs, or wrong bytes at the paths handed in.
-    require_matching_feature_run_id(panel_df, calendar_df, identity.feature_run_id)
+    # Catches a panel from another Feature run, or wrong bytes at the path handed in.
+    require_matching_feature_run_id(panel_df, identity.feature_run_id)
 
     # Before the snapshots: a moved upstream timestamp must not fail input equivalence.
     panel_df = trim_to_allowlist(

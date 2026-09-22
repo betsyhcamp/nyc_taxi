@@ -99,19 +99,18 @@ def _stage(
 ) -> dict[str, Any]:
     """Run compose_configs on stamped frames and return final_fit_impl's arguments.
 
-    Stamped as Feature delivers them, with a metadata column beyond the lineage one,
-    so the trims have something to drop.
+    Stamped as Feature delivers them: `feature_run_id` on the panel alone, and a
+    metadata column on both, so the trims have something to drop.
     """
     inputs = root / "inputs"
     inputs.mkdir()
-    stamps = {
-        "feature_run_id": FEATURE_RUN_ID,
-        "executed_at": pd.Timestamp("2026-09-21"),
-    }
+    executed_at = pd.Timestamp("2026-09-21")
     panel_path = inputs / "time_series.parquet"
     calendar_path = inputs / "fiscal_calendar.parquet"
-    panel.assign(**stamps).to_parquet(panel_path)
-    calendar.assign(**stamps).to_parquet(calendar_path)
+    panel.assign(feature_run_id=FEATURE_RUN_ID, executed_at=executed_at).to_parquet(
+        panel_path
+    )
+    calendar.assign(executed_at=executed_at).to_parquet(calendar_path)
 
     step_dir = root / TRAIN_RUN_ID / "compose_configs"
     compose_configs_impl(
@@ -252,13 +251,11 @@ def test_a_model_declaring_no_callables_is_refused(staged: dict[str, Any]) -> No
         )
 
 
-def test_frames_from_another_feature_run_are_refused(
-    staged: dict[str, Any], panel: pd.DataFrame, full_calendar: pd.DataFrame
+def test_a_panel_from_another_feature_run_is_refused(
+    staged: dict[str, Any], panel: pd.DataFrame
 ) -> None:
     """Wrong bytes at a path compose_configs already read, past its own check."""
-    stamps = {"feature_run_id": "f-another-run"}
-    panel.assign(**stamps).to_parquet(staged["panel_path"])
-    full_calendar.assign(**stamps).to_parquet(staged["calendar_path"])
+    panel.assign(feature_run_id="f-another-run").to_parquet(staged["panel_path"])
 
     with pytest.raises(ValueError, match="not the declared"):
         final_fit_impl(**staged)
