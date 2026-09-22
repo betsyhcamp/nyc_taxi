@@ -148,7 +148,7 @@ Compiling and submitting are separate programs on purpose. The image reference i
 - `bash scripts/setup_train_iam.sh` run once per project. It creates the `fcst-ml-containers` repository, which Artifact Registry does not auto-create on push, and the Training runner service account.
 - `.env` filled in from `.env.example`, with `FCST_TRAIN_SERVICE_ACCOUNT` set. The submitter reads it with `python-dotenv`, so there is no sourcing step.
 - Working tree clean, so image tags do not include `-dirty`
-- A published Feature run. The stand-in, `scripts/publish_feature_stand_in.py`, cannot publish until it writes the exogenous features artifact, and a run it published earlier cannot be resolved, since its `run_outputs.json` names no `exogenous_uri`. Until then, Step 3 takes all three override flags: an earlier stand-in run's panel and calendar URIs, listed in its `run_outputs.json`, with that run's id as `--feature-run-id`, and any `gs://` URI as `--additional-exog-uri`, which nothing reads yet.
+- A published Feature run. `uv run python scripts/publish_feature_stand_in.py --env dev` prints the `--feature-run-id` the submit step needs, with `--panel-uri`, `--calendar-uri` and `--additional-exog-uri` commented below it as optional overrides.
 
 **Step 1. Build and verify the image:**
 
