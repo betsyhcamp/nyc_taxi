@@ -601,6 +601,7 @@ def test_a_narrowed_rerun_scores_the_pair_the_run_id_has_accumulated(
     )
     mocker.patch.object(local_train_pipeline, "upload_to_gcs")
     mocker.patch.object(local_train_pipeline, "sync_to_gcs", return_value=(7, 0))
+    mocker.patch.object(local_train_pipeline, "delete_from_gcs")
     mocker.patch.object(
         run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
     )
