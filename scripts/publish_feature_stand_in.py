@@ -1,10 +1,11 @@
 """Republish the fixed-path Data Preparation artifacts in the F->T contract form.
 
-The Training pipeline needs a panel and a fiscal calendar carrying
-`feature_run_id` at run-scoped paths, and the Feature pipeline that will write
-them does not exist yet. This reads the two artifacts `notebooks/data_prep.py`
-already wrote, adds the column, writes them under `resolve_run_prefix`'s
-convention, and prints the `--feature-run-id` both training callers resolve from.
+The Training pipeline needs a panel carrying `feature_run_id` and a fiscal
+calendar, at run-scoped paths, and the Feature pipeline that will write them does
+not exist yet. This reads the two artifacts `notebooks/data_prep.py` already
+wrote, adds the column to the panel, as Feature does, writes them under
+`resolve_run_prefix`'s convention, and prints the `--feature-run-id` both training
+callers resolve from.
 
 Disposable by construction: delete it the day the Feature pipeline publishes
 these artifacts.
@@ -46,7 +47,8 @@ _SCHEMA_VERSION = "0.1.0"
 def _parse_args() -> argparse.Namespace:
     """Environment selector, and an optional id so a run can be republished."""
     parser = argparse.ArgumentParser(
-        description="Republish the fixed-path artifacts with feature_run_id added."
+        description="Republish the fixed-path artifacts, the panel with "
+        "feature_run_id added."
     )
     parser.add_argument(
         "--env",
@@ -94,9 +96,7 @@ def main() -> None:
     calendar_uri = f"{run_prefix}{_STEP}/{_CALENDAR_FILENAME}"
 
     panel_df = _with_lineage_column(pd.read_parquet(_SOURCE_PANEL_URI), feature_run_id)
-    calendar_df = _with_lineage_column(
-        pd.read_parquet(_SOURCE_CALENDAR_URI), feature_run_id
-    )
+    calendar_df = pd.read_parquet(_SOURCE_CALENDAR_URI)
     panel_df.to_parquet(panel_uri, index=False)
     calendar_df.to_parquet(calendar_uri, index=False)
 
