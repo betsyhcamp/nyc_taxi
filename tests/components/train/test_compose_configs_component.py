@@ -15,12 +15,9 @@ from kfp.dsl.python_component import PythonComponent
 from pytest_mock import MockerFixture
 
 from fcstnyctaxi.components.train.compose_configs_component import compose_configs
-from fcstnyctaxi.core.train.compose_configs_impl import (
-    ComposeConfigsSummary,
-    SourcedPath,
-)
+from fcstnyctaxi.core.train.compose_configs_impl import ComposeConfigsSummary
 from fcstnyctaxi.lib.config.bindings import resolve_model_names
-from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
+from fcstnyctaxi.lib.storage_layout import SourcedPath, resolve_run_prefix
 from fcstnyctaxi.lib.utils import get_project_root_dir
 
 # dsl.component has no return annotation, so a checker sees the undecorated function

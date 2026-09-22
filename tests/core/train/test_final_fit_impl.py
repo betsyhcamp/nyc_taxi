@@ -11,16 +11,14 @@ import yaml
 from mlforecast import MLForecast
 from pandas.testing import assert_frame_equal
 
-from fcstnyctaxi.core.train.compose_configs_impl import (
-    SourcedPath,
-    compose_configs_impl,
-)
+from fcstnyctaxi.core.train.compose_configs_impl import compose_configs_impl
 from fcstnyctaxi.core.train.final_fit_impl import FinalFitSummary, final_fit_impl
 from fcstnyctaxi.lib.config.bindings import train_modeling_bindings
 from fcstnyctaxi.lib.config.composition import compose_config, save_config
 from fcstnyctaxi.lib.exog import build_exog_frame
 from fcstnyctaxi.lib.storage_layout import (
     BUNDLE_MODEL_DIR_NAME,
+    SourcedPath,
     composed_config_filename,
 )
 from fcstnyctaxi.lib.utils import get_project_root_dir
@@ -29,6 +27,7 @@ from fcstnyctaxi.models.lightgbm_weekly import (
     lightgbm_weekly_predict,
 )
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
+from fcstnyctaxi.schemas.run_outputs import TrainingData
 
 CONFIG_DIR = get_project_root_dir() / "config"
 FEATURE_RUN_ID = "f-2026-09-21"
@@ -423,6 +422,20 @@ def test_the_manifest_agrees_with_the_panel_it_describes(
     assert training_data["n_obs"] == len(panel)
     assert training_data["n_series"] == panel["unique_id"].nunique()
     assert training_data == {key: summary.as_dict()[key] for key in training_data}
+
+
+def test_the_manifest_training_data_passes_through_the_run_outputs_schema(
+    completed_run: tuple[dict[str, Any], FinalFitSummary],
+) -> None:
+    """register_model copies this block into run_outputs.json through TrainingData,
+    so the schema must hand back exactly what the bundle wrote."""
+    staged, _ = completed_run
+    manifest = json.loads((staged["out_dir"] / _MARKER).read_text())
+    training_data = manifest["training_data"]
+
+    copied = TrainingData.model_validate(training_data).model_dump(mode="json")
+
+    assert copied == training_data
 
 
 def test_the_manifest_names_what_a_reader_needs_to_load_and_predict(

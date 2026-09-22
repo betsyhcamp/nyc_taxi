@@ -8,10 +8,13 @@ from fcstnyctaxi.schemas.run_outputs import (
     PANEL_REQUIRED_COLUMNS,
     FeatureArtifacts,
     FeatureRunOutputs,
+    TrainRunOutputs,
 )
 
 PANEL_URI = "gs://BUCKET/dev/feature/F1/data_prep/time_series.parquet"
 CALENDAR_URI = "gs://BUCKET/dev/feature/F1/data_prep/fiscal_calendar.parquet"
+MODEL_RESOURCE = "projects/123456789/locations/us-central1/models/fcst-a-lightgbm"
+BUNDLE_URI = "gs://BUCKET/dev/train/t1/final_fit/lightgbm/"
 
 
 def _payload(**overrides: object) -> dict:
@@ -78,6 +81,102 @@ def test_feature_artifacts_refuses_rebinding() -> None:
 
     with pytest.raises(ValidationError):
         artifacts.panel_uri = "gs://BUCKET/other.parquet"
+
+
+# ================================================
+# TrainRunOutputs
+# ================================================
+
+
+def _train_payload() -> dict:
+    """A complete Training record, shaped as register_model will write it."""
+    return {
+        "train_run_id": "t1",
+        "published": {"model_tag": f"{MODEL_RESOURCE}@3", "bundle_uri": BUNDLE_URI},
+        "feature_run_id": "F1",
+        "env": "dev",
+        "schema_version": "0.1.0",
+        "git_hash": "a" * 40,
+        "completed_at": "2026-09-20T22:26:03.114927+00:00",
+        "training_data": {"train_end_ds": "2025-10-19", "n_series": 3, "n_obs": 60},
+    }
+
+
+def test_train_run_outputs_reads_back_what_its_writer_serializes() -> None:
+    """Inference reads what register_model writes, with the writer's own flags."""
+    outputs = TrainRunOutputs.model_validate(_train_payload())
+
+    written = outputs.model_dump_json(indent=2, exclude_none=True)
+
+    assert TrainRunOutputs.model_validate_json(written) == outputs
+
+
+@pytest.mark.parametrize("level", [None, "published", "training_data"])
+def test_train_run_outputs_refuses_an_extra_key_at_every_level(
+    level: str | None,
+) -> None:
+    """Unlike Feature's record, this one is ours, so an extra key is a typo."""
+    payload = _train_payload()
+    (payload if level is None else payload[level])["unexpected"] = "x"
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        TrainRunOutputs.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "field", ["train_run_id", "feature_run_id", "env", "schema_version", "git_hash"]
+)
+def test_an_empty_string_is_refused(field: str) -> None:
+    """An empty value names nothing, so a record carrying one is as useless as null."""
+    payload = _train_payload()
+    payload[field] = ""
+
+    with pytest.raises(ValidationError, match=field):
+        TrainRunOutputs.model_validate(payload)
+
+
+def test_a_mount_path_is_refused_as_the_bundle_uri() -> None:
+    """The wrapper holds the bundle's gcsfuse path beside its URI; this is the slip."""
+    payload = _train_payload()
+    payload["published"]["bundle_uri"] = "/gcs/BUCKET/dev/train/t1/final_fit/lightgbm"
+
+    with pytest.raises(ValidationError, match="bundle_uri"):
+        TrainRunOutputs.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "model_tag",
+    [MODEL_RESOURCE, "fcst-a-lightgbm@3"],
+    ids=["unversioned", "unqualified"],
+)
+def test_a_model_tag_that_pins_no_version_or_no_project_is_refused(
+    model_tag: str,
+) -> None:
+    """Unversioned resolves to `default`; unqualified needs aiplatform.init to find."""
+    payload = _train_payload()
+    payload["published"]["model_tag"] = model_tag
+
+    with pytest.raises(ValidationError, match="model_tag"):
+        TrainRunOutputs.model_validate(payload)
+
+
+def test_an_alias_is_a_legal_model_tag() -> None:
+    """The approval gate will write `@champion`, and must not need a schema change."""
+    payload = _train_payload()
+    payload["published"]["model_tag"] = f"{MODEL_RESOURCE}@champion"
+
+    outputs = TrainRunOutputs.model_validate(payload)
+
+    assert outputs.published.model_tag.endswith("@champion")
+
+
+def test_a_completed_at_with_no_offset_is_refused() -> None:
+    """A naive timestamp's zone is a guess; the runners log in UTC."""
+    payload = _train_payload()
+    payload["completed_at"] = "2026-09-20T22:26:03.114927"
+
+    with pytest.raises(ValidationError, match="completed_at"):
+        TrainRunOutputs.model_validate(payload)
 
 
 # ================================================

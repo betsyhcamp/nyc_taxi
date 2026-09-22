@@ -2,6 +2,7 @@
 Vertex execution modes cannot drift. Not `lib/io.py`: composing a config is not IO.
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast, get_args
 
@@ -14,7 +15,7 @@ from fcstnyctaxi.schemas.config.common import SliceName
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 
 # One place for the name a producer writes and a consumer reads.
-_RUN_OUTPUTS_FILENAME = "run_outputs.json"
+RUN_OUTPUTS_FILENAME = "run_outputs.json"
 
 
 def composed_config_filename(model_name: str) -> str:
@@ -27,6 +28,14 @@ def composed_config_filename(model_name: str) -> str:
 
 BUNDLE_MODEL_DIR_NAME = "model"
 """The bundle's subdirectory the save callable owns, apart from the impl's files."""
+
+
+@dataclass(frozen=True)
+class SourcedPath:
+    """A filepath paired w/ the URI it represents. Can't check both are same object."""
+
+    path: Path
+    uri: str
 
 
 def resolve_run_prefix(
@@ -65,7 +74,7 @@ def resolve_run_outputs_uri(
     Slice-generic, so a later `read_train_run_outputs` reuses it.
     """
     prefix = resolve_run_prefix(config_dir, env, slice_name, run_id)
-    return f"{prefix}{_RUN_OUTPUTS_FILENAME}"
+    return f"{prefix}{RUN_OUTPUTS_FILENAME}"
 
 
 def _build_run_prefix(bucket: str, env: str, slice_name: SliceName, run_id: str) -> str:

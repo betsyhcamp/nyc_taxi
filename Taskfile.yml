@@ -149,12 +149,15 @@ tasks:
       vars: [IMAGE]
     cmds:
       # Probes shipped path that config/train/models/naive.yaml names. Spot check only.
+      # Imports every impl a component body imports: every other tier runs in the dev
+      # venv, so a dependency the train group lacks otherwise surfaces only on Vertex.
       - |
         docker run --rm --platform linux/amd64 {{.IMAGE}} python -c '
         import os, pyarrow
         from fcstnyctaxi.runtime_paths import CONFIG_DIR
         from fcstnyctaxi.lib.config.bindings import available_environments
         from fcstnyctaxi.core.train.compose_configs_impl import compose_train_static_configs
+        from fcstnyctaxi.core.train import backtest_impl, evaluate_impl, final_fit_impl, register_model_impl
         from fcstnyctaxi.models import naive
         if not os.environ.get("FCST_GIT_HASH"):
             raise SystemExit("FCST_GIT_HASH is unset; rebuild with --build-arg GIT_HASH=...")

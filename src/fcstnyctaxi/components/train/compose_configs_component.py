@@ -54,12 +54,9 @@ def compose_configs(
     import os
     from pathlib import Path
 
-    from fcstnyctaxi.core.train.compose_configs_impl import (
-        SourcedPath,
-        compose_configs_impl,
-    )
+    from fcstnyctaxi.core.train.compose_configs_impl import compose_configs_impl
     from fcstnyctaxi.lib.config.bindings import resolve_model_names
-    from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
+    from fcstnyctaxi.lib.storage_layout import SourcedPath, resolve_run_prefix
     from fcstnyctaxi.runtime_paths import CONFIG_DIR  # noqa: TID251
 
     # The container has no .git and no git binary, so get_git_hash() returns None

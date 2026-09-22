@@ -5,6 +5,7 @@ from fsspec.implementations.local import LocalFileSystem
 
 from fcstnyctaxi.lib.io import (
     build_run_scoped_uri,
+    delete_from_gcs,
     download_from_gcs,
     prepare_sql,
     read_text_from_gcs,
@@ -178,6 +179,55 @@ def test_read_text_from_gcs_raises_file_not_found_for_a_missing_object(
     a different exception type would slip past its except clause."""
     with pytest.raises(FileNotFoundError):
         read_text_from_gcs("gs://BUCKET/dev/feature/RUNID/run_outputs.json")
+
+
+# ================================================
+# delete_from_gcs tests
+# ================================================
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "s3://BUCKET/dev/train/RUNID/run_outputs.json",
+        "file:///tmp/run_outputs.json",
+        "/tmp/run_outputs.json",
+    ],
+)
+def test_delete_from_gcs_rejects_non_gcs_uri(uri: str) -> None:
+    """Unguarded, a bare path deletes a local file and reports a GCS delete."""
+    with pytest.raises(ValueError, match="must be a gs://"):
+        delete_from_gcs(uri)
+
+
+def test_delete_from_gcs_removes_what_the_writer_wrote(fake_gcs: Path) -> None:
+    """The object is gone afterwards, as the reader sees it."""
+    uri = "gs://BUCKET/dev/train/RUNID/run_outputs.json"
+    write_text_to_gcs("{}", uri)
+
+    delete_from_gcs(uri)
+
+    with pytest.raises(FileNotFoundError):
+        read_text_from_gcs(uri)
+
+
+def test_delete_from_gcs_accepts_a_missing_object(fake_gcs: Path) -> None:
+    """A run's first registration has no earlier record, so absence is not an error."""
+    delete_from_gcs("gs://BUCKET/dev/train/RUNID/run_outputs.json")
+
+
+def test_delete_from_gcs_refuses_a_prefix_and_leaves_its_contents(
+    fake_gcs: Path,
+) -> None:
+    """A slip naming the run root instead of its record must cost nothing."""
+    run_root = fake_gcs / "BUCKET" / "dev" / "train" / "RUNID"
+    run_root.mkdir(parents=True)
+    (run_root / "run_identity.json").write_text("{}")
+
+    with pytest.raises(ValueError, match="single object"):
+        delete_from_gcs("gs://BUCKET/dev/train/RUNID")
+
+    assert (run_root / "run_identity.json").is_file()
 
 
 # ================================================

@@ -263,7 +263,11 @@ def test_every_task_reading_composed_configs_reads_what_compose_wrote(
 
     # KFP accepts a Dataset for Input[Artifact], so a misrouting compiles silently.
     # Non-vacuity, naming every non-backtest reader: a renamed input would drop one.
-    assert set(_backtest_tasks(ir)) | {"evaluate", "final-fit"} <= set(readers)
+    assert set(_backtest_tasks(ir)) | {
+        "evaluate",
+        "final-fit",
+        "register-model",
+    } <= set(readers)
     for task in readers.values():
         source = task["inputs"]["artifacts"]["composed_configs"]["taskOutputArtifact"]
         assert source["producerTask"] == "compose-configs"
@@ -341,6 +345,47 @@ def test_the_final_fit_task_is_display_named_for_its_model(tmp_path: Path) -> No
 
     expected = f"final_fit-{SYNTHETIC_MODEL_ROLES.challenger}"
     assert tasks["final-fit"]["taskInfo"]["name"] == expected
+
+
+def test_the_register_task_registers_the_bundle_final_fit_wrote(tmp_path: Path) -> None:
+    """Test the bundle edge: KFP takes a bare Artifact for Input[Model], so any other
+    output compiles, and the registry would record bytes final_fit never wrote."""
+    tasks = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)["root"]["dag"]["tasks"]
+
+    source = tasks["register-model"]["inputs"]["artifacts"]["bundle"]
+    assert source["taskOutputArtifact"] == {
+        "producerTask": "final-fit",
+        "outputArtifactKey": "bundle",
+    }
+
+
+def test_the_register_task_records_the_image_it_runs_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test the serving image is a constant equal to the task's own executor image,
+    read from the component: the environment is made to disagree here to prove it."""
+    monkeypatch.setenv(
+        "FCST_TRAIN_IMAGE",
+        "us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers/train@sha256:"
+        + "b" * 64,
+    )
+    ir = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)
+
+    parameters = ir["root"]["dag"]["tasks"]["register-model"]["inputs"]["parameters"]
+    own_image = _executor_of(ir, "register-model")["container"]["image"]
+    # Self-check: the component bound its image at import, before the change above.
+    assert own_image != os.environ["FCST_TRAIN_IMAGE"]
+    assert parameters["serving_container_image_uri"]["runtimeValue"] == {
+        "constant": own_image
+    }
+
+
+def test_the_register_task_is_display_named_for_its_model(tmp_path: Path) -> None:
+    """Test that the operator sees which model the task registers."""
+    tasks = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)["root"]["dag"]["tasks"]
+
+    expected = f"register_model-{SYNTHETIC_MODEL_ROLES.challenger}"
+    assert tasks["register-model"]["taskInfo"]["name"] == expected
 
 
 def test_each_importer_takes_its_uri_as_a_runtime_parameter(tmp_path: Path) -> None:

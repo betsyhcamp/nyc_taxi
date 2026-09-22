@@ -1,3 +1,13 @@
+import os
+
+# Before every import: google-auth reads both once, on first import, so no fixture
+# can. Unset, a missed mock probes for a metadata server, which on a GCP VM would
+# authenticate it; gcsfs still retries the dead host ~15 s. NO_GCE_CHECK takes
+# only lowercase "true".
+os.environ["NO_GCE_CHECK"] = "true"
+os.environ["GCE_METADATA_HOST"] = "127.0.0.1:1"
+
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +19,17 @@ from google.cloud import bigquery
 from google.cloud.bigquery.job import QueryJob
 from google.cloud.bigquery.table import RowIterator
 from pytest_mock import MockerFixture
+
+
+@pytest.fixture(autouse=True, scope="session")
+def no_gcp_credentials(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Hide the developer's GCP credentials, as CI has none, so a test missing a mock
+    fails here rather than reaching the real project."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+        # Where gcloud keeps the credentials file google.auth.default falls back to.
+        mp.setenv("CLOUDSDK_CONFIG", str(tmp_path_factory.mktemp("no_gcloud")))
+        yield
 
 
 @pytest.fixture

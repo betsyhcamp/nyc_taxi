@@ -106,6 +106,24 @@ def read_text_from_gcs(gcs_uri: str) -> str:
         return f.read()
 
 
+def delete_from_gcs(gcs_uri: str) -> None:
+    """Delete one GCS object if present: the bucket's `unlink(missing_ok=True)`.
+
+    Raises:
+        ValueError: gcs_uri is not a gs:// URI, or names a prefix. Single objects
+            only, so a slip can never take a directory with it.
+    """
+    require_gcs_uri(gcs_uri)
+    fs, path = fsspec.url_to_fs(gcs_uri)
+    if fs.isdir(path):
+        raise ValueError(
+            f"gcs_uri {gcs_uri!r} names a prefix; delete_from_gcs removes a single "
+            "object."
+        )
+    if fs.exists(path):
+        fs.rm_file(path)
+
+
 def download_from_gcs(gcs_uri: str, destination_dir: Path) -> Path:
     """Download a single GCS object into destination_dir, returning its local path.
 

@@ -16,24 +16,31 @@ from typing import cast
 
 from fcstnyctaxi.core.train.backtest_impl import backtest_impl
 from fcstnyctaxi.core.train.compose_configs_impl import (
-    SourcedPath,
     compose_configs_impl,
     compose_train_static_configs,
 )
 from fcstnyctaxi.core.train.evaluate_impl import evaluate_impl
 from fcstnyctaxi.core.train.final_fit_impl import final_fit_impl
+from fcstnyctaxi.core.train.register_model_impl import register_model_impl
+from fcstnyctaxi.lib.container_images import require_digest_ref
 from fcstnyctaxi.lib.io import (
+    delete_from_gcs,
     download_from_gcs,
     require_gcs_uri,
     sync_to_gcs,
     upload_to_gcs,
 )
 from fcstnyctaxi.lib.run_outputs import resolve_feature_artifacts
-from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
+from fcstnyctaxi.lib.storage_layout import (
+    RUN_OUTPUTS_FILENAME,
+    SourcedPath,
+    resolve_run_prefix,
+)
 from fcstnyctaxi.lib.utils import (
     generate_run_id,
     get_project_root_dir,
     require_git_hash,
+    require_label_safe_run_id,
     require_path_safe_run_id,
 )
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
@@ -60,8 +67,8 @@ def _parse_args() -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(
         description="Compose every Training config for one run, back each model, "
-        "score the challenger against the benchmark, then fit the challenger on "
-        "the full panel."
+        "score the challenger against the benchmark, fit the challenger on the "
+        "full panel, then, given --serving-image, register it."
     )
     parser.add_argument(
         "--env",
@@ -98,6 +105,13 @@ def _parse_args() -> argparse.Namespace:
         help="Back only this model instead of every model in model_roles; must "
         "name one this run composed. Scoring and the final fit run only if both "
         "sidecars are complete.",
+    )
+    parser.add_argument(
+        "--serving-image",
+        default=None,
+        help="Register the fitted challenger, recording this digest-pinned image as "
+        "the runtime that reads its bundle. Absent, the run stops after the final "
+        "fit, registers nothing and writes no run_outputs.json.",
     )
     parser.add_argument(
         "--scratch-dir",
@@ -151,25 +165,21 @@ def _select_models(model_names: list[str], selected: str | None) -> list[str]:
 
 
 def main() -> None:
-    """Compose one Training run's configs, back each model, score the pair, then fit
-    the challenger.
+    """Compose one Training run, back each model, score the pair, fit the challenger
+    and, given `--serving-image`, register it.
 
-    A failing model stops the run rather than being collected: the publish is per
-    model and inside the loop, so an earlier model's sidecar is already complete.
-    Scoring reads the sidecars the run id has accumulated rather than the ones this
-    invocation wrote, so a narrowed rerun that completes the pair scores it instead
-    of costing a second backtest of the model that already succeeded. The final fit
-    follows scoring and runs only when scoring did.
+    A failing model stops the run; each sidecar publishes inside the loop, so earlier
+    ones are already complete. Scoring reads every sidecar the run id holds, so a
+    narrowed rerun that completes the pair scores it without backing the other model
+    again. The fit runs only when scoring did, and registration only after the fit.
 
     Raises:
-        ValueError: If either run id is not path-safe, if exactly one URI override
-            was given, if the Feature run published no manifest, if an input URI
-            cannot be mirrored to a distinct local path, if `--env` has no
-            `environments/<env>.yaml`, if `--model` names no model this run
-            composed, on a failed lineage check, or on any composition, backtest,
-            evaluation or final fit failure.
-        RuntimeError: If the git hash cannot be determined, since a run whose
-            commit is unknown cannot be reproduced from its own record.
+        ValueError: If a run id or `--serving-image` fails its format check, only one
+            URI override is given, the Feature run published no manifest, an input
+            URI cannot be mirrored, `--env` has no config file, `--model` names no
+            composed model, or any step fails.
+        RuntimeError: If the git hash cannot be determined, or more than one
+            registered version carries this run id.
         ValidationError: If an identity field or an override URI is malformed.
     """
     logging.Formatter.converter = time.gmtime
@@ -180,10 +190,14 @@ def main() -> None:
     )
     args = _parse_args()
 
-    # Only --run-id becomes a path; the other is checked for one vocabulary.
+    # Only --run-id becomes a path and a registry label. The other is Feature's, so
+    # it is held to the path vocabulary alone.
     run_id = generate_run_id() if args.run_id is None else args.run_id
     require_path_safe_run_id(args.feature_run_id, "--feature-run-id")
-    require_path_safe_run_id(run_id, "--run-id")
+    require_label_safe_run_id(run_id, "--run-id")
+    # Here, so a tag rather than a digest is refused before any step spends a thing.
+    if args.serving_image is not None:
+        require_digest_ref(args.serving_image, "--serving-image")
 
     project_root = get_project_root_dir()
     config_dir = project_root / "config"
@@ -384,6 +398,39 @@ def main() -> None:
         uploaded,
         removed,
         final_fit_uri,
+    )
+
+    # What the impl's unlink does through the mount on Vertex, at the same point: a
+    # rerun that registers nothing, or fails to, must not leave the earlier run's
+    # published record pointing at a version whose bundle was just replaced.
+    delete_from_gcs(f"{run_prefix}{RUN_OUTPUTS_FILENAME}")
+
+    # Opt-in: every local run holds live credentials, and each registration is a
+    # version in the shared registry.
+    if args.serving_image is None:
+        logger.info(
+            "register_model skipped: no --serving-image, so nothing was registered "
+            "and no %s is published under %s.",
+            RUN_OUTPUTS_FILENAME,
+            run_prefix,
+        )
+        return
+
+    # The wrapper's arguments: the bundle's mirror paired with the URI it uploads.
+    register_summary = register_model_impl(
+        bundle=SourcedPath(path=final_fit_dir, uri=final_fit_uri),
+        compose_configs_dir=compose_dir,
+        serving_container_image_uri=args.serving_image,
+        run_dir=compose_dir.parent,
+    )
+    # Last of every publish, so its presence at the run root means the run finished.
+    upload_to_gcs(compose_dir.parent / RUN_OUTPUTS_FILENAME, run_prefix)
+
+    logger.info(
+        "register_model published: model_tag=%s uploaded=%s uri=%s",
+        register_summary.model_tag,
+        register_summary.uploaded,
+        f"{run_prefix}{RUN_OUTPUTS_FILENAME}",
     )
 
 

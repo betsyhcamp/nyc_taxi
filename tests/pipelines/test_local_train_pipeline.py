@@ -21,15 +21,21 @@ from fcstnyctaxi.core.train.compose_configs_impl import (
 )
 from fcstnyctaxi.core.train.evaluate_impl import EvaluateSummary
 from fcstnyctaxi.core.train.final_fit_impl import FinalFitSummary
+from fcstnyctaxi.core.train.register_model_impl import RegisterModelSummary
 from fcstnyctaxi.lib import run_outputs
-from fcstnyctaxi.lib.storage_layout import BUNDLE_MODEL_DIR_NAME, resolve_run_prefix
-from fcstnyctaxi.lib.utils import get_project_root_dir
+from fcstnyctaxi.lib.storage_layout import (
+    BUNDLE_MODEL_DIR_NAME,
+    RUN_OUTPUTS_FILENAME,
+    SourcedPath,
+    resolve_run_prefix,
+)
+from fcstnyctaxi.lib.utils import get_project_root_dir, require_path_safe_run_id
 from fcstnyctaxi.pipelines import local_train_pipeline
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.run_outputs import FeatureArtifacts, FeatureRunOutputs
 
 ENV = "dev"
-RUN_ID = "t-20260913T000000000000Z"
+RUN_ID = "t-20260913t000000000000z"
 FEATURE_RUN_ID = "f-20260913T000000000000Z"
 PREVIOUS_OUTPUT = "the previous attempt's output"
 # A step segment Training never constructs, so an assertion on these proves the
@@ -85,6 +91,23 @@ FINAL_FIT_SUMMARY = FinalFitSummary(
     train_run_id=RUN_ID,
     feature_run_id=FEATURE_RUN_ID,
 )
+SERVING_IMAGE = "us-central1-docker.pkg.dev/p/r/train@sha256:" + "c" * 64
+REGISTER_SUMMARY = RegisterModelSummary(
+    model_tag="projects/123456789/locations/us-central1/models/fcst-a-lightgbm@1",
+    model_id="fcst-a-lightgbm",
+    version_id="1",
+    uploaded=True,
+    model_name="lightgbm",
+    train_run_id=RUN_ID,
+    git_hash="abc1234",
+)
+
+
+def _compose_outputs(*, out_dir: Path, **_: object) -> ComposeConfigsSummary:
+    """Write what the patched impl would have, since the publish step sends it."""
+    (out_dir.parent / "run_identity.json").write_text('{"seeded": true}')
+    (out_dir / "manifest.json").write_text("{}")
+    return COMPOSE_SUMMARY
 
 
 def _backtest_outputs(*, out_dir: Path, **_: object) -> BacktestSummary:
@@ -109,6 +132,12 @@ def _final_fit_outputs(*, out_dir: Path, **_: object) -> FinalFitSummary:
     (out_dir / BUNDLE_MODEL_DIR_NAME / "weights.bin").write_bytes(b"fitted")
     (out_dir / "final_fit_manifest.json").write_text("{}")
     return FINAL_FIT_SUMMARY
+
+
+def _register_outputs(*, run_dir: Path, **_: object) -> RegisterModelSummary:
+    """The same, for the run record the impl writes at the run root."""
+    (run_dir / RUN_OUTPUTS_FILENAME).write_text("{}")
+    return REGISTER_SUMMARY
 
 
 def _challenger(root: Path) -> str:
@@ -204,13 +233,50 @@ def test_a_malformed_train_config_raises_before_the_resolve_and_the_clear(
     assert (out_dir / "run_identity.json").read_text() == PREVIOUS_OUTPUT
 
 
-def test_each_backtest_is_published_before_the_next_one_runs(
+def test_a_run_id_safe_as_a_path_but_not_as_a_label_is_refused(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     mocker: MockerFixture,
 ) -> None:
-    """Four orderings, each with its own loss: no record of what the run read, a
-    finished sidecar lost to a later failure, an absent pair scored, an unscored fit."""
+    """Test the label charset is refused here, not by Vertex at the last task."""
+    run_id = RUN_ID.upper()
+    # Self-check: only the stricter guard can refuse it.
+    require_path_safe_run_id(run_id, "--run-id")
+    # Keeps a run with the guard removed off the network.
+    mocker.patch.object(
+        run_outputs, "read_text_from_gcs", side_effect=FileNotFoundError
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "local_train_pipeline",
+            "--env",
+            ENV,
+            "--feature-run-id",
+            FEATURE_RUN_ID,
+            "--run-id",
+            run_id,
+            "--scratch-dir",
+            str(tmp_path / "scratch"),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="--run-id"):
+        local_train_pipeline.main()
+
+
+@pytest.mark.parametrize(
+    "serving_image", [None, SERVING_IMAGE], ids=["unregistered", "registered"]
+)
+def test_each_backtest_is_published_before_the_next_one_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+    serving_image: str | None,
+) -> None:
+    """Five orderings, each with its own loss: no record of what the run read, a lost
+    sidecar, an absent pair scored, an unscored fit, a record ahead of its steps."""
     root = tmp_path / "project"
     shutil.copytree(get_project_root_dir() / "config", root / "config")
     monkeypatch.setenv("PROJECT_ROOT", str(root))
@@ -220,14 +286,14 @@ def test_each_backtest_is_published_before_the_next_one_runs(
     mocker.patch.object(
         local_train_pipeline, "download_from_gcs", side_effect=lambda uri, d: d / "f"
     )
-    mocker.patch.object(
+    compose = mocker.patch.object(
         local_train_pipeline, "compose_configs_impl", return_value=COMPOSE_SUMMARY
     )
     sync = mocker.patch.object(local_train_pipeline, "sync_to_gcs", return_value=(7, 0))
     # One manager, impls included, so the assertion sees order across every call.
     publishes = mocker.MagicMock()
     publishes.attach_mock(
-        mocker.patch.object(local_train_pipeline, "upload_to_gcs"), "identity"
+        mocker.patch.object(local_train_pipeline, "upload_to_gcs"), "upload"
     )
     publishes.attach_mock(sync, "sync")
     publishes.attach_mock(
@@ -246,7 +312,14 @@ def test_each_backtest_is_published_before_the_next_one_runs(
         local_train_pipeline, "final_fit_impl", side_effect=_final_fit_outputs
     )
     publishes.attach_mock(final_fit, "final_fit")
+    delete = mocker.patch.object(local_train_pipeline, "delete_from_gcs")
+    publishes.attach_mock(delete, "delete")
+    register = mocker.patch.object(
+        local_train_pipeline, "register_model_impl", side_effect=_register_outputs
+    )
+    publishes.attach_mock(register, "register")
 
+    registering = [] if serving_image is None else ["--serving-image", serving_image]
     monkeypatch.setattr(
         sys,
         "argv",
@@ -262,6 +335,7 @@ def test_each_backtest_is_published_before_the_next_one_runs(
             f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/data_prep/fiscal_calendar.parquet",
             "--run-id",
             RUN_ID,
+            *registering,
             "--scratch-dir",
             str(tmp_path / "scratch"),
         ],
@@ -270,8 +344,10 @@ def test_each_backtest_is_published_before_the_next_one_runs(
     local_train_pipeline.main()
 
     run_prefix = resolve_run_prefix(root / "config", ENV, "train", RUN_ID)
+    # Without the flag the run stops after the fit: no registry write, no record.
+    registered = [] if serving_image is None else ["register", "upload"]
     assert [call[0] for call in publishes.mock_calls] == [
-        "identity",
+        "upload",
         "sync",
         "backtest",
         "sync",
@@ -281,8 +357,11 @@ def test_each_backtest_is_published_before_the_next_one_runs(
         "sync",
         "final_fit",
         "sync",
+        "delete",
+        *registered,
     ]
     assert publishes.mock_calls[0].args[1] == run_prefix
+    delete.assert_called_once_with(f"{run_prefix}{RUN_OUTPUTS_FILENAME}")
     assert [call.kwargs["completion_marker"] for call in sync.call_args_list] == [
         "manifest.json",
         "backtest_manifest.json",
@@ -299,6 +378,22 @@ def test_each_backtest_is_published_before_the_next_one_runs(
     assert final_fit.call_count == 1
     assert final_fit.call_args.kwargs["model_name"] == challenger
 
+    if serving_image is not None:
+        # The wrapper's arguments: one bundle as mirror and URI, the compose step's
+        # directory, and the run root above it, where the record is published from.
+        kwargs = register.call_args.kwargs
+        assert kwargs["bundle"] == SourcedPath(
+            path=final_fit.call_args.kwargs["out_dir"],
+            uri=f"{run_prefix}final_fit/{challenger}/",
+        )
+        assert kwargs["compose_configs_dir"] == compose.call_args.kwargs["out_dir"]
+        assert kwargs["run_dir"] == kwargs["compose_configs_dir"].parent
+        assert kwargs["serving_container_image_uri"] == SERVING_IMAGE
+        assert publishes.mock_calls[-1].args == (
+            kwargs["run_dir"] / RUN_OUTPUTS_FILENAME,
+            run_prefix,
+        )
+
 
 def test_the_published_destinations_are_ones_the_transport_accepts(
     fake_gcs: Path,
@@ -308,13 +403,6 @@ def test_the_published_destinations_are_ones_the_transport_accepts(
 ) -> None:
     """The ordering test above patches both publishers, so it proves the calls are
     made and never that the transport would accept what they name."""
-
-    def _impl_outputs(*, out_dir: Path, **_: object) -> ComposeConfigsSummary:
-        """Write what the patched impl would have, since the publish step sends it."""
-        (out_dir.parent / "run_identity.json").write_text('{"seeded": true}')
-        (out_dir / "manifest.json").write_text("{}")
-        return COMPOSE_SUMMARY
-
     root = tmp_path / "project"
     shutil.copytree(get_project_root_dir() / "config", root / "config")
     monkeypatch.setenv("PROJECT_ROOT", str(root))
@@ -325,7 +413,7 @@ def test_the_published_destinations_are_ones_the_transport_accepts(
         local_train_pipeline, "download_from_gcs", side_effect=lambda uri, d: d / "f"
     )
     mocker.patch.object(
-        local_train_pipeline, "compose_configs_impl", side_effect=_impl_outputs
+        local_train_pipeline, "compose_configs_impl", side_effect=_compose_outputs
     )
     mocker.patch.object(
         local_train_pipeline, "backtest_impl", side_effect=_backtest_outputs
@@ -335,6 +423,9 @@ def test_the_published_destinations_are_ones_the_transport_accepts(
     )
     mocker.patch.object(
         local_train_pipeline, "final_fit_impl", side_effect=_final_fit_outputs
+    )
+    mocker.patch.object(
+        local_train_pipeline, "register_model_impl", side_effect=_register_outputs
     )
     mocker.patch.object(
         run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
@@ -352,6 +443,8 @@ def test_the_published_destinations_are_ones_the_transport_accepts(
             FEATURE_RUN_ID,
             "--run-id",
             RUN_ID,
+            "--serving-image",
+            SERVING_IMAGE,
             "--scratch-dir",
             str(tmp_path / "scratch"),
         ],
@@ -373,6 +466,114 @@ def test_the_published_destinations_are_ones_the_transport_accepts(
     bundle = published / "final_fit" / _challenger(root)
     assert (bundle / "final_fit_manifest.json").is_file()
     assert (bundle / BUNDLE_MODEL_DIR_NAME / "weights.bin").is_file()
+    # A file to the run prefix, like run_identity.json, but last of the run.
+    assert (published / RUN_OUTPUTS_FILENAME).is_file()
+
+
+@pytest.mark.parametrize(
+    "registering", [False, True], ids=["unregistered", "failed_registration"]
+)
+def test_a_rerun_leaves_no_earlier_record_published(
+    fake_gcs: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+    registering: bool,
+) -> None:
+    """The rerun replaced the bundle, so an earlier record left standing would point
+    Inference at a version whose bytes are gone; Vertex's impl deletes it too."""
+    root = tmp_path / "project"
+    shutil.copytree(get_project_root_dir() / "config", root / "config")
+    monkeypatch.setenv("PROJECT_ROOT", str(root))
+    mocker.patch.object(
+        local_train_pipeline, "require_git_hash", return_value="abc1234"
+    )
+    mocker.patch.object(
+        local_train_pipeline, "download_from_gcs", side_effect=lambda uri, d: d / "f"
+    )
+    mocker.patch.object(
+        local_train_pipeline, "compose_configs_impl", side_effect=_compose_outputs
+    )
+    mocker.patch.object(
+        local_train_pipeline, "backtest_impl", side_effect=_backtest_outputs
+    )
+    mocker.patch.object(
+        local_train_pipeline, "evaluate_impl", side_effect=_evaluate_outputs
+    )
+    mocker.patch.object(
+        local_train_pipeline, "final_fit_impl", side_effect=_final_fit_outputs
+    )
+    mocker.patch.object(
+        local_train_pipeline,
+        "register_model_impl",
+        side_effect=ValueError("registered at another git_hash"),
+    )
+    mocker.patch.object(
+        run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
+    )
+    run_prefix = resolve_run_prefix(root / "config", ENV, "train", RUN_ID)
+    # What an earlier, registered run of this id left at the run root.
+    earlier_record = fake_gcs / run_prefix.removeprefix("gs://") / RUN_OUTPUTS_FILENAME
+    earlier_record.parent.mkdir(parents=True)
+    earlier_record.write_text('{"earlier": true}')
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "local_train_pipeline",
+            "--env",
+            ENV,
+            "--feature-run-id",
+            FEATURE_RUN_ID,
+            "--run-id",
+            RUN_ID,
+            *(["--serving-image", SERVING_IMAGE] if registering else []),
+            "--scratch-dir",
+            str(tmp_path / "scratch"),
+        ],
+    )
+
+    if registering:
+        with pytest.raises(ValueError, match="another git_hash"):
+            local_train_pipeline.main()
+    else:
+        local_train_pipeline.main()
+
+    assert not earlier_record.exists()
+
+
+def test_a_serving_image_that_is_not_digest_pinned_is_refused_before_any_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+) -> None:
+    """A tag can be repointed, so the runtime a version records would drift."""
+    # Keeps a run with the guard removed off the network.
+    mocker.patch.object(
+        run_outputs, "read_text_from_gcs", side_effect=FileNotFoundError
+    )
+    downloads = mocker.patch.object(local_train_pipeline, "download_from_gcs")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "local_train_pipeline",
+            "--env",
+            ENV,
+            "--feature-run-id",
+            FEATURE_RUN_ID,
+            "--run-id",
+            RUN_ID,
+            "--serving-image",
+            "us-central1-docker.pkg.dev/p/r/train:latest",
+            "--scratch-dir",
+            str(tmp_path / "scratch"),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="--serving-image"):
+        local_train_pipeline.main()
+
+    downloads.assert_not_called()
 
 
 def test_a_narrowed_rerun_scores_the_pair_the_run_id_has_accumulated(
@@ -400,6 +601,7 @@ def test_a_narrowed_rerun_scores_the_pair_the_run_id_has_accumulated(
     )
     mocker.patch.object(local_train_pipeline, "upload_to_gcs")
     mocker.patch.object(local_train_pipeline, "sync_to_gcs", return_value=(7, 0))
+    mocker.patch.object(local_train_pipeline, "delete_from_gcs")
     mocker.patch.object(
         run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
     )

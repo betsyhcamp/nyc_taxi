@@ -14,7 +14,10 @@ def valid_infra_dict() -> dict:
     """A complete, valid TrainInfraConfig dict. Each test gets a fresh copy."""
     return {
         "display_name_prefix": "fcst-train-pipeline",
-        "model_registry": {"display_name": "fcst-monthly-revenue"},
+        "model_registry": {
+            "display_name_prefix": "fcst-monthly-revenue",
+            "model_id_prefix": "fcst-monthly-revenue",
+        },
     }
 
 
@@ -55,26 +58,52 @@ def test_valid_dict_constructs_train_infra_config(valid_infra_dict: dict) -> Non
     config = TrainInfraConfig(**valid_infra_dict)
 
     assert config.display_name_prefix == "fcst-train-pipeline"
-    assert config.model_registry.display_name == "fcst-monthly-revenue"
+    assert config.model_registry.display_name_prefix == "fcst-monthly-revenue"
+    assert config.model_registry.model_id_prefix == "fcst-monthly-revenue"
 
 
 def test_train_infra_rejects_an_unknown_key(valid_infra_dict: dict) -> None:
-    """extra="forbid" is what makes a stray key here fail at composition.
-
-    Without it the key is accepted and silently discarded — the failure the
-    round-trip drop check exists to catch on the tsbricks-owned side, which a
-    project-owned destination should never need because it refuses the key
-    outright.
-
-    A block that once carried Feature's output filenames was deleted from this
-    schema, and its own test was the only thing exercising that strictness.
-    Asserting the refusal rather than the surviving field list keeps the test
-    about a hazard: adding a real third field must not break it.
-    """
+    """extra="forbid" refuses a stray key rather than silently dropping it. Asserts
+    the refusal, not the field list, so adding a real field cannot break it."""
     valid_infra_dict["output_bucket"] = "nyc-taxi-ehc--modeling"
 
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         TrainInfraConfig(**valid_infra_dict)
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "9fcst",  # a composed id may not start with a digit
+        "-fcst",  # nor a hyphen
+        "_fcst",  # legal first character in a model_id, but not in the prefix
+        "Fcst",  # uppercase, which no SDK check stops before the service
+        "fcstRevenue",
+        "fcst.revenue",
+        "fcst revenue",
+        "fcst_revenue",
+        "fcst-",  # the `--` seam at the join
+        "",
+    ],
+)
+def test_model_id_prefix_rejects_a_prefix_the_pattern_excludes(
+    valid_infra_dict: dict, prefix: str
+) -> None:
+    """Each case breaks one clause: first character, body charset, or the seam."""
+    valid_infra_dict["model_registry"]["model_id_prefix"] = prefix
+
+    with pytest.raises(ValidationError, match="model_id_prefix"):
+        TrainInfraConfig(**valid_infra_dict)
+
+
+@pytest.mark.parametrize("prefix", ["a", "fcst2", "fcst-monthly-revenue"])
+def test_model_id_prefix_accepts_a_prefix_that_composes_a_clean_id(
+    valid_infra_dict: dict, prefix: str
+) -> None:
+    """The single letter is the pattern's optional tail, easiest to break."""
+    valid_infra_dict["model_registry"]["model_id_prefix"] = prefix
+
+    assert TrainInfraConfig(**valid_infra_dict).model_registry.model_id_prefix == prefix
 
 
 # ================================================

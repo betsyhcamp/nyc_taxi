@@ -2,4 +2,7 @@
 display_name_prefix: fcst-train-pipeline
 
 model_registry:
-  display_name: fcst-monthly-revenue
+  # Identical today; never merge them. model_id_prefix is permanent: every version
+  # hangs off the resource it names. display_name_prefix is a rewordable label.
+  display_name_prefix: fcst-monthly-revenue
+  model_id_prefix: fcst-monthly-revenue

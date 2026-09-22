@@ -32,7 +32,9 @@ from pathlib import Path
 import pytest
 from tsbricks.backtesting.schema import BacktestConfig
 
+from fcstnyctaxi.lib.config.bindings import model_names_from_roles
 from fcstnyctaxi.lib.config.loading import _load_config_file
+from fcstnyctaxi.lib.registry_ids import compose_display_name, compose_model_id
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import TrainInfraConfig, TrainModelingConfig
@@ -85,7 +87,10 @@ def test_train_infra_validates() -> None:
     config = TrainInfraConfig(**_load_config_file(CONFIG_DIR / "train/infra.yaml"))
 
     assert config.display_name_prefix == "fcst-train-pipeline"
-    assert config.model_registry.display_name == "fcst-monthly-revenue"
+    assert config.model_registry.display_name_prefix == "fcst-monthly-revenue"
+    # Pinned because an edit forks the registry: the next run creates a new Model
+    # resource rather than a version, and nothing raises.
+    assert config.model_registry.model_id_prefix == "fcst-monthly-revenue"
 
 
 def test_train_modeling_validates() -> None:
@@ -96,6 +101,26 @@ def test_train_modeling_validates() -> None:
 
     assert config.evaluation_periods.start_months is None
     assert len(config.tiering.tier_labels) == 5
+
+
+def test_every_registrable_model_composes_legal_registry_names() -> None:
+    """The gate compose_configs runs on the image's tree, run here on the repo's.
+    Registrable means a role model declaring callables, the only kind final_fit fits."""
+    infra = TrainInfraConfig(**_load_config_file(CONFIG_DIR / "train/infra.yaml"))
+    modeling = TrainModelingConfig(
+        **_load_config_file(CONFIG_DIR / "train/modeling.yaml")
+    )
+    registrable = [
+        name
+        for name in model_names_from_roles(modeling.model_roles)
+        if modeling.model_settings[name].fit_callable is not None
+    ]
+
+    # Self-check: an empty set would pass vacuously.
+    assert registrable
+    for model_name in registrable:
+        compose_model_id(infra.model_registry.model_id_prefix, model_name)
+        compose_display_name(infra.model_registry.display_name_prefix, model_name)
 
 
 def test_every_model_role_has_a_config_file() -> None:

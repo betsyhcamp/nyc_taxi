@@ -29,7 +29,7 @@ from fcstnyctaxi.lib.config.bindings import (
     train_infra_bindings,
 )
 from fcstnyctaxi.lib.config.composition import compose_config
-from fcstnyctaxi.lib.utils import get_project_root_dir
+from fcstnyctaxi.lib.utils import get_project_root_dir, require_path_safe_run_id
 from fcstnyctaxi.pipelines import local_train_pipeline
 from fcstnyctaxi.pipelines.train_pipeline import build_train_pipeline
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
@@ -38,7 +38,7 @@ from fcstnyctaxi.schemas.run_outputs import FeatureArtifacts, FeatureRunOutputs
 from scripts import submit_train_pipeline
 
 ENV = "dev"
-RUN_ID = "t-20260913T000000000000Z"
+RUN_ID = "t-20260913t000000000000z"
 FEATURE_RUN_ID = "f-20260913T000000000000Z"
 PANEL_URI = f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/data_prep/time_series.parquet"
 CALENDAR_URI = (
@@ -65,8 +65,9 @@ RESOURCE_NAME = "projects/123456789/locations/us-central1/pipelineJobs/fcst-trai
 # Everything else must appear on both, so a new flag has to be classified here.
 # --model is local because the domain set is the DAG's parameters and the model
 # set is not one: Vertex fixes it in the compiled template, so narrowing it there
-# recompiles rather than passes a flag.
-LOCAL_ORCHESTRATION_FLAGS = frozenset({"--scratch-dir", "--model"})
+# recompiles rather than passes a flag. --serving-image is local for the same
+# reason: Vertex binds the task's own pinned image at compile time.
+LOCAL_ORCHESTRATION_FLAGS = frozenset({"--scratch-dir", "--model", "--serving-image"})
 VERTEX_ORCHESTRATION_FLAGS = frozenset({"--template-path", "--wait", "--no-caching"})
 
 
@@ -329,6 +330,23 @@ def test_a_malformed_feature_run_id_names_the_flag_it_arrived_on(
 
     with pytest.raises(ValueError, match="--feature-run-id"):
         submit_train_pipeline.main()
+
+
+def test_a_run_id_safe_as_a_path_but_not_as_a_label_is_refused_before_the_sdk(
+    template: Path,
+    vertex: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test the label charset is refused at submit, not by Vertex at the last task."""
+    run_id = RUN_ID.upper()
+    # Self-check: only the stricter guard can refuse it.
+    require_path_safe_run_id(run_id, "--run-id")
+    monkeypatch.setattr("sys.argv", _argv(template, {"--run-id": run_id}))
+
+    with pytest.raises(ValueError, match="--run-id"):
+        submit_train_pipeline.main()
+
+    assert vertex.mock_calls == []
 
 
 def test_a_template_pinning_no_container_executors_warns_and_still_submits(

@@ -19,6 +19,7 @@ from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
 from fcstnyctaxi.lib.utils import (
     generate_run_id,
     get_project_root_dir,
+    require_label_safe_run_id,
     require_path_safe_run_id,
 )
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
@@ -119,9 +120,10 @@ def main() -> None:
 
     Raises:
         RuntimeError: If FCST_TRAIN_SERVICE_ACCOUNT is unset or blank.
-        ValueError: If either run id is not path-safe, if `--env` has no
-            `environments/<env>.yaml`, if exactly one URI override was given, if
-            the Feature run published no manifest, or on any composition failure.
+        ValueError: If `--feature-run-id` is not path-safe or `--run-id` not
+            label-safe, if `--env` has no `environments/<env>.yaml`, if exactly
+            one URI override was given, if the Feature run published no
+            manifest, or on any composition failure.
         FileNotFoundError: If `--template-path` names no file.
         ValidationError: If an override URI is malformed.
     """
@@ -143,10 +145,11 @@ def main() -> None:
             "submit as. Set it in .env or export it; see .env.example."
         )
 
-    # Only --run-id becomes a path; the other is checked for one vocabulary.
+    # Only --run-id becomes a path and a registry label. The other is Feature's, so
+    # it is held to the path vocabulary alone.
     run_id = generate_run_id() if args.run_id is None else args.run_id
     require_path_safe_run_id(args.feature_run_id, "--feature-run-id")
-    require_path_safe_run_id(run_id, "--run-id")
+    require_label_safe_run_id(run_id, "--run-id")
 
     config_dir = get_project_root_dir() / "config"
     # First, for the --env guard: an unknown selector names the available ones.

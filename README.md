@@ -123,7 +123,7 @@ Component completed.
     }
 ```
 
-`<run_id>` is a sortable UTC microsecond timestamp (e.g. `20260519T053021093666Z`).
+`<run_id>` is a sortable UTC microsecond timestamp (e.g. `20260519t053021093666z`).
 
 **Step 5 — Confirm GCS artifacts:**
 
@@ -138,7 +138,7 @@ Should list two objects:
 
 ### Building, compiling, and submitting the Training pipeline
 
-End-to-end workflow for the Training pipeline: build the image, push it, compile a template against the pushed digest, then submit that template to Vertex AI Pipelines. The DAG composes every config for the run, backtests each model in `model_roles`, one task per model fixed at compile time, scores the challenger against the benchmark, then fits the challenger on the whole panel.
+End-to-end workflow for the Training pipeline: build the image, push it, compile a template against the pushed digest, then submit that template to Vertex AI Pipelines. The DAG composes every config for the run, backtests each model in `model_roles`, one task per model fixed at compile time, scores the challenger against the benchmark, fits the challenger on the whole panel, then registers it as a version in the Vertex AI Model Registry.
 
 Compiling and submitting are separate programs on purpose. The image reference is a compile-time input, since `@dsl.component` binds `base_image` when the module is imported, so a compiled template already names every image it will run. The submitter therefore takes a template and never sees a tag, a digest, or `FCST_TRAIN_IMAGE`. That is also what lets a production trigger, which submits a published template with no compiler anywhere, use the same shape.
 
@@ -206,6 +206,8 @@ task submit-train -- --template-path build/fcst-train-pipeline.yaml --env dev ..
 uv run python -m fcstnyctaxi.pipelines.local_train_pipeline --help
 ```
 
+The local mode registers only when given `--serving-image`, a digest-pinned image recorded as the runtime that reads the bundle. Without it, a local run stops after the fit and writes no `run_outputs.json`, so routine local runs never add versions to the shared registry.
+
 `--run-id` is optional and generated when absent. Caching is on by default, so resubmitting under the same `--run-id` reuses completed tasks; pass `--no-caching` to re-execute everything. The submitter is fire and forget unless given `--wait`, and it writes the id it submitted to `<tmpdir>/fcstnyctaxi/.last_run_id`.
 
 **Step 4. Confirm the run and its artifacts:**
@@ -216,6 +218,6 @@ The submitter logs the console URL for the run. The artifacts land under the run
 gsutil ls -r gs://nyc-taxi-ehc--modeling/dev/train/<run_id>/
 ```
 
-`run_identity.json` sits at the run root rather than inside a step directory, because its reader is outside the pipeline and can construct only `<bucket>/<env>/train/<run_id>`. `compose_configs/` holds the five configs plus `manifest.json`, and each model named in `config/train/modeling.yaml`'s `model_roles` gets its own eight-file sidecar under `backtest/<model_name>/`, ending in `backtest_manifest.json`. The Vertex UI names those tasks `backtest-<model_name>`; the compiled template's task keys are positional. `evaluate/` holds the run's four score tables and `evaluate_manifest.json`, scored from the two sidecars `model_roles` names. `final_fit/<model_name>/` holds the challenger's bundle, fitted on the whole panel: `model/`, the `composed_config.yaml` it was fitted under, and `final_fit_manifest.json`. That task runs after `evaluate`, and the Vertex UI names it `final_fit-<model_name>`.
+`run_identity.json` sits at the run root rather than inside a step directory, because its reader is outside the pipeline and can construct only `<bucket>/<env>/train/<run_id>`. `compose_configs/` holds the five configs plus `manifest.json`, and each model named in `config/train/modeling.yaml`'s `model_roles` gets its own eight-file sidecar under `backtest/<model_name>/`, ending in `backtest_manifest.json`. The Vertex UI names those tasks `backtest-<model_name>`; the compiled template's task keys are positional. `evaluate/` holds the run's four score tables and `evaluate_manifest.json`, scored from the two sidecars `model_roles` names. `final_fit/<model_name>/` holds the challenger's bundle, fitted on the whole panel: `model/`, the `composed_config.yaml` it was fitted under, and `final_fit_manifest.json`. That task runs after `evaluate`, and the Vertex UI names it `final_fit-<model_name>`. The last task, `register_model-<model_name>`, uploads that bundle as a version of the `<model_id_prefix>-<model_name>` model and writes `run_outputs.json` at the run root. Written last, it marks the run finished, and its `published.model_tag` names the exact version, `projects/<number>/locations/<location>/models/<model_id>@<version>`, which is what Inference loads. Resubmitting a finished `--run-id` on the same commit registers nothing; on a different commit the register task fails, naming both commits.
 
 `task build-clean` removes compiled templates; `task scratch-clean` removes the local scratch mirror, `.last_run_id` included.

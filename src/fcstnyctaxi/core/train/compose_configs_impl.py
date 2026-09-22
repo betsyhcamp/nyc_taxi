@@ -33,17 +33,14 @@ from fcstnyctaxi.lib.period_utils import (
     generate_origins_for_periods,
     last_complete_actual_month,
 )
-from fcstnyctaxi.lib.storage_layout import composed_config_filename
-from fcstnyctaxi.schemas.config.train import EvaluationPeriods, TrainModelingConfig
+from fcstnyctaxi.lib.registry_ids import compose_display_name, compose_model_id
+from fcstnyctaxi.lib.storage_layout import SourcedPath, composed_config_filename
+from fcstnyctaxi.schemas.config.train import (
+    EvaluationPeriods,
+    TrainInfraConfig,
+    TrainModelingConfig,
+)
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
-
-
-@dataclass(frozen=True)
-class SourcedPath:
-    """A filepath paired w/ the URI it represents. Can't check both are same object."""
-
-    path: Path
-    uri: str
 
 
 @dataclass(frozen=True)
@@ -192,7 +189,8 @@ def compose_configs_impl(
 
     Raises:
         ValueError: If `panel` and `calendar` name one file, `out_dir` is not a step
-            directory under `train_run_id`, a lineage check fails, or composition fails.
+            directory under `train_run_id`, a lineage check fails, a registrable
+            model's registry name exceeds its cap, or composition fails.
         ValidationError: If an identity field is malformed.
 
     Returns:
@@ -214,6 +212,14 @@ def compose_configs_impl(
         panel_df, calendar_df, modeling_config.evaluation_periods
     )
     model_names = model_names_from_roles(modeling_config.model_roles)
+
+    # Every model final_fit can fit, against the image's own tree: the wrapper's
+    # drift check compares model names only, so a prefix edit would pass it.
+    registry = cast(TrainInfraConfig, infra.config).model_registry
+    for model_name in model_names:
+        if modeling_config.model_settings[model_name].fit_callable is not None:
+            compose_model_id(registry.model_id_prefix, model_name)
+            compose_display_name(registry.display_name_prefix, model_name)
 
     # Two maps over the same objects: filename for the writes, destination key
     # for the manifest. Binding and manifest agree by construction due to read.
