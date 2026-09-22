@@ -160,11 +160,12 @@ The keys under `published` are role names; the first two match what `TrainRunIde
 already calls them. `env` was volunteered rather than asked for, and earns its place as a
 second copy-detector.
 
-**What Training reads, and what it merely tolerates.** Only the three load-bearing keys and
-the two guards are typed. Everything else is opaque and unvalidated, and unknown keys are
-ignored at both levels. **Adding a key is always safe.** The only change that breaks
-Training is renaming or removing something under `published`, or writing `""` as
-`published.exogenous_uri`: Training refuses it until every step can train without that file.
+**What Training reads, and what it merely tolerates.** Only the three load-bearing keys,
+the two guards and `schema_version`, an optional string, are typed. Everything else is
+opaque and unvalidated, and unknown keys are ignored at both levels. **Adding a key is
+always safe.** The only change that breaks Training is renaming or removing something under
+`published`, or writing `""` as `published.exogenous_uri`: Training refuses it until every
+step can train without that file.
 
 **Two departures from the design above.**
 
@@ -187,9 +188,10 @@ with one sentence scoping when it moves:
 > block do not need a bump.
 
 The narrow scope is what makes it cheap: no bump for statistics changes, and it protects
-exactly the keys resolution depends on. Training treats it as a diagnostic, never a gate.
-An unrecognized value warns and proceeds; only a missing load-bearing key fails, so the
-reader works whether or not the field ever arrives.
+exactly the keys resolution depends on. Training types it as an optional string, such as
+`"0.1.0"`, and treats its value as a diagnostic, never a gate: an unrecognized version
+warns and proceeds, and an absent one is not an error, so the reader works whether or not
+the field ever arrives.
 
 ### Where this fits the placement rule
 

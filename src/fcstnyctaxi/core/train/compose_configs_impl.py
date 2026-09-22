@@ -179,7 +179,8 @@ def compose_configs_impl(
         config_dir (Path): Root of the config tree.
         env (str): Environment selector.
         panel (SourcedPath): The actuals; opened for origins, stamped for lineage.
-        calendar (SourcedPath): The fiscal calendar, same pairing.
+        calendar (SourcedPath): The fiscal calendar; opened for origins, unstamped:
+            Feature stamps the panel alone.
         expected_feature_run_id (str): A claim, checked then discarded; the
             observed frame value is what `TrainRunIdentity` stamps.
         train_run_id (str): This run's own identifier.

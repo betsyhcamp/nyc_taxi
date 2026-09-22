@@ -131,7 +131,8 @@ def main() -> None:
             two URI overrides were given, if the Feature run published no
             manifest, or on any composition failure.
         FileNotFoundError: If `--template-path` names no file.
-        ValidationError: If an override URI is malformed.
+        ValidationError: If an override URI is malformed, or a load-bearing key in
+            the Feature run's manifest is missing or malformed.
     """
     # No override=True: .env must not outrank the FCST_TRAIN_IMAGE the task env sets.
     load_dotenv()

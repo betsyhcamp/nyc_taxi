@@ -35,7 +35,7 @@ def compose_configs(
     Args:
         env (str): Environment selector.
         train_run_id (str): This run's identifier.
-        feature_run_id (str): A claim, checked against the frames.
+        feature_run_id (str): A claim, checked against the panel.
         declared_model_names (list[str]): The compiler's claim, checked against this
             image's baked tree then discarded.
         panel (Input[Dataset]): The actuals, from Feature.

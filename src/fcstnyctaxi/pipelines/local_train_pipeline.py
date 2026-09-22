@@ -186,7 +186,8 @@ def main() -> None:
             composed model, or any step fails.
         RuntimeError: If the git hash cannot be determined, or more than one
             registered version carries this run id.
-        ValidationError: If an identity field or an override URI is malformed.
+        ValidationError: If an identity field or an override URI is malformed, or a
+            load-bearing key in the Feature run's manifest is missing or malformed.
     """
     logging.Formatter.converter = time.gmtime
     logging.basicConfig(

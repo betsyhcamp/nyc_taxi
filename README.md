@@ -156,11 +156,11 @@ Compiling and submitting are separate programs on purpose. The image reference i
 task build-verify-train-image
 ```
 
-Builds the `linux/amd64` image and probes it twice: every environment in the baked config tree composes, and that tree matches `config/` file for file. Expected last lines:
+Builds the `linux/amd64` image and probes it twice: every environment in the baked config tree composes, and that tree matches `config/` file for file. Expected last lines, where `<n>` is the number of files under `config/`:
 
 ```
 image OK: ['dev'] compose
-config tree OK: 14 files
+config tree OK: <n> files
 ```
 
 **Step 2. Push the image:**

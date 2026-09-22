@@ -84,7 +84,8 @@ def resolve_feature_artifacts(
 
     Raises:
         ValueError: one or two URIs were supplied, or resolution failed.
-        ValidationError: a supplied override URI is not a gs:// URI.
+        ValidationError: a supplied override URI is not a gs:// URI, or a
+            load-bearing key in the manifest is missing or malformed.
     """
     supplied = [
         uri is not None for uri in (panel_uri, calendar_uri, additional_exog_uri)
