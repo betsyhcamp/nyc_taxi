@@ -32,8 +32,8 @@ forecasting = [
     "scipy<1.16.0",
     "statsforecast>=2.0.1",
     "utilsforecast>=0.2.12",
-    "lightgbm>=4.7.0"
-
+    "lightgbm>=4.7.0",
+    "xgboost==3.4.1",
 ]
 
 train = [
@@ -44,6 +44,7 @@ train = [
     "mlforecast==1.1.0",
     "lightgbm>=4.7.0",
     "statsforecast>=2.0.1",
+    "xgboost==3.4.1", # Pinned, not floored: a release can move the challenger's numbers
     # register_model calls the Model Registry from inside the image
     "google-cloud-aiplatform>=1.165.1,<2", # 1.x verified; 2.x breaks only agent tooling
 ]
@@ -140,6 +141,9 @@ exclude_lines = [
 required-version = "==0.11.33"
 default-groups = ["dev", "forecasting"]
 constraint-dependencies = ["setuptools<81", "grpcio>=1.83.0"]
+# xgboost's Linux wheel pulls nvidia-nccl-cu13, 288 MB installed, which only a multi-GPU
+# run loads. A marker that is never true keeps it out of every environment.
+override-dependencies = ["nvidia-nccl-cu13; sys_platform == 'never'"]
 
 [tool.uv.sources]
 tsbricks = { git = "https://github.com/betsyhcamp/tsbricks.git", rev = "v0.4.0" }
