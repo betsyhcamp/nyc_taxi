@@ -60,20 +60,26 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--feature-run-id",
         required=True,
-        help="The Feature run both artifact URIs resolve from, checked against "
+        help="The Feature run all three artifact URIs resolve from, checked against "
         "the panel's feature_run_id column.",
     )
     parser.add_argument(
         "--panel-uri",
         default=None,
         help="Override the actuals URI --feature-run-id resolves to; requires "
-        "--calendar-uri.",
+        "the other two URI flags.",
     )
     parser.add_argument(
         "--calendar-uri",
         default=None,
         help="Override the fiscal calendar URI --feature-run-id resolves to; "
-        "requires --panel-uri.",
+        "requires the other two URI flags.",
+    )
+    parser.add_argument(
+        "--additional-exog-uri",
+        default=None,
+        help="Override the exogenous features URI --feature-run-id resolves to "
+        "(published.exogenous_uri); requires --panel-uri and --calendar-uri.",
     )
     parser.add_argument(
         "--run-id",
@@ -121,8 +127,8 @@ def main() -> None:
     Raises:
         RuntimeError: If FCST_TRAIN_SERVICE_ACCOUNT is unset or blank.
         ValueError: If `--feature-run-id` is not path-safe or `--run-id` not
-            label-safe, if `--env` has no `environments/<env>.yaml`, if exactly
-            one URI override was given, if the Feature run published no
+            label-safe, if `--env` has no `environments/<env>.yaml`, if one or
+            two URI overrides were given, if the Feature run published no
             manifest, or on any composition failure.
         FileNotFoundError: If `--template-path` names no file.
         ValidationError: If an override URI is malformed.
@@ -175,6 +181,7 @@ def main() -> None:
         feature_run_id=args.feature_run_id,
         panel_uri=args.panel_uri,
         calendar_uri=args.calendar_uri,
+        additional_exog_uri=args.additional_exog_uri,
     )
 
     logger.info(
@@ -204,6 +211,8 @@ def main() -> None:
         display_name=f"{infra.display_name_prefix}-{run_id}",
         template_path=str(template),
         pipeline_root=environment.vertex.pipeline_root,
+        # No exogenous_uri: the template declares no parameter for it, and
+        # PipelineJob refuses a key the template does not declare.
         parameter_values={
             "env": args.env,
             "train_run_id": run_id,

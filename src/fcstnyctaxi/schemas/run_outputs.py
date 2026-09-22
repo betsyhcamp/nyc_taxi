@@ -39,6 +39,16 @@ CALENDAR_ALLOWED_COLUMNS: tuple[str, ...] = CALENDAR_REQUIRED_COLUMNS + (
 `exog_features` could name them, and the contract lets them change uncoordinated.
 """
 
+ADDITIONAL_EXOG_REQUIRED_COLUMNS: tuple[str, ...] = (
+    "unique_id",
+    "ds",
+    "holiday_days_in_week",
+    "week_sin",
+    "week_cos",
+)
+"""Everything the exogenous features artifact must contain; required and allowed are
+one list. The file exists to carry the three features, so each is required."""
+
 
 class FeatureArtifacts(BaseModel):
     """The artifacts one Feature run published, by role.
@@ -51,6 +61,8 @@ class FeatureArtifacts(BaseModel):
 
     panel_uri: str = Field(pattern=r"^gs://")
     calendar_uri: str = Field(pattern=r"^gs://")
+    # Feature's key. Everything Training owns calls this artifact additional_exog.
+    exogenous_uri: str = Field(pattern=r"^gs://")
 
 
 class FeatureRunOutputs(BaseModel):

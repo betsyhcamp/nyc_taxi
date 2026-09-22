@@ -44,12 +44,15 @@ RESOLVED_PANEL_URI = f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/step/panel.par
 RESOLVED_CALENDAR_URI = (
     f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/step/calendar.parquet"
 )
+RESOLVED_EXOG_URI = f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/step/exogenous.parquet"
 # Through the shared model, which is what makes writer and reader agree on shape.
 RESOLVED_MANIFEST = FeatureRunOutputs(
     feature_run_id=FEATURE_RUN_ID,
     env=ENV,
     published=FeatureArtifacts(
-        panel_uri=RESOLVED_PANEL_URI, calendar_uri=RESOLVED_CALENDAR_URI
+        panel_uri=RESOLVED_PANEL_URI,
+        calendar_uri=RESOLVED_CALENDAR_URI,
+        exogenous_uri=RESOLVED_EXOG_URI,
     ),
 ).model_dump_json()
 COMPOSE_SUMMARY = ComposeConfigsSummary(
@@ -333,6 +336,8 @@ def test_each_backtest_is_published_before_the_next_one_runs(
             f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/data_prep/time_series.parquet",
             "--calendar-uri",
             f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/data_prep/fiscal_calendar.parquet",
+            "--additional-exog-uri",
+            f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/data_prep/exogenous_features.parquet",
             "--run-id",
             RUN_ID,
             *registering,
