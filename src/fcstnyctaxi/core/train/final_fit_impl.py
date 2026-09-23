@@ -22,6 +22,7 @@ from fcstnyctaxi.lib.storage_layout import (
 from fcstnyctaxi.schemas.config.train import ModelSettings, TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 from fcstnyctaxi.schemas.run_outputs import (
+    ADDITIONAL_EXOG_REQUIRED_COLUMNS,
     CALENDAR_ALLOWED_COLUMNS,
     CALENDAR_REQUIRED_COLUMNS,
     PANEL_REQUIRED_COLUMNS,
@@ -92,6 +93,7 @@ def _build_manifest(
             "git_hash": identity.git_hash,
             "panel_uri": identity.panel_uri,
             "calendar_uri": identity.calendar_uri,
+            "additional_exog_uri": identity.additional_exog_uri,
         },
         "config": {
             "fit_callable": settings.fit_callable,
@@ -110,13 +112,14 @@ def final_fit_impl(
     *,
     panel_path: Path,
     calendar_path: Path,
+    additional_exog_path: Path,
     compose_configs_dir: Path,
     model_name: str,
     out_dir: Path,
 ) -> FinalFitSummary:
     """Fit one model on the whole panel and write the bundle a registry consumes.
 
-    Keyword-only: four `Path` parameters transpose without a type error. No
+    Keyword-only: five `Path` parameters transpose without a type error. No
     provenance scalars: reading `run_identity.json` makes a disagreeing parameter
     unrepresentable. The completion marker is deleted once the directory checks pass
     and written last, so a failed rerun leaves none over a partly rewritten bundle.
@@ -124,6 +127,8 @@ def final_fit_impl(
     Args:
         panel_path: The weekly actuals, stamped with a `feature_run_id`.
         calendar_path: The fiscal calendar, unstamped: Feature stamps the panel alone.
+        additional_exog_path: The exogenous features, unstamped for the same reason.
+            Read, trimmed, and joined into the frame the model is fitted on.
         compose_configs_dir: Holds this model's composed config and `modeling.yaml`,
             with `run_identity.json` beside it.
         model_name: The model to fit, which must declare its callable pair. Selects
@@ -184,6 +189,7 @@ def final_fit_impl(
 
     panel_df = pd.read_parquet(panel_path)
     calendar_df = pd.read_parquet(calendar_path)
+    additional_exog_df = pd.read_parquet(additional_exog_path)
     # Catches a panel from another Feature run, or wrong bytes at the path handed in.
     require_matching_feature_run_id(panel_df, identity.feature_run_id)
 
@@ -196,11 +202,19 @@ def final_fit_impl(
         allowed=CALENDAR_ALLOWED_COLUMNS,
         frame_name="calendar",
     )
+    additional_exog_df = trim_to_allowlist(
+        additional_exog_df,
+        required=ADDITIONAL_EXOG_REQUIRED_COLUMNS,
+        frame_name="additional exogenous",
+    )
 
     # The backtest assembles from the same entry, so the registered model trains on
     # the feature set that was scored.
     exog_df = build_exog_frame(
-        panel_df, calendar_df, exog_features=tuple(settings.exog_features)
+        panel_df,
+        calendar_df,
+        additional_exog_df,
+        exog_features=tuple(settings.exog_features),
     )
 
     # hyperparameters alone: predict_params belong to the fit-predict callable.

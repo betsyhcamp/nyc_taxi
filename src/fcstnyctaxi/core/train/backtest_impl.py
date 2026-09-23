@@ -44,6 +44,7 @@ from fcstnyctaxi.lib.storage_layout import composed_config_filename
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 from fcstnyctaxi.schemas.run_outputs import (
+    ADDITIONAL_EXOG_REQUIRED_COLUMNS,
     CALENDAR_ALLOWED_COLUMNS,
     CALENDAR_REQUIRED_COLUMNS,
     PANEL_REQUIRED_COLUMNS,
@@ -167,6 +168,7 @@ def compute_backtest_outputs(
     modeling: TrainModelingConfig,
     ts_df: pd.DataFrame,
     calendar_df: pd.DataFrame,
+    additional_exog_df: pd.DataFrame,
     exog_features: tuple[str, ...],
 ) -> BacktestOutputs:
     """Run the composable fold loop for one model config.
@@ -179,8 +181,10 @@ def compute_backtest_outputs(
         modeling: Only `tiering` and `weighting` are read.
         ts_df: The trimmed weekly panel.
         calendar_df: The trimmed fiscal calendar, read here as a dimension table.
-        exog_features: Calendar columns this model consumes, from its
-            `model_settings` entry. Empty for a model that takes none.
+        additional_exog_df: The trimmed exogenous features file, which drives the
+            assembled frame's row set.
+        exog_features: Columns this model consumes, from either contract and from
+            its `model_settings` entry. Empty for a model that takes none.
 
     Raises:
         ValueError: If origins repeat, if the fold count disagrees with the
@@ -215,9 +219,11 @@ def compute_backtest_outputs(
 
     fraction_by_origin = calendar_df.set_index("ds")["origin_month_fraction_elapsed"]
 
-    # Once, not per fold: the spine must carry every series and the frame must span
-    # the dates every fold predicts into. The model's feature set is decided here.
-    exog_df = build_exog_frame(ts_df, calendar_df, exog_features=exog_features)
+    # Once, not per fold: the file must carry every series and span the dates every
+    # fold predicts into. The model's feature set is decided here.
+    exog_df = build_exog_frame(
+        ts_df, calendar_df, additional_exog_df, exog_features=exog_features
+    )
 
     for fold_idx, (fold_id, splits) in enumerate(cv_folds.items()):
         fold_origin, fold_horizon = origin_horizon_pairs[fold_idx]
@@ -378,6 +384,7 @@ def _build_manifest(
             "git_hash": identity.git_hash,
             "panel_uri": identity.panel_uri,
             "calendar_uri": identity.calendar_uri,
+            "additional_exog_uri": identity.additional_exog_uri,
         },
         "config": {
             "tiering": modeling.tiering.model_dump(),
@@ -397,13 +404,14 @@ def backtest_impl(
     *,
     panel_path: Path,
     calendar_path: Path,
+    additional_exog_path: Path,
     compose_configs_dir: Path,
     model_name: str,
     out_dir: Path,
 ) -> BacktestSummary:
-    """Back one model over one run's origins and write its eight-file sidecar.
+    """Back one model over one run's origins and write its nine-file sidecar.
 
-    Keyword-only: three adjacent `Path` parameters transpose without a type error, and
+    Keyword-only: four adjacent `Path` parameters transpose without a type error, and
     a swapped panel and calendar surfaces much later as a missing column. No provenance
     scalars: reading `run_identity.json` makes a disagreeing parameter unrepresentable.
     The completion marker is deleted once the guards pass, so a failed run leaves no
@@ -412,6 +420,8 @@ def backtest_impl(
     Args:
         panel_path: The weekly actuals, stamped with a `feature_run_id`.
         calendar_path: The fiscal calendar, unstamped: Feature stamps the panel alone.
+        additional_exog_path: The exogenous features, unstamped for the same reason.
+            Read, trimmed, snapshotted, and joined into the assembled frame.
         compose_configs_dir: Holds this model's composed config and `modeling.yaml`,
             with `run_identity.json` beside it.
         model_name: Selects the composed config, and names `out_dir`.
@@ -460,6 +470,7 @@ def backtest_impl(
 
     panel_df = pd.read_parquet(panel_path)
     calendar_df = pd.read_parquet(calendar_path)
+    additional_exog_df = pd.read_parquet(additional_exog_path)
     # Catches a panel from another Feature run, or wrong bytes at the path handed in.
     require_matching_feature_run_id(panel_df, identity.feature_run_id)
 
@@ -473,12 +484,20 @@ def backtest_impl(
         allowed=CALENDAR_ALLOWED_COLUMNS,
         frame_name="calendar",
     )
+    # No `allowed`: the file exists to carry its three features, so required and
+    # allowed are one list and the tuple is its own allowlist.
+    additional_exog_df = trim_to_allowlist(
+        additional_exog_df,
+        required=ADDITIONAL_EXOG_REQUIRED_COLUMNS,
+        frame_name="additional exogenous",
+    )
 
     outputs = compute_backtest_outputs(
         cfg=cfg,
         modeling=modeling,
         ts_df=panel_df,
         calendar_df=calendar_df,
+        additional_exog_df=additional_exog_df,
         exog_features=tuple(modeling.model_settings[model_name].exog_features),
     )
 
@@ -507,6 +526,9 @@ def backtest_impl(
         getattr(outputs, field).to_parquet(out_dir / filename, index=False)
     calendar_df.to_parquet(out_dir / "fiscal_calendar.parquet", index=False)
     panel_df.to_parquet(out_dir / "time_series_snapshot.parquet", index=False)
+    # No _snapshot suffix, following fiscal_calendar.parquet: the panel's copy
+    # carries one only because its source is also named time_series.parquet.
+    additional_exog_df.to_parquet(out_dir / "additional_exog.parquet", index=False)
     # A byte copy, not a re-dump: a re-dump reimplements save_config's formatting.
     shutil.copyfile(composed_config_path, out_dir / "composed_config.yaml")
 

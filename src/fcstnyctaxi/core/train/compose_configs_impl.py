@@ -165,6 +165,7 @@ def compose_configs_impl(
     env: str,
     panel: SourcedPath,
     calendar: SourcedPath,
+    additional_exog: SourcedPath,
     expected_feature_run_id: str,
     train_run_id: str,
     git_hash: str,
@@ -172,7 +173,7 @@ def compose_configs_impl(
 ) -> ComposeConfigsSummary:
     """Compose and emit every Training destination for one run.
 
-    Keyword-only, since eight parameters invite transposition. Every failure below
+    Keyword-only, since nine parameters invite transposition. Every failure below
     raises before the first write, so a failed run leaves no partial output.
 
     Args:
@@ -181,6 +182,8 @@ def compose_configs_impl(
         panel (SourcedPath): The actuals; opened for origins, stamped for lineage.
         calendar (SourcedPath): The fiscal calendar; opened for origins, unstamped:
             Feature stamps the panel alone.
+        additional_exog (SourcedPath): The exogenous features file. Recorded and
+            compared, never opened: nothing reads it before the backtest.
         expected_feature_run_id (str): A claim, checked then discarded; the
             observed frame value is what `TrainRunIdentity` stamps.
         train_run_id (str): This run's own identifier.
@@ -189,18 +192,20 @@ def compose_configs_impl(
             Must sit under the run root, since `run_identity.json` goes to its parent.
 
     Raises:
-        ValueError: If `panel` and `calendar` name one file, `out_dir` is not a step
-            directory under `train_run_id`, a lineage check fails, a registrable
-            model's registry name exceeds its cap, or composition fails.
+        ValueError: If two of the three inputs name one file, `out_dir` is not a
+            step directory under `train_run_id`, a lineage check fails, a
+            registrable model's registry name exceeds its cap, or composition fails.
         ValidationError: If an identity field is malformed.
 
     Returns:
         ComposeConfigsSummary: What this run composed, for a UI node or a log.
     """
     # Simple check for input arg miswiring causing duplication downstream
-    if panel.path == calendar.path:
+    if len({panel.path, calendar.path, additional_exog.path}) != 3:
         raise ValueError(
-            f"Miswiring error: panel and calendar are the same filepath {panel.path};"
+            f"Miswiring error: panel {panel.path}, calendar {calendar.path} and "
+            f"additional exogenous {additional_exog.path} must name three "
+            "different files."
         )
     environment, infra, modeling = compose_train_static_configs(config_dir, env)
     panel_df = pd.read_parquet(panel.path)
@@ -248,6 +253,7 @@ def compose_configs_impl(
         train_run_id=train_run_id,
         panel_uri=panel.uri,
         calendar_uri=calendar.uri,
+        additional_exog_uri=additional_exog.uri,
     )
 
     # run_identity.json describes the run, not this step. Derived, not passed:

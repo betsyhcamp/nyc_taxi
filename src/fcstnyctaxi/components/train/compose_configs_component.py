@@ -24,6 +24,7 @@ def compose_configs(
     declared_model_names: list[str],
     panel: Input[Dataset],
     calendar: Input[Dataset],
+    additional_exog: Input[Dataset],
     composed_configs: Output[Artifact],
 ) -> NamedTuple("Outputs", [("run_prefix", str)]):  # type: ignore[valid-type]
     """Compose and emit every Training destination for one run.
@@ -40,6 +41,8 @@ def compose_configs(
             image's baked tree then discarded.
         panel (Input[Dataset]): The actuals, from Feature.
         calendar (Input[Dataset]): The fiscal calendar, same source.
+        additional_exog (Input[Dataset]): The exogenous features, same source;
+            recorded and compared here, never opened.
         composed_configs (Output[Artifact]): The step directory this run writes.
 
     Returns:
@@ -86,6 +89,9 @@ def compose_configs(
         env=env,
         panel=SourcedPath(path=Path(panel.path), uri=panel.uri),
         calendar=SourcedPath(path=Path(calendar.path), uri=calendar.uri),
+        additional_exog=SourcedPath(
+            path=Path(additional_exog.path), uri=additional_exog.uri
+        ),
         expected_feature_run_id=feature_run_id,
         train_run_id=train_run_id,
         git_hash=git_hash,

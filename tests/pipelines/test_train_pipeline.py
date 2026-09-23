@@ -190,17 +190,15 @@ def test_a_model_set_the_dag_cannot_fan_out_over_is_refused(
 
 
 def test_each_artifact_input_comes_from_its_own_importer(tmp_path: Path) -> None:
-    """Test that panel and calendar each arrive from an importer of their own URI.
-
-    Both miswirings are silent until runtime: a shared importer reaches the impl's
-    same-filepath guard, and a transposed pair reaches nothing until pandas.
-    """
+    """Test that each artifact arrives from an importer of its own URI: a shared one
+    reaches the miswiring guard, a transposed pair nothing until pandas."""
     ir = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)
     tasks = ir["root"]["dag"]["tasks"]
 
     for artifact_name, expected_parameter in (
         ("panel", "panel_uri"),
         ("calendar", "calendar_uri"),
+        ("additional_exog", "additional_exog_uri"),
     ):
         producer = tasks["compose-configs"]["inputs"]["artifacts"][artifact_name][
             "taskOutputArtifact"
@@ -222,13 +220,13 @@ def test_the_compose_task_takes_each_selector_from_its_own_parameter(
         assert parameters[name]["componentInputParameter"] == name
 
 
-def test_every_panel_and_calendar_reader_shares_one_importer(tmp_path: Path) -> None:
+def test_every_artifact_reader_shares_one_importer(tmp_path: Path) -> None:
     """Test that one importer per artifact feeds every reader: a second would hand a
     task bytes compose never validated, and a task cannot see its siblings."""
     ir = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)
     backtest_names = set(_backtest_tasks(ir))
 
-    for artifact_name in ("panel", "calendar"):
+    for artifact_name in ("panel", "calendar", "additional_exog"):
         producer_of = {
             name: task["inputs"]["artifacts"][artifact_name]["taskOutputArtifact"][
                 "producerTask"
@@ -421,4 +419,5 @@ def test_the_model_set_costs_no_pipeline_parameter(tmp_path: Path) -> None:
         "feature_run_id",
         "panel_uri",
         "calendar_uri",
+        "additional_exog_uri",
     }

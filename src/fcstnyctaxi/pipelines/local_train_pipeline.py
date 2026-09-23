@@ -234,6 +234,7 @@ def main() -> None:
     # Before the clear below, so a rejected URI cannot cost the previous output.
     panel_path = _mirror_path(artifacts.panel_uri, mirror_root)
     calendar_path = _mirror_path(artifacts.calendar_uri, mirror_root)
+    additional_exog_path = _mirror_path(artifacts.exogenous_uri, mirror_root)
 
     logger.info(
         "compose_configs starting: run_id=%s feature_run_id=%s out_dir=%s uri=%s",
@@ -245,7 +246,7 @@ def main() -> None:
 
     # Scratch persists, so a retry under the same --run-id finds stale files.
     # sync_to_gcs matches the prefix to compose_dir; it does not clean it. The
-    # backtest step needs no equivalent: its eight filenames are fixed in code,
+    # backtest step needs no equivalent: its nine filenames are fixed in code,
     # while this step emits one config per model_roles entry.
     if compose_dir.exists():
         shutil.rmtree(compose_dir)
@@ -259,12 +260,17 @@ def main() -> None:
         path=download_from_gcs(artifacts.calendar_uri, calendar_path.parent),
         uri=artifacts.calendar_uri,
     )
+    additional_exog = SourcedPath(
+        path=download_from_gcs(artifacts.exogenous_uri, additional_exog_path.parent),
+        uri=artifacts.exogenous_uri,
+    )
 
     summary = compose_configs_impl(
         config_dir=config_dir,
         env=args.env,
         panel=panel,
         calendar=calendar,
+        additional_exog=additional_exog,
         expected_feature_run_id=args.feature_run_id,
         train_run_id=run_id,
         git_hash=git_hash,
@@ -312,6 +318,7 @@ def main() -> None:
         backtest_summary = backtest_impl(
             panel_path=panel.path,
             calendar_path=calendar.path,
+            additional_exog_path=additional_exog.path,
             compose_configs_dir=compose_dir,
             model_name=model_name,
             out_dir=model_dir,
@@ -390,6 +397,7 @@ def main() -> None:
     final_fit_impl(
         panel_path=panel.path,
         calendar_path=calendar.path,
+        additional_exog_path=additional_exog.path,
         compose_configs_dir=compose_dir,
         model_name=roles.challenger,
         out_dir=final_fit_dir,

@@ -17,7 +17,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from fcstnyctaxi.schemas.run_outputs import CALENDAR_ALLOWED_COLUMNS, JOIN_KEYS
+from fcstnyctaxi.schemas.run_outputs import (
+    ADDITIONAL_EXOG_REQUIRED_COLUMNS,
+    CALENDAR_ALLOWED_COLUMNS,
+    JOIN_KEYS,
+)
 
 DampeningName = Literal["cbrt", "sqrt", "none"]
 """Dampening function names.
@@ -138,10 +142,10 @@ class ModelSettings(BaseModel):
     Project-owned rather than ``ModelConfig.hyperparameters``, which is
     ``dict[str, Any]`` and so hides a typo from every validation stage.
 
-    ``exog_features`` picks what one model trains on, within what
-    ``CALENDAR_ALLOWED_COLUMNS`` lets Feature deliver; editing it moves that model's
-    numbers. The callables come as a pair: only the model's own save can write out
-    the opaque object its fit returns.
+    ``exog_features`` picks what one model trains on, within what the calendar and
+    the additional exogenous contracts let Feature deliver; editing it moves that
+    model's numbers. The callables come as a pair: only the model's own save can
+    write out the opaque object its fit returns.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -152,10 +156,10 @@ class ModelSettings(BaseModel):
 
     @field_validator("exog_features")
     @classmethod
-    def _features_must_be_selectable_calendar_columns(
+    def _features_must_be_selectable_exogenous_columns(
         cls, features: list[str]
     ) -> list[str]:
-        """Reject a join key or a column the calendar contract does not declare.
+        """Reject a join key or a column neither contract declares.
 
         Keys first: ``unique_id`` is both, and "misspelling" would be the wrong fix.
         """
@@ -165,11 +169,16 @@ class ModelSettings(BaseModel):
                 f"exog_features names join key(s) {keys}, already the frame's key."
             )
 
-        unknown = sorted(set(features) - set(CALENDAR_ALLOWED_COLUMNS))
+        # Less the join keys, so the message cannot contradict the check above by
+        # listing as selectable the two names it exists to reject.
+        selectable = (
+            set(CALENDAR_ALLOWED_COLUMNS) | set(ADDITIONAL_EXOG_REQUIRED_COLUMNS)
+        ) - set(JOIN_KEYS)
+        unknown = sorted(set(features) - selectable)
         if unknown:
             raise ValueError(
-                f"exog_features names {unknown}, not in the calendar contract: "
-                f"{sorted(CALENDAR_ALLOWED_COLUMNS)}."
+                f"exog_features names {unknown}, in neither the calendar nor the "
+                f"additional exogenous contract: {sorted(selectable)}."
             )
 
         return features

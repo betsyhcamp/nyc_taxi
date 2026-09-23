@@ -6,7 +6,7 @@ from fcstnyctaxi.schemas.config.train import (
     TrainInfraConfig,
     TrainModelingConfig,
 )
-from fcstnyctaxi.schemas.run_outputs import JOIN_KEYS
+from fcstnyctaxi.schemas.run_outputs import CALENDAR_ALLOWED_COLUMNS, JOIN_KEYS
 
 
 @pytest.fixture
@@ -246,10 +246,35 @@ def test_half_a_callable_pair_raises(declared: str) -> None:
         ModelSettings(**{declared: "a.b.c"})
 
 
-def test_an_exog_feature_outside_the_calendar_contract_raises() -> None:
+def test_an_exog_feature_outside_both_contracts_raises() -> None:
     """The gap a closed submodel alone leaves open: its contents."""
-    with pytest.raises(ValidationError, match="not in the calendar contract"):
+    with pytest.raises(ValidationError, match="in neither the calendar nor"):
         ModelSettings(exog_features=["fiscal_wek_of_month"])
+
+
+# Derived, not named: the point is that one of each contract's own columns is
+# accepted, and `ds` heads the calendar tuple but is a join key.
+_A_CALENDAR_FEATURE = next(
+    column for column in CALENDAR_ALLOWED_COLUMNS if column not in JOIN_KEYS
+)
+
+
+@pytest.mark.parametrize(
+    "feature", [_A_CALENDAR_FEATURE, "week_sin", "holiday_days_in_week"]
+)
+def test_a_feature_either_contract_declares_is_accepted(feature: str) -> None:
+    """The join delivers both contracts, so naming from either must validate."""
+    assert ModelSettings(exog_features=[feature]).exog_features == [feature]
+
+
+def test_the_selectable_set_the_message_offers_excludes_the_join_keys() -> None:
+    """The check above rejects a join key, so offering one here would contradict it."""
+    with pytest.raises(ValidationError) as unknown:
+        ModelSettings(exog_features=["fiscal_wek_of_month"])
+
+    offered = unknown.value.errors()[0]["msg"]
+    for key in JOIN_KEYS:
+        assert f"'{key}'" not in offered
 
 
 @pytest.mark.parametrize("key", JOIN_KEYS)

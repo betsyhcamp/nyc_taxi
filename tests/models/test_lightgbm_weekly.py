@@ -83,9 +83,30 @@ def train_df(calendar_df: pd.DataFrame) -> pd.DataFrame:
 
 
 @pytest.fixture
-def exog_df(train_df: pd.DataFrame, calendar_df: pd.DataFrame) -> pd.DataFrame:
+def additional_exog_df(
+    train_df: pd.DataFrame, calendar_df: pd.DataFrame
+) -> pd.DataFrame:
+    """The exogenous file, every series over every calendar week, as Feature
+    publishes it: it drives the assembled frame, so it must span the horizon."""
+    frame = pd.MultiIndex.from_product(
+        [train_df["unique_id"].unique(), calendar_df["ds"]], names=["unique_id", "ds"]
+    ).to_frame(index=False)
+    angle = 2 * np.pi * frame["ds"].dt.dayofyear / 365.25
+    return frame.assign(
+        holiday_days_in_week=0, week_sin=np.sin(angle), week_cos=np.cos(angle)
+    )
+
+
+@pytest.fixture
+def exog_df(
+    train_df: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    additional_exog_df: pd.DataFrame,
+) -> pd.DataFrame:
     """The frame the impl assembles, which is what the callables now receive."""
-    return build_exog_frame(train_df, calendar_df, exog_features=_EXOG_FEATURES)
+    return build_exog_frame(
+        train_df, calendar_df, additional_exog_df, exog_features=_EXOG_FEATURES
+    )
 
 
 @pytest.fixture
