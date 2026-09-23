@@ -215,20 +215,32 @@ have **different jobs**: identity is what a run *is* and what it *read*, true at
 outputs are what it *produced*, true only at the end. Do not merge them, since a failed run
 should still record its identity.
 
-### Rung 3, if you also publish a pointer
+### Rung 3, given the pointer you publish
 
-Rung 3 is a `_latest.json` that Feature rewrites after each successful run, naming its
-newest `feature_run_id`, at a fixed non-run-scoped path such as
-`gs://<bucket>/<env>/feature/_latest.json`. It serves the case where **nobody knows an
-id**: a scheduled Training run not chained to a specific Feature run, or a developer who
-wants whatever is current.
+Rung 3 serves the case where **nobody knows an id**: a scheduled Training run not chained
+to a specific Feature run, or a developer who wants whatever is current. It resolves from
+`_latest.json`, which you rewrite after each successful run. The default itself is not
+built and nothing here needs it; it was waiting on the pointer's shape, not on you.
 
-It is deferred pending your commitment, not because it could not be built. The old
-objection, that a pointer and the artifacts it points at cannot share a path convention,
-does not apply under the outputs-file design: the pointer names only
-`{"feature_run_id": "…"}` and no artifact at all.
+The pointer is **one per environment, not one per slice**, at the environment root:
 
-One property worth preserving: a pointer is mutable, and would be the only mutable object
-in a layout that is otherwise immutable by construction. Runs stay reproducible anyway,
-because whatever resolution produces is stamped into `run_identity.json` as `panel_uri`,
+```
+gs://<bucket>/<env>/_latest.json
+```
+
+Its keys are the slice names `feature`, `train` and `inference`, and **each holds that
+slice's whole `run_outputs.json` document**, not an id. Each pipeline rewrites its own key
+and leaves the others equal in value and in order.
+
+Training's `register_model` rewrites `train` after writing its completion marker, so the
+pointer never names a run that did not finish. It drops `feature_run_id` from that block
+alone: `feature` already names the newest Feature run, while `train.feature_run_id` would
+name the one this model trained on, and the two diverge the moment Feature runs again.
+
+The old objection, that a pointer cannot share a path convention with the run-scoped
+artifacts it names, is answered by placement, not content: it sits above every slice.
+
+One property worth preserving: a pointer is mutable, and is the only mutable object in a
+layout that is otherwise immutable by construction. Runs stay reproducible anyway, because
+whatever resolution produces is stamped into `run_identity.json` as `panel_uri`,
 `calendar_uri` and `feature_run_id`. A run records what it read, not how it found it.

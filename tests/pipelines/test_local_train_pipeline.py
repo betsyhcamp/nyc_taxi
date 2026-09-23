@@ -26,8 +26,12 @@ from fcstnyctaxi.lib import run_outputs
 from fcstnyctaxi.lib.config.bindings import model_names_from_roles, resolve_model_roles
 from fcstnyctaxi.lib.storage_layout import (
     BUNDLE_MODEL_DIR_NAME,
+    LATEST_POINTER_FILENAME,
     RUN_OUTPUTS_FILENAME,
     SourcedPath,
+    latest_pointer_path,
+    resolve_environment_root,
+    resolve_latest_pointer_uri,
     resolve_run_prefix,
 )
 from fcstnyctaxi.lib.utils import get_project_root_dir, require_path_safe_run_id
@@ -145,8 +149,9 @@ def _final_fit_outputs(*, out_dir: Path, **_: object) -> FinalFitSummary:
 
 
 def _register_outputs(*, run_dir: Path, **_: object) -> RegisterModelSummary:
-    """The same, for the run record the impl writes at the run root."""
+    """The same, for both files the impl writes: the run record and the pointer."""
     (run_dir / RUN_OUTPUTS_FILENAME).write_text("{}")
+    latest_pointer_path(run_dir).write_text("{}\n")
     return REGISTER_SUMMARY
 
 
@@ -357,7 +362,8 @@ def test_each_backtest_is_published_before_the_next_one_runs(
 
     run_prefix = resolve_run_prefix(root / "config", ENV, "train", RUN_ID)
     # Without the flag the run stops after the fit: no registry write, no record.
-    registered = [] if serving_image is None else ["register", "upload"]
+    # Two uploads after registering: the run's record, then the shared pointer.
+    registered = [] if serving_image is None else ["register", "upload", "upload"]
     assert [call[0] for call in publishes.mock_calls] == [
         "upload",
         "sync",
@@ -401,9 +407,14 @@ def test_each_backtest_is_published_before_the_next_one_runs(
         assert kwargs["compose_configs_dir"] == compose.call_args.kwargs["out_dir"]
         assert kwargs["run_dir"] == kwargs["compose_configs_dir"].parent
         assert kwargs["serving_container_image_uri"] == SERVING_IMAGE
-        assert publishes.mock_calls[-1].args == (
+        assert publishes.mock_calls[-2].args == (
             kwargs["run_dir"] / RUN_OUTPUTS_FILENAME,
             run_prefix,
+        )
+        # Last, and to the environment root: the run prefix would hide it per run.
+        assert publishes.mock_calls[-1].args == (
+            latest_pointer_path(kwargs["run_dir"]),
+            resolve_environment_root(root / "config", ENV),
         )
 
 
@@ -875,3 +886,90 @@ def test_the_local_runner_resolves_all_three_uris_from_the_feature_run_id_alone(
     ]
     # The evidence the override flags are to be retired on, from this caller.
     assert "source=resolved" in caplog.text
+
+
+def _argv_without_serving_image(tmp_path: Path) -> list[str]:
+    """Arguments for a run that resolves its own inputs and registers nothing."""
+    return [
+        "local_train_pipeline",
+        "--env",
+        ENV,
+        "--feature-run-id",
+        FEATURE_RUN_ID,
+        "--run-id",
+        RUN_ID,
+        "--scratch-dir",
+        str(tmp_path / "scratch"),
+    ]
+
+
+def _patch_a_whole_run(mocker: MockerFixture) -> None:
+    """Every step and both publishers, so a test can watch one call among them."""
+    mocker.patch.object(
+        local_train_pipeline, "require_git_hash", return_value="abc1234"
+    )
+    mocker.patch.object(
+        local_train_pipeline, "compose_configs_impl", return_value=COMPOSE_SUMMARY
+    )
+    mocker.patch.object(local_train_pipeline, "sync_to_gcs", return_value=(7, 0))
+    mocker.patch.object(local_train_pipeline, "upload_to_gcs")
+    mocker.patch.object(
+        local_train_pipeline, "backtest_impl", side_effect=_backtest_outputs
+    )
+    mocker.patch.object(
+        local_train_pipeline, "evaluate_impl", side_effect=_evaluate_outputs
+    )
+    mocker.patch.object(
+        local_train_pipeline, "final_fit_impl", side_effect=_final_fit_outputs
+    )
+    mocker.patch.object(local_train_pipeline, "delete_from_gcs")
+    mocker.patch.object(
+        run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
+    )
+
+
+def test_a_run_without_a_serving_image_stages_no_pointer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+) -> None:
+    """A run that registers nothing must not touch the shared pointer either."""
+    root = tmp_path / "project"
+    shutil.copytree(get_project_root_dir() / "config", root / "config")
+    monkeypatch.setenv("PROJECT_ROOT", str(root))
+    _patch_a_whole_run(mocker)
+    downloads = mocker.patch.object(local_train_pipeline, "download_from_gcs")
+    monkeypatch.setattr(sys, "argv", _argv_without_serving_image(tmp_path))
+
+    local_train_pipeline.main()
+
+    staged = [call.args[0] for call in downloads.call_args_list]
+    assert staged
+    assert not any(uri.endswith(LATEST_POINTER_FILENAME) for uri in staged)
+
+
+def test_the_staged_pointer_is_the_path_the_impl_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+) -> None:
+    """Staged from the config's URI, read back from run_dir: the two must agree."""
+    root = tmp_path / "project"
+    shutil.copytree(get_project_root_dir() / "config", root / "config")
+    monkeypatch.setenv("PROJECT_ROOT", str(root))
+    _patch_a_whole_run(mocker)
+    downloads = mocker.patch.object(local_train_pipeline, "download_from_gcs")
+    register = mocker.patch.object(
+        local_train_pipeline, "register_model_impl", side_effect=_register_outputs
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        _argv_without_serving_image(tmp_path) + ["--serving-image", SERVING_IMAGE],
+    )
+
+    local_train_pipeline.main()
+
+    pointer_uri = resolve_latest_pointer_uri(root / "config", ENV)
+    [staged] = [
+        call for call in downloads.call_args_list if call.args[0] == pointer_uri
+    ]
+    landed = staged.args[1] / pointer_uri.rsplit("/", 1)[-1]
+
+    assert landed == latest_pointer_path(register.call_args.kwargs["run_dir"])

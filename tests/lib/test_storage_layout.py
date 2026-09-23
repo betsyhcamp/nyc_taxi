@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import cast
+from typing import cast, get_args
 
 import pytest
 
@@ -7,7 +7,11 @@ from fcstnyctaxi.lib.config.bindings import available_environments, environment_
 from fcstnyctaxi.lib.config.composition import compose_config
 from fcstnyctaxi.lib.storage_layout import (
     BUNDLE_MODEL_DIR_NAME,
+    LATEST_POINTER_FILENAME,
     _build_run_prefix,
+    latest_pointer_path,
+    resolve_environment_root,
+    resolve_latest_pointer_uri,
     resolve_run_outputs_uri,
     resolve_run_prefix,
 )
@@ -119,6 +123,73 @@ def test_resolve_run_outputs_uri_names_the_run_root_not_a_step(
     uri = resolve_run_outputs_uri(CONFIG_DIR, ENV, slice_name, RUN_ID)
 
     assert uri == f"gs://{composed_bucket}/{ENV}/{slice_name}/{RUN_ID}/run_outputs.json"
+
+
+# ================================================
+# resolve_environment_root and resolve_latest_pointer_uri tests
+# ================================================
+
+
+def test_the_environment_root_is_the_run_prefix_without_slice_or_run(
+    composed_bucket: str,
+) -> None:
+    """The shared prefix is the run prefix's own parent, not a second convention."""
+    root = resolve_environment_root(CONFIG_DIR, ENV)
+    prefix = resolve_run_prefix(CONFIG_DIR, ENV, "train", RUN_ID)
+
+    assert root == f"gs://{composed_bucket}/{ENV}/"
+    assert prefix == f"{root}train/{RUN_ID}/"
+
+
+def test_the_pointer_uri_is_the_environment_root_plus_one_filename(
+    composed_bucket: str,
+) -> None:
+    """One file carries a key per slice, so a slice token would strand the other two."""
+    uri = resolve_latest_pointer_uri(CONFIG_DIR, ENV)
+
+    assert uri == f"gs://{composed_bucket}/{ENV}/{LATEST_POINTER_FILENAME}"
+    assert not any(f"/{slice_name}/" in uri for slice_name in get_args(SliceName))
+
+
+# ================================================
+# latest_pointer_path tests
+# ================================================
+
+
+def test_the_pointer_sits_at_the_environment_root(
+    composed_bucket: str, tmp_path: Path
+) -> None:
+    """Both execution modes read the layout back to the same environment root."""
+    # The gcsfuse mount and the local mirror differ only above the bucket, so a
+    # resolver reaching for either spelling would serve one mode and fail one.
+    for base in (Path("/gcs"), tmp_path):
+        run_dir = base / composed_bucket / ENV / "train" / RUN_ID
+
+        assert latest_pointer_path(run_dir) == (
+            base / composed_bucket / ENV / LATEST_POINTER_FILENAME
+        )
+
+
+@pytest.mark.parametrize(
+    "run_dir",
+    [Path(f"/{RUN_ID}"), Path("/a/b"), Path(f"/{ENV}/training/{RUN_ID}")],
+    ids=["flat", "two_segments", "misspelled_slice"],
+)
+def test_a_run_dir_that_is_not_env_slice_run_raises(run_dir: Path) -> None:
+    """The inverse refuses the slice token the forward builder refuses going in."""
+    with pytest.raises(ValueError, match="is not <env>/<slice_name>/<run_id>"):
+        latest_pointer_path(run_dir)
+
+
+@pytest.mark.parametrize(
+    "run_dir",
+    [Path(f"train/{RUN_ID}"), Path(f"/train/{RUN_ID}")],
+    ids=["relative", "rooted"],
+)
+def test_a_run_dir_with_no_environment_segment_raises(run_dir: Path) -> None:
+    """Both pass the slice check and would put the pointer at the filesystem root."""
+    with pytest.raises(ValueError, match="no environment segment"):
+        latest_pointer_path(run_dir)
 
 
 # ================================================
