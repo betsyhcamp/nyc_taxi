@@ -1,11 +1,11 @@
 """Republish the fixed-path Data Preparation artifacts in the F->T contract form.
 
-The Training pipeline needs a panel carrying `feature_run_id` and a fiscal
-calendar, at run-scoped paths, and the Feature pipeline that will write them does
-not exist yet. This reads the two artifacts `notebooks/data_prep.py` already
-wrote, adds the column to the panel, as Feature does, writes them under
-`resolve_run_prefix`'s convention, and prints the `--feature-run-id` both training
-callers resolve from.
+The Training pipeline needs a panel carrying `feature_run_id`, a fiscal calendar
+and an exogenous features file, at run-scoped paths, and the Feature pipeline that
+will write them does not exist yet. This reads the three artifacts
+`notebooks/data_prep.py` already wrote, adds the column to the panel as Feature
+does, writes them under `resolve_run_prefix`'s convention, and prints the
+`--feature-run-id` both training callers resolve from.
 
 Disposable by construction: delete it the day the Feature pipeline publishes
 these artifacts.
@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 import pandas as pd
 from tsbricks.blocks.metadata import get_git_hash
 
-from fcstnyctaxi.lib.io import write_text_to_gcs
+from fcstnyctaxi.lib.io import delete_from_gcs, write_text_to_gcs
 from fcstnyctaxi.lib.storage_layout import resolve_run_outputs_uri, resolve_run_prefix
 from fcstnyctaxi.lib.utils import (
     generate_run_id,
@@ -33,11 +33,15 @@ _SOURCE_PANEL_URI = "gs://nyc-taxi-ehc--modeling/dev/backtests/data/time_series.
 _SOURCE_CALENDAR_URI = (
     "gs://nyc-taxi-ehc--modeling/dev/backtests/data/fiscal_calendar.parquet"
 )
+_SOURCE_EXOG_URI = (
+    "gs://nyc-taxi-ehc--modeling/dev/backtests/data/exogenous_features.parquet"
+)
 
 # Hardcoded values; Step named for the notebook it imitates, not for any Feature step.
 _STEP = "data_prep"
 _PANEL_FILENAME = "time_series.parquet"
 _CALENDAR_FILENAME = "fiscal_calendar.parquet"
+_EXOG_FILENAME = "exogenous_features.parquet"
 
 # The version the reader expects. Written although the shipped producer file has
 # none: the stand-in imitates the contract being asked for, not today's gap.
@@ -47,7 +51,7 @@ _SCHEMA_VERSION = "0.1.0"
 def _parse_args() -> argparse.Namespace:
     """Environment selector, and an optional id so a run can be republished."""
     parser = argparse.ArgumentParser(
-        description="Republish the fixed-path artifacts, the panel with "
+        description="Republish the three fixed-path artifacts, the panel with "
         "feature_run_id added."
     )
     parser.add_argument(
@@ -78,7 +82,7 @@ def _with_lineage_column(frame: pd.DataFrame, feature_run_id: str) -> pd.DataFra
 
 
 def main() -> None:
-    """Republish both artifacts under one feature run id, then print that id.
+    """Republish all three artifacts under one feature run id, then print that id.
 
     Raises:
         ValueError: If `--env` has no `environments/<env>.yaml`, if
@@ -94,13 +98,25 @@ def main() -> None:
     run_prefix = resolve_run_prefix(config_dir, args.env, "feature", feature_run_id)
     panel_uri = f"{run_prefix}{_STEP}/{_PANEL_FILENAME}"
     calendar_uri = f"{run_prefix}{_STEP}/{_CALENDAR_FILENAME}"
+    exog_uri = f"{run_prefix}{_STEP}/{_EXOG_FILENAME}"
+    outputs_uri = resolve_run_outputs_uri(
+        config_dir, args.env, "feature", feature_run_id
+    )
 
     panel_df = _with_lineage_column(pd.read_parquet(_SOURCE_PANEL_URI), feature_run_id)
+    # No lineage column on these two: Feature stamps the panel alone.
     calendar_df = pd.read_parquet(_SOURCE_CALENDAR_URI)
+    exog_df = pd.read_parquet(_SOURCE_EXOG_URI)
+
+    # Deleted here, not before the reads: a republish whose source is missing would
+    # otherwise destroy a valid marker for a rewrite that never began. Past this
+    # point a failure leaves no marker over the artifacts it half replaced.
+    delete_from_gcs(outputs_uri)
     panel_df.to_parquet(panel_uri, index=False)
     calendar_df.to_parquet(calendar_uri, index=False)
+    exog_df.to_parquet(exog_uri, index=False)
 
-    # Written last, after both parquet files: its presence is what marks the run
+    # Written last, after every parquet file: its presence is what marks the run
     # complete, so a URI stamped before the artifacts exist would be a promise.
     outputs = FeatureRunOutputs(
         schema_version=_SCHEMA_VERSION,
@@ -108,9 +124,12 @@ def main() -> None:
         env=args.env,
         git_hash=get_git_hash(),
         completed_at=datetime.now(UTC).isoformat(),
-        published=FeatureArtifacts(panel_uri=panel_uri, calendar_uri=calendar_uri),
+        published=FeatureArtifacts(
+            panel_uri=panel_uri, calendar_uri=calendar_uri, exogenous_uri=exog_uri
+        ),
         # Computed, never hardcoded. No series_admitted, series_dropped or
-        # exogenous_columns: this script admits nothing and this panel has none.
+        # exogenous_columns: this script admits nothing, and nothing in Training
+        # reads them.
         panel={
             "rows": len(panel_df),
             "series": panel_df["unique_id"].nunique(),
@@ -122,16 +141,14 @@ def main() -> None:
             "last_ds": str(pd.Timestamp(panel_df["ds"].max()).date()),
         },
     )
-    write_text_to_gcs(
-        outputs.model_dump_json(indent=2, exclude_none=True),
-        resolve_run_outputs_uri(config_dir, args.env, "feature", feature_run_id),
-    )
+    write_text_to_gcs(outputs.model_dump_json(indent=2, exclude_none=True), outputs_uri)
 
     # One pasteable line, so resolution is the path every run takes by default.
     print(f"--feature-run-id {feature_run_id}")
     print("\n# override, normally unnecessary:")
     print(f"#   --panel-uri {panel_uri}")
     print(f"#   --calendar-uri {calendar_uri}")
+    print(f"#   --additional-exog-uri {exog_uri}")
 
 
 if __name__ == "__main__":
