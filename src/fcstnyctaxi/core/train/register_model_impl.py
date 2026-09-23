@@ -10,12 +10,18 @@ from google.api_core.exceptions import NotFound
 from google.cloud import aiplatform
 
 from fcstnyctaxi.lib.registry_ids import compose_display_name, compose_model_id
-from fcstnyctaxi.lib.storage_layout import RUN_OUTPUTS_FILENAME, SourcedPath
+from fcstnyctaxi.lib.storage_layout import (
+    LATEST_POINTER_FILENAME,
+    RUN_OUTPUTS_FILENAME,
+    SourcedPath,
+    latest_pointer_path,
+)
 from fcstnyctaxi.lib.utils import require_label_safe_run_id
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import TrainInfraConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 from fcstnyctaxi.schemas.run_outputs import (
+    LatestRunPointer,
     RegisteredModel,
     TrainingData,
     TrainRunOutputs,
@@ -85,9 +91,10 @@ def register_model_impl(
     """Upload the bundle as a version of its model, or find it already registered.
 
     Keyword-only: two `Path` parameters transpose without a type error. Provenance is
-    read, never passed. `run_outputs.json` is deleted after the file checks and
-    written last. A documented exception to core/'s no-GCP-clients rule; an injected
-    client would put the filter strings beyond the tests.
+    read, never passed, the run pointer included: its path is derived from `run_dir`.
+    `run_outputs.json` is deleted after the file checks and written second to last,
+    ahead of the pointer. A documented exception to core/'s no-GCP-clients rule; an
+    injected client would put the filter strings beyond the tests.
 
     Args:
         bundle (SourcedPath): The final fit bundle; path read, URI uploaded.
@@ -98,7 +105,8 @@ def register_model_impl(
 
     Raises:
         ValueError: If the run id, `run_dir` or the bundle fails its check, a composed
-            name exceeds its cap, or this run id is registered at another git_hash.
+            name exceeds its cap, this run id is registered at another git_hash, or
+            the environment root holds no run pointer.
         RuntimeError: If more than one version carries this run id.
         ValidationError: If a file fails to revalidate on read.
 
@@ -148,6 +156,20 @@ def register_model_impl(
     model_id = compose_model_id(registry.model_id_prefix, model_name)
     display_name = compose_display_name(registry.display_name_prefix, model_name)
 
+    # Read before anything irreversible. The file is seeded once per environment, so
+    # absence means this run resolved the wrong environment root, not that a file is
+    # missing.
+    pointer_path = latest_pointer_path(run_dir)
+    if not pointer_path.is_file():
+        raise ValueError(
+            f"No {LATEST_POINTER_FILENAME} at {pointer_path}, so run "
+            f"{identity.train_run_id!r} resolved an environment root that has none."
+        )
+    pointer = json.loads(pointer_path.read_text())
+    # Validated, then discarded: pydantic drops keys it does not declare, so the write
+    # below edits this raw object instead of round-tripping the model.
+    LatestRunPointer.model_validate(pointer)
+
     # Otherwise a failed rerun leaves the old record claiming the pipeline finished.
     (run_dir / RUN_OUTPUTS_FILENAME).unlink(missing_ok=True)
 
@@ -196,10 +218,28 @@ def register_model_impl(
         completed_at=datetime.now(UTC),
         training_data=training_data,
     )
-    # run_outputs.json written is the pipeline's completion marker. Keep this last.
+    # run_outputs.json written is the pipeline's completion marker. Keep this last
+    # before the pointer.
     (run_dir / RUN_OUTPUTS_FILENAME).write_text(
         outputs.model_dump_json(indent=2, exclude_none=True) + "\n"
     )
+
+    # A rerun of the run the pointer already names leaves it briefly naming a run
+    # whose marker was deleted above. Accepted; logged so it is visible afterward.
+    prior = pointer.get("train")
+    if isinstance(prior, dict) and prior.get("train_run_id") == identity.train_run_id:
+        _log.info(
+            "run pointer already names %s; replacing its record.",
+            identity.train_run_id,
+        )
+    # feature_run_id alone is dropped: the pointer's own `feature` key answers a
+    # different question with a different value, and two answers cannot disagree if
+    # only one is written.
+    pointer["train"] = json.loads(
+        outputs.model_dump_json(exclude_none=True, exclude={"feature_run_id"})
+    )
+    # After the marker, so the pointer never names a run that has none.
+    pointer_path.write_text(json.dumps(pointer, indent=2) + "\n")
 
     _log.info(
         "register_model complete: model_tag=%s uploaded=%s train_run_id=%s",

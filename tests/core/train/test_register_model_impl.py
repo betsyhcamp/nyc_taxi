@@ -26,12 +26,21 @@ from fcstnyctaxi.core.train.register_model_impl import (
     register_model_impl,
 )
 from fcstnyctaxi.lib.registry_ids import compose_display_name, compose_model_id
-from fcstnyctaxi.lib.storage_layout import RUN_OUTPUTS_FILENAME, SourcedPath
+from fcstnyctaxi.lib.storage_layout import (
+    LATEST_POINTER_FILENAME,
+    RUN_OUTPUTS_FILENAME,
+    SourcedPath,
+    latest_pointer_path,
+)
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import ModelRegistry, TrainInfraConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
-from fcstnyctaxi.schemas.run_outputs import TrainRunOutputs
+from fcstnyctaxi.schemas.run_outputs import (
+    FeatureRunOutputs,
+    LatestRunPointer,
+    TrainRunOutputs,
+)
 
 CONFIG_DIR = get_project_root_dir() / "config"
 ENV = "dev"
@@ -174,6 +183,43 @@ def inputs(
     )
 
 
+def _seed_environment(root: Path, env: str = ENV) -> Path:
+    """The environment root, its pointer seeded as the writer leaves the real one.
+
+    Seeded only when absent, like the hand-placed file: a second run in one
+    environment must find its predecessor's record, not a fresh seed. The
+    `audit` key is one this repo does not model, and sorts ahead of the two it
+    does, so a reordering writer moves it.
+    """
+    env_root = root / env
+    env_root.mkdir(parents=True, exist_ok=True)
+    pointer_path = env_root / LATEST_POINTER_FILENAME
+    if not pointer_path.is_file():
+        seed = {
+            "feature": {
+                "feature_run_id": FEATURE_RUN_ID,
+                "published": {
+                    "panel_uri": "gs://bucket/time_series.parquet",
+                    "calendar_uri": "gs://bucket/fiscal_calendar.parquet",
+                    "exogenous_uri": "gs://bucket/exogenous_features.parquet",
+                },
+                "env": env,
+                "schema_version": "0.1.0",
+                "git_hash": "d" * 40,
+                "completed_at": "2026-09-20T00:00:00+00:00",
+                "panel": {"rows": 60, "series": 3},
+            },
+            "inference": "unset",
+            "audit": {"written_by": "a slice this repo does not model"},
+        }
+        pointer_path.write_text(json.dumps(seed, indent=2) + "\n")
+    # A broken fixture reads as a broken check.
+    on_disk = json.loads(pointer_path.read_text())
+    LatestRunPointer.model_validate(on_disk)
+    FeatureRunOutputs.model_validate(on_disk["feature"])
+    return env_root
+
+
 def _compose(
     inputs: tuple[SourcedPath, SourcedPath, SourcedPath],
     root: Path,
@@ -183,8 +229,13 @@ def _compose(
     config_dir: Path | None = None,
     env: str = ENV,
 ) -> Path:
-    """Run compose_configs for one run under root, returning its run root."""
+    """Run compose_configs for one run, in the layout the resolvers really produce.
+
+    The run root is <root>/<env>/train/<run_id>, so the environment root above it
+    is inside tmp_path and carries a pointer, as it does in both execution modes.
+    """
     panel, calendar, additional_exog = inputs
+    run_dir = _seed_environment(root, env) / "train" / run_id
     compose_configs_impl(
         config_dir=config_dir or stand_in_config_dir(root),
         env=env,
@@ -194,9 +245,9 @@ def _compose(
         expected_feature_run_id=FEATURE_RUN_ID,
         train_run_id=run_id,
         git_hash=git_hash,
-        out_dir=root / run_id / "compose_configs",
+        out_dir=run_dir / "compose_configs",
     )
-    return root / run_id
+    return run_dir
 
 
 def _fit(inputs: tuple[SourcedPath, SourcedPath, SourcedPath], run_dir: Path) -> None:
@@ -233,10 +284,11 @@ def _stage(
 def run_dir(
     inputs: tuple[SourcedPath, SourcedPath, SourcedPath], tmp_path: Path
 ) -> Path:
-    """This test's run root, with a self-check that both upstream steps completed."""
+    """This test's run root, self-checking both upstream steps and the pointer."""
     run_dir = _stage(inputs, tmp_path)
     assert (run_dir / "compose_configs" / "manifest.json").is_file()
     assert (run_dir / "final_fit" / MODEL_NAME / "final_fit_manifest.json").is_file()
+    assert latest_pointer_path(run_dir).is_file()
     return run_dir
 
 
@@ -531,3 +583,121 @@ def test_a_bundle_with_no_completion_marker_is_refused(
         _register(run_dir)
 
     assert _sdk(registry).mock_calls == []
+
+
+# ================================================
+# The run pointer
+# ================================================
+
+
+def _pointer(run_dir: Path) -> dict:
+    """The environment's pointer as it stands on disk."""
+    return json.loads(latest_pointer_path(run_dir).read_text())
+
+
+def test_the_seeded_pointer_is_where_the_impl_reads_it(
+    run_dir: Path, tmp_path: Path
+) -> None:
+    """The fixture places it by the layout; the impl derives it from run_dir alone."""
+    assert latest_pointer_path(run_dir) == tmp_path / ENV / LATEST_POINTER_FILENAME
+
+
+def test_a_missing_pointer_raises_before_the_marker_is_deleted(
+    run_dir: Path, registry: FakeRegistry
+) -> None:
+    """Seeded once per environment, so absence means the wrong root, not a lost file."""
+    _register(run_dir)
+    earlier = (run_dir / RUN_OUTPUTS_FILENAME).read_text()
+    latest_pointer_path(run_dir).unlink()
+
+    with pytest.raises(ValueError, match=LATEST_POINTER_FILENAME):
+        _register(run_dir)
+
+    assert (run_dir / RUN_OUTPUTS_FILENAME).read_text() == earlier
+
+
+def test_a_missing_pointer_never_reaches_the_registry(
+    run_dir: Path, registry: FakeRegistry
+) -> None:
+    """A version in the shared registry is the cost of checking this too late."""
+    latest_pointer_path(run_dir).unlink()
+
+    with pytest.raises(ValueError, match=LATEST_POINTER_FILENAME):
+        _register(run_dir)
+
+    assert _sdk(registry).mock_calls == []
+
+
+def test_the_pointer_is_written_after_the_completion_marker(
+    run_dir: Path, registry: FakeRegistry, mocker: MockerFixture
+) -> None:
+    """Written first, it would name a run whose record was not at its root yet."""
+    written: list[Path] = []
+    real_write_text = Path.write_text
+
+    def recording_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
+        written.append(self)
+        return real_write_text(self, *args, **kwargs)
+
+    mocker.patch.object(Path, "write_text", recording_write_text)
+
+    _register(run_dir)
+
+    assert written.index(run_dir / RUN_OUTPUTS_FILENAME) < written.index(
+        latest_pointer_path(run_dir)
+    )
+
+
+def test_the_train_block_drops_only_the_cross_reference(
+    run_dir: Path, registry: FakeRegistry
+) -> None:
+    """`feature` already names the newest Feature run; this names the one trained on."""
+    _register(run_dir)
+
+    record = json.loads((run_dir / RUN_OUTPUTS_FILENAME).read_text())
+    block = _pointer(run_dir)["train"]
+
+    assert "feature_run_id" in record
+    assert block == {
+        key: value for key, value in record.items() if key != "feature_run_id"
+    }
+
+
+def test_every_key_train_does_not_own_survives_the_rewrite(
+    run_dir: Path, registry: FakeRegistry
+) -> None:
+    """Round-tripping through the model would drop every key it does not declare."""
+    before = {key: value for key, value in _pointer(run_dir).items() if key != "train"}
+
+    _register(run_dir)
+
+    after = {key: value for key, value in _pointer(run_dir).items() if key != "train"}
+    assert after == before
+
+
+def test_the_order_of_keys_train_does_not_own_survives(
+    run_dir: Path, registry: FakeRegistry
+) -> None:
+    """A sorting writer passes the value comparison above and still reorders."""
+    before = _pointer(run_dir)
+    top_level = [key for key in before if key != "train"]
+    feature_keys = list(before["feature"])
+
+    _register(run_dir)
+
+    after = _pointer(run_dir)
+    assert [key for key in after if key != "train"] == top_level
+    assert list(after["feature"]) == feature_keys
+
+
+def test_the_rewritten_pointer_is_still_parseable_json(
+    run_dir: Path, registry: FakeRegistry
+) -> None:
+    """The writer dumps the whole object; splicing a value into the text would not."""
+    _register(run_dir)
+
+    reread = LatestRunPointer.model_validate_json(
+        latest_pointer_path(run_dir).read_text()
+    )
+
+    assert reread.train is not None

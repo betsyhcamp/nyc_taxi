@@ -34,6 +34,9 @@ from fcstnyctaxi.lib.run_outputs import resolve_feature_artifacts
 from fcstnyctaxi.lib.storage_layout import (
     RUN_OUTPUTS_FILENAME,
     SourcedPath,
+    latest_pointer_path,
+    resolve_environment_root,
+    resolve_latest_pointer_uri,
     resolve_run_prefix,
 )
 from fcstnyctaxi.lib.utils import (
@@ -432,6 +435,12 @@ def main() -> None:
         )
         return
 
+    # Staged after the opt-in check, so a run that registers nothing leaves the pointer
+    # alone. Two derivations on purpose: disagreement fails loudly in the impl.
+    pointer_path = latest_pointer_path(compose_dir.parent)
+    pointer_uri = resolve_latest_pointer_uri(config_dir, args.env)
+    download_from_gcs(pointer_uri, pointer_path.parent)
+
     # The wrapper's arguments: the bundle's mirror paired with the URI it uploads.
     register_summary = register_model_impl(
         bundle=SourcedPath(path=final_fit_dir, uri=final_fit_uri),
@@ -439,14 +448,18 @@ def main() -> None:
         serving_container_image_uri=args.serving_image,
         run_dir=compose_dir.parent,
     )
-    # Last of every publish, so its presence at the run root means the run finished.
+    # The last publish under the run root, so its presence there means the run
+    # finished.
     upload_to_gcs(compose_dir.parent / RUN_OUTPUTS_FILENAME, run_prefix)
+    # After the marker, so the pointer never names a run that has none.
+    upload_to_gcs(pointer_path, resolve_environment_root(config_dir, args.env))
 
     logger.info(
-        "register_model published: model_tag=%s uploaded=%s uri=%s",
+        "register_model published: model_tag=%s uploaded=%s uri=%s pointer=%s",
         register_summary.model_tag,
         register_summary.uploaded,
         f"{run_prefix}{RUN_OUTPUTS_FILENAME}",
+        pointer_uri,
     )
 
 
