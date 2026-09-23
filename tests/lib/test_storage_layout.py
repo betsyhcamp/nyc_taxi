@@ -122,7 +122,7 @@ def test_resolve_run_outputs_uri_names_the_run_root_not_a_step(
     """A step segment here would need the step name this file exists to supply."""
     uri = resolve_run_outputs_uri(CONFIG_DIR, ENV, slice_name, RUN_ID)
 
-    assert uri == f"gs://{composed_bucket}/{ENV}/{slice_name}/{RUN_ID}/run_outputs.json"
+    assert uri == f"gs://{composed_bucket}/{ENV}/{slice_name}/{RUN_ID}/run_output.json"
 
 
 # ================================================

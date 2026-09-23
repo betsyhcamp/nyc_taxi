@@ -120,7 +120,7 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Register the fitted challenger, recording this digest-pinned image as "
         "the runtime that reads its bundle. Absent, the run stops after the final "
-        "fit, registers nothing and writes no run_outputs.json.",
+        "fit, registers nothing and writes no run_output.json.",
     )
     parser.add_argument(
         "--scratch-dir",
