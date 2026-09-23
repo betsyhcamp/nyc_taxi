@@ -193,10 +193,13 @@ exog_df = pd.concat(
     ],
     ignore_index=True,
 )
+# A duplicated week would fan the merge out silently: the cast below catches a
+# missing count, not a repeated one.
 exog_df = exog_df.merge(
     weekly_df[["ds", "holiday_days_in_week", "week_sin", "week_cos"]],
     on="ds",
     how="left",
+    validate="many_to_one",
 )
 
 # Raises rather than filling when a count is missing, which would mean the weekly
