@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 import pandas as pd
 from tsbricks.blocks.metadata import get_git_hash
 
-from fcstnyctaxi.lib.io import write_text_to_gcs
+from fcstnyctaxi.lib.io import delete_from_gcs, write_text_to_gcs
 from fcstnyctaxi.lib.storage_layout import resolve_run_outputs_uri, resolve_run_prefix
 from fcstnyctaxi.lib.utils import (
     generate_run_id,
@@ -99,11 +99,19 @@ def main() -> None:
     panel_uri = f"{run_prefix}{_STEP}/{_PANEL_FILENAME}"
     calendar_uri = f"{run_prefix}{_STEP}/{_CALENDAR_FILENAME}"
     exog_uri = f"{run_prefix}{_STEP}/{_EXOG_FILENAME}"
+    outputs_uri = resolve_run_outputs_uri(
+        config_dir, args.env, "feature", feature_run_id
+    )
 
     panel_df = _with_lineage_column(pd.read_parquet(_SOURCE_PANEL_URI), feature_run_id)
     # No lineage column on these two: Feature stamps the panel alone.
     calendar_df = pd.read_parquet(_SOURCE_CALENDAR_URI)
     exog_df = pd.read_parquet(_SOURCE_EXOG_URI)
+
+    # Deleted here, not before the reads: a republish whose source is missing would
+    # otherwise destroy a valid marker for a rewrite that never began. Past this
+    # point a failure leaves no marker over the artifacts it half replaced.
+    delete_from_gcs(outputs_uri)
     panel_df.to_parquet(panel_uri, index=False)
     calendar_df.to_parquet(calendar_uri, index=False)
     exog_df.to_parquet(exog_uri, index=False)
@@ -133,10 +141,7 @@ def main() -> None:
             "last_ds": str(pd.Timestamp(panel_df["ds"].max()).date()),
         },
     )
-    write_text_to_gcs(
-        outputs.model_dump_json(indent=2, exclude_none=True),
-        resolve_run_outputs_uri(config_dir, args.env, "feature", feature_run_id),
-    )
+    write_text_to_gcs(outputs.model_dump_json(indent=2, exclude_none=True), outputs_uri)
 
     # One pasteable line, so resolution is the path every run takes by default.
     print(f"--feature-run-id {feature_run_id}")
