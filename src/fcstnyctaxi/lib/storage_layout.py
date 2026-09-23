@@ -16,7 +16,7 @@ from fcstnyctaxi.schemas.config.common import SliceName
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 
 # One place for the name a producer writes and a consumer reads.
-RUN_OUTPUTS_FILENAME = "run_outputs.json"
+RUN_OUTPUTS_FILENAME = "run_output.json"
 
 LATEST_POINTER_FILENAME = "_latest.json"
 """The environment-root pointer every slice rewrites its own key in."""

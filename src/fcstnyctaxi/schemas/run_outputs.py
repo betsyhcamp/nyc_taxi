@@ -1,4 +1,4 @@
-"""Each slice's `run_outputs.json`, Feature's for Training and Training's for
+"""Each slice's `run_output.json`, Feature's for Training and Training's for
 Inference, the shared pointer holding one record per slice, and the columns
 Feature promises.
 
@@ -67,7 +67,7 @@ class FeatureArtifacts(BaseModel):
 
 
 class FeatureRunOutputs(BaseModel):
-    """At Feature ``run_outputs.json``in run root. Presence is the completion signal"""
+    """At Feature ``run_output.json``in run root. Presence is the completion signal"""
 
     model_config = ConfigDict(frozen=True)
 
@@ -130,7 +130,7 @@ class TrainRunOutputs(BaseModel):
 class LatestRunPointer(BaseModel):
     """At the environment root, ``_latest.json``: each slice's newest run record.
 
-    A key holds that slice's whole ``run_outputs.json`` document, and no value is
+    A key holds that slice's whole ``run_output.json`` document, and no value is
     validated: a sibling's record is not Train's to reject, and checking ``train``
     would let the record being replaced block its replacement. The one check left
     is pydantic's own, that the document is an object.

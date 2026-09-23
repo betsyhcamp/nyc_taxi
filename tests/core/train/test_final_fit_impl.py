@@ -463,7 +463,7 @@ def test_the_manifest_agrees_with_the_panel_it_describes(
 def test_the_manifest_training_data_passes_through_the_run_outputs_schema(
     completed_run: tuple[dict[str, Any], FinalFitSummary],
 ) -> None:
-    """register_model copies this block into run_outputs.json through TrainingData,
+    """register_model copies this block into run_output.json through TrainingData,
     so the schema must hand back exactly what the bundle wrote."""
     staged, _ = completed_run
     manifest = json.loads((staged["out_dir"] / _MARKER).read_text())

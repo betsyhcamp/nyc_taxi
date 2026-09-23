@@ -113,7 +113,7 @@ mechanically checked: `grep -rn "data_prep" src/ scripts/` returns only the stan
 Feature writes one small file per run, at the **run root**:
 
 ```
-gs://<bucket>/<env>/feature/<feature_run_id>/run_outputs.json
+gs://<bucket>/<env>/feature/<feature_run_id>/run_output.json
 ```
 
 Training builds that one path from `<bucket>`, `<env>`, `feature` and the `feature_run_id`
@@ -199,7 +199,7 @@ the field ever arrives.
 > with only `<bucket>`, `<env>`, `<slice>` and `<run_id>`. Everything else lives in the
 > directory of the step that produced it.
 
-`run_outputs.json` qualifies: its reader is the next pipeline, which knows only the
+`run_output.json` qualifies: its reader is the next pipeline, which knows only the
 `feature_run_id` it was handed. `run_identity.json` qualifies too, and Training already
 writes it that way:
 
@@ -229,7 +229,7 @@ gs://<bucket>/<env>/_latest.json
 ```
 
 Its keys are the slice names `feature`, `train` and `inference`, and **each holds that
-slice's whole `run_outputs.json` document**, not an id. Each pipeline rewrites its own key
+slice's whole `run_output.json` document**, not an id. Each pipeline rewrites its own key
 and leaves the others equal in value and in order.
 
 Training's `register_model` rewrites `train` after writing its completion marker, so the

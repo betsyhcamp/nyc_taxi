@@ -92,7 +92,7 @@ def register_model_impl(
 
     Keyword-only: two `Path` parameters transpose without a type error. Provenance is
     read, never passed, the run pointer included: its path is derived from `run_dir`.
-    `run_outputs.json` is deleted after the file checks and written second to last,
+    `run_output.json` is deleted after the file checks and written second to last,
     ahead of the pointer. A documented exception to core/'s no-GCP-clients rule; an
     injected client would put the filter strings beyond the tests.
 
@@ -101,7 +101,7 @@ def register_model_impl(
         compose_configs_dir (Path): The compose step's output, with
             `run_identity.json` beside it.
         serving_container_image_uri (str): Required by `Model.upload`; serves nothing.
-        run_dir (Path): The run root, where `run_outputs.json` is written.
+        run_dir (Path): The run root, where `run_output.json` is written.
 
     Raises:
         ValueError: If the run id, `run_dir` or the bundle fails its check, a composed
@@ -218,7 +218,7 @@ def register_model_impl(
         completed_at=datetime.now(UTC),
         training_data=training_data,
     )
-    # run_outputs.json written is the pipeline's completion marker. Keep this last
+    # run_output.json written is the pipeline's completion marker. Keep this last
     # before the pointer.
     (run_dir / RUN_OUTPUTS_FILENAME).write_text(
         outputs.model_dump_json(indent=2, exclude_none=True) + "\n"

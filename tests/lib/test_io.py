@@ -166,7 +166,7 @@ def test_read_text_from_gcs_rejects_non_gcs_uri(uri: str) -> None:
 
 def test_read_text_from_gcs_round_trips_what_the_writer_wrote(fake_gcs: Path) -> None:
     """The pair is documented as a mirror, so it has to survive its own round trip."""
-    uri = "gs://BUCKET/dev/feature/RUNID/run_outputs.json"
+    uri = "gs://BUCKET/dev/feature/RUNID/run_output.json"
     write_text_to_gcs("SELECT 'café' AS x", uri)
 
     assert read_text_from_gcs(uri) == "SELECT 'café' AS x"
@@ -178,7 +178,7 @@ def test_read_text_from_gcs_raises_file_not_found_for_a_missing_object(
     """read_feature_run_outputs converts exactly this into a completion failure, so
     a different exception type would slip past its except clause."""
     with pytest.raises(FileNotFoundError):
-        read_text_from_gcs("gs://BUCKET/dev/feature/RUNID/run_outputs.json")
+        read_text_from_gcs("gs://BUCKET/dev/feature/RUNID/run_output.json")
 
 
 # ================================================
@@ -189,9 +189,9 @@ def test_read_text_from_gcs_raises_file_not_found_for_a_missing_object(
 @pytest.mark.parametrize(
     "uri",
     [
-        "s3://BUCKET/dev/train/RUNID/run_outputs.json",
-        "file:///tmp/run_outputs.json",
-        "/tmp/run_outputs.json",
+        "s3://BUCKET/dev/train/RUNID/run_output.json",
+        "file:///tmp/run_output.json",
+        "/tmp/run_output.json",
     ],
 )
 def test_delete_from_gcs_rejects_non_gcs_uri(uri: str) -> None:
@@ -202,7 +202,7 @@ def test_delete_from_gcs_rejects_non_gcs_uri(uri: str) -> None:
 
 def test_delete_from_gcs_removes_what_the_writer_wrote(fake_gcs: Path) -> None:
     """The object is gone afterwards, as the reader sees it."""
-    uri = "gs://BUCKET/dev/train/RUNID/run_outputs.json"
+    uri = "gs://BUCKET/dev/train/RUNID/run_output.json"
     write_text_to_gcs("{}", uri)
 
     delete_from_gcs(uri)
@@ -213,7 +213,7 @@ def test_delete_from_gcs_removes_what_the_writer_wrote(fake_gcs: Path) -> None:
 
 def test_delete_from_gcs_accepts_a_missing_object(fake_gcs: Path) -> None:
     """A run's first registration has no earlier record, so absence is not an error."""
-    delete_from_gcs("gs://BUCKET/dev/train/RUNID/run_outputs.json")
+    delete_from_gcs("gs://BUCKET/dev/train/RUNID/run_output.json")
 
 
 def test_delete_from_gcs_refuses_a_prefix_and_leaves_its_contents(
