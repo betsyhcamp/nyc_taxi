@@ -153,6 +153,11 @@ def test_the_manifest_names_the_exogenous_artifact_at_its_run_scoped_path(
         f"{run_prefix}{publish_feature_stand_in._STEP}/"
         f"{publish_feature_stand_in._EXOG_FILENAME}"
     )
+    # The assertion above builds its filename from the same constant the code does,
+    # so a constant pointing at another artifact's name would satisfy it. Two roles
+    # sharing a URI means one artifact was published over the other.
+    published = outputs.published.model_dump()
+    assert len(set(published.values())) == len(published)
 
 
 def test_what_the_stand_in_writes_reads_back_with_no_version_warning(
