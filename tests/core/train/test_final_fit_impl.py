@@ -90,11 +90,7 @@ def _set_model_settings(step_dir: Path, **updates: Any) -> None:
 
 
 def _additional_exog(panel: pd.DataFrame) -> pd.DataFrame:
-    """The exogenous features file on the panel's keys, carrying its contract.
-
-    Written although nothing opens it yet: compose records its URI, and the run
-    root is a whole Feature run rather than the part one step happens to read.
-    """
+    """The exogenous features file, on the keys Feature publishes it against."""
     return panel[["unique_id", "ds"]].assign(
         holiday_days_in_week=0, week_sin=0.0, week_cos=1.0
     )
@@ -123,7 +119,9 @@ def _stage(
         panel_path
     )
     calendar.assign(executed_at=executed_at).to_parquet(calendar_path)
-    _additional_exog(panel).to_parquet(additional_exog_path)
+    _additional_exog(panel).assign(executed_at=executed_at).to_parquet(
+        additional_exog_path
+    )
 
     step_dir = root / TRAIN_RUN_ID / "compose_configs"
     compose_configs_impl(
@@ -150,6 +148,7 @@ def _stage(
     return {
         "panel_path": panel_path,
         "calendar_path": calendar_path,
+        "additional_exog_path": additional_exog_path,
         "compose_configs_dir": step_dir,
         "model_name": MODEL_NAME,
         "out_dir": root / TRAIN_RUN_ID / "final_fit" / MODEL_NAME,
@@ -298,6 +297,21 @@ def test_a_panel_week_missing_from_the_calendar_is_refused(
     staged = _stage(tmp_path, panel, gapped)
 
     with pytest.raises(ValueError, match="no exogenous values"):
+        final_fit_impl(**staged)
+
+
+def test_an_exogenous_path_naming_another_artifact_is_refused_by_frame_name(
+    staged: dict[str, Any],
+) -> None:
+    """Three staged paths transpose silently; the trim is what names which frame.
+
+    Nothing joins this frame yet, so the trim is the only thing that would notice.
+    """
+    staged["additional_exog_path"] = staged["calendar_path"]
+
+    with pytest.raises(
+        ValueError, match="additional exogenous is missing required columns"
+    ):
         final_fit_impl(**staged)
 
 

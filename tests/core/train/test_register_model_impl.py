@@ -201,10 +201,11 @@ def _compose(
 
 def _fit(inputs: tuple[SourcedPath, SourcedPath, SourcedPath], run_dir: Path) -> None:
     """Run final_fit on the challenger, leaving its bundle under run_dir."""
-    panel, calendar, _ = inputs
+    panel, calendar, additional_exog = inputs
     final_fit_impl(
         panel_path=panel.path,
         calendar_path=calendar.path,
+        additional_exog_path=additional_exog.path,
         compose_configs_dir=run_dir / "compose_configs",
         model_name=MODEL_NAME,
         out_dir=run_dir / "final_fit" / MODEL_NAME,

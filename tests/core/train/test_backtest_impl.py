@@ -39,6 +39,7 @@ from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 from fcstnyctaxi.schemas.run_outputs import (
+    ADDITIONAL_EXOG_REQUIRED_COLUMNS,
     CALENDAR_ALLOWED_COLUMNS,
     PANEL_REQUIRED_COLUMNS,
 )
@@ -368,6 +369,7 @@ def test_an_out_dir_not_named_for_its_model_is_refused(tmp_path: Path) -> None:
         backtest_impl(
             panel_path=tmp_path / "absent.parquet",
             calendar_path=tmp_path / "absent.parquet",
+            additional_exog_path=tmp_path / "absent.parquet",
             compose_configs_dir=step_dir,
             model_name=MODEL_NAME,
             out_dir=out_dir,
@@ -385,6 +387,7 @@ def test_an_out_dir_outside_the_declared_run_root_is_refused(tmp_path: Path) -> 
         backtest_impl(
             panel_path=tmp_path / "absent.parquet",
             calendar_path=tmp_path / "absent.parquet",
+            additional_exog_path=tmp_path / "absent.parquet",
             compose_configs_dir=step_dir,
             model_name=MODEL_NAME,
             out_dir=out_dir,
@@ -403,6 +406,7 @@ def test_a_missing_run_identity_names_what_should_have_written_it(
         backtest_impl(
             panel_path=tmp_path / "absent.parquet",
             calendar_path=tmp_path / "absent.parquet",
+            additional_exog_path=tmp_path / "absent.parquet",
             compose_configs_dir=step_dir,
             model_name=MODEL_NAME,
             out_dir=tmp_path / TRAIN_RUN_ID / "backtest" / MODEL_NAME,
@@ -495,6 +499,7 @@ _SIDECAR_FILENAMES = frozenset(
         "raw_cv_forecasts.parquet",
         "fiscal_calendar.parquet",
         "time_series_snapshot.parquet",
+        "additional_exog.parquet",
         "composed_config.yaml",
         "backtest_manifest.json",
     }
@@ -629,6 +634,18 @@ def test_monthly_series_keys_are_unique_on_good_data(
 # ================================================
 
 
+def _raise_attempt_failed(*args: Any, **kwargs: Any) -> Any:
+    """Stand in for a collaborator that fails partway through a run."""
+    raise RuntimeError("attempt failed")
+
+
+def _additional_exog(panel: pd.DataFrame) -> pd.DataFrame:
+    """The exogenous features file, on the keys Feature publishes it against."""
+    return panel[["unique_id", "ds"]].assign(
+        holiday_days_in_week=0, week_sin=0.0, week_cos=1.0
+    )
+
+
 def _stage(
     tmp_path: Path,
     full_panel: pd.DataFrame,
@@ -638,17 +655,21 @@ def _stage(
     """Land the inputs and compose_configs outputs, as backtest_impl's arguments.
 
     Stamped as Feature delivers them: `feature_run_id` on the panel alone, and a
-    metadata column on both, so the trims have something to drop.
+    metadata column on all three, so the trims have something to drop.
     """
     inputs = tmp_path / "inputs"
     inputs.mkdir()
     panel_path = inputs / "time_series.parquet"
     calendar_path = inputs / "fiscal_calendar.parquet"
+    additional_exog_path = inputs / "exogenous_features.parquet"
     executed_at = pd.Timestamp("2026-09-17")
     full_panel.assign(
         feature_run_id=FEATURE_RUN_ID, executed_at=executed_at
     ).to_parquet(panel_path)
     full_calendar.assign(executed_at=executed_at).to_parquet(calendar_path)
+    _additional_exog(full_panel).assign(executed_at=executed_at).to_parquet(
+        additional_exog_path
+    )
 
     step_dir = _stage_compose_configs(tmp_path)
     save_config(
@@ -662,6 +683,7 @@ def _stage(
     return {
         "panel_path": panel_path,
         "calendar_path": calendar_path,
+        "additional_exog_path": additional_exog_path,
         "compose_configs_dir": step_dir,
         "model_name": MODEL_NAME,
         "out_dir": tmp_path / TRAIN_RUN_ID / "backtest" / MODEL_NAME,
@@ -728,20 +750,45 @@ def test_a_failed_rerun_leaves_no_completion_marker(
     staged: dict[str, Any], monkeypatch: pytest.MonkeyPatch, failing_collaborator: str
 ) -> None:
     """Both failure positions: before the writes, and partway through them."""
-
-    def _fail(*args: Any, **kwargs: Any) -> Any:
-        raise RuntimeError("attempt failed")
-
     backtest_impl(**staged)
     assert (staged["out_dir"] / "backtest_manifest.json").is_file()
 
     monkeypatch.setattr(
-        f"fcstnyctaxi.core.train.backtest_impl.{failing_collaborator}", _fail
+        f"fcstnyctaxi.core.train.backtest_impl.{failing_collaborator}",
+        _raise_attempt_failed,
     )
     with pytest.raises(RuntimeError):
         backtest_impl(**staged)
 
     assert not (staged["out_dir"] / "backtest_manifest.json").exists()
+
+
+def test_every_sidecar_file_lands_before_the_completion_marker(
+    staged: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A marker over a half-written sidecar reads as a finished one."""
+    monkeypatch.setattr(
+        "fcstnyctaxi.core.train.backtest_impl._build_manifest", _raise_attempt_failed
+    )
+    with pytest.raises(RuntimeError):
+        backtest_impl(**staged)
+
+    # _build_manifest runs after every file write and before the marker write, so
+    # this partitions the writes exactly where the marker rule sits.
+    written = {path.name for path in staged["out_dir"].iterdir()}
+    assert written == _SIDECAR_FILENAMES - {"backtest_manifest.json"}
+
+
+def test_an_exogenous_path_naming_another_artifact_is_refused_by_frame_name(
+    staged: dict[str, Any],
+) -> None:
+    """Three staged paths transpose silently; the trim is what names which frame."""
+    staged["additional_exog_path"] = staged["calendar_path"]
+
+    with pytest.raises(
+        ValueError, match="additional exogenous is missing required columns"
+    ):
+        backtest_impl(**staged)
 
 
 def test_the_impl_passes_the_models_own_configured_features(
@@ -802,6 +849,8 @@ def test_the_snapshots_are_trimmed_to_the_contract(completed_run: Path) -> None:
     """An untrimmed panel reaches the model and crashes it three layers down."""
     panel_snapshot = pd.read_parquet(completed_run / "time_series_snapshot.parquet")
     calendar_snapshot = pd.read_parquet(completed_run / "fiscal_calendar.parquet")
+    exog_snapshot = pd.read_parquet(completed_run / "additional_exog.parquet")
 
     assert tuple(panel_snapshot.columns) == PANEL_REQUIRED_COLUMNS
     assert tuple(calendar_snapshot.columns) == CALENDAR_ALLOWED_COLUMNS
+    assert tuple(exog_snapshot.columns) == ADDITIONAL_EXOG_REQUIRED_COLUMNS

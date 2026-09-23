@@ -44,6 +44,7 @@ from fcstnyctaxi.lib.storage_layout import composed_config_filename
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 from fcstnyctaxi.schemas.run_outputs import (
+    ADDITIONAL_EXOG_REQUIRED_COLUMNS,
     CALENDAR_ALLOWED_COLUMNS,
     CALENDAR_REQUIRED_COLUMNS,
     PANEL_REQUIRED_COLUMNS,
@@ -398,13 +399,14 @@ def backtest_impl(
     *,
     panel_path: Path,
     calendar_path: Path,
+    additional_exog_path: Path,
     compose_configs_dir: Path,
     model_name: str,
     out_dir: Path,
 ) -> BacktestSummary:
-    """Back one model over one run's origins and write its eight-file sidecar.
+    """Back one model over one run's origins and write its nine-file sidecar.
 
-    Keyword-only: three adjacent `Path` parameters transpose without a type error, and
+    Keyword-only: four adjacent `Path` parameters transpose without a type error, and
     a swapped panel and calendar surfaces much later as a missing column. No provenance
     scalars: reading `run_identity.json` makes a disagreeing parameter unrepresentable.
     The completion marker is deleted once the guards pass, so a failed run leaves no
@@ -413,6 +415,8 @@ def backtest_impl(
     Args:
         panel_path: The weekly actuals, stamped with a `feature_run_id`.
         calendar_path: The fiscal calendar, unstamped: Feature stamps the panel alone.
+        additional_exog_path: The exogenous features, unstamped for the same reason.
+            Read, trimmed and snapshotted here; nothing joins it yet.
         compose_configs_dir: Holds this model's composed config and `modeling.yaml`,
             with `run_identity.json` beside it.
         model_name: Selects the composed config, and names `out_dir`.
@@ -461,6 +465,7 @@ def backtest_impl(
 
     panel_df = pd.read_parquet(panel_path)
     calendar_df = pd.read_parquet(calendar_path)
+    additional_exog_df = pd.read_parquet(additional_exog_path)
     # Catches a panel from another Feature run, or wrong bytes at the path handed in.
     require_matching_feature_run_id(panel_df, identity.feature_run_id)
 
@@ -473,6 +478,13 @@ def backtest_impl(
         required=CALENDAR_REQUIRED_COLUMNS,
         allowed=CALENDAR_ALLOWED_COLUMNS,
         frame_name="calendar",
+    )
+    # No `allowed`: the file exists to carry its three features, so required and
+    # allowed are one list and the tuple is its own allowlist.
+    additional_exog_df = trim_to_allowlist(
+        additional_exog_df,
+        required=ADDITIONAL_EXOG_REQUIRED_COLUMNS,
+        frame_name="additional exogenous",
     )
 
     outputs = compute_backtest_outputs(
@@ -508,6 +520,9 @@ def backtest_impl(
         getattr(outputs, field).to_parquet(out_dir / filename, index=False)
     calendar_df.to_parquet(out_dir / "fiscal_calendar.parquet", index=False)
     panel_df.to_parquet(out_dir / "time_series_snapshot.parquet", index=False)
+    # No _snapshot suffix, following fiscal_calendar.parquet: the panel's copy
+    # carries one only because its source is also named time_series.parquet.
+    additional_exog_df.to_parquet(out_dir / "additional_exog.parquet", index=False)
     # A byte copy, not a re-dump: a re-dump reimplements save_config's formatting.
     shutil.copyfile(composed_config_path, out_dir / "composed_config.yaml")
 

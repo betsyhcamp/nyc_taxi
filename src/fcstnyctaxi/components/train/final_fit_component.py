@@ -18,6 +18,7 @@ def final_fit(
     composed_configs: Input[Artifact],
     panel: Input[Dataset],
     calendar: Input[Dataset],
+    additional_exog: Input[Dataset],
     bundle: Output[Model],
 ) -> None:
     """Fit one model on the whole panel and write the bundle a registry consumes.
@@ -32,6 +33,8 @@ def final_fit(
             `run_identity.json` beside it.
         panel (Input[Dataset]): The weekly actuals.
         calendar (Input[Dataset]): The fiscal calendar.
+        additional_exog (Input[Dataset]): The exogenous features, read and trimmed
+            and not yet joined.
         bundle (Output[Model]): This model's bundle directory; the wrapper sets
             its URI before the impl reads the path. `system.Model` is lineage
             only and registers nothing.
@@ -65,6 +68,7 @@ def final_fit(
     summary = final_fit_impl(
         panel_path=Path(panel.path),
         calendar_path=Path(calendar.path),
+        additional_exog_path=Path(additional_exog.path),
         compose_configs_dir=Path(composed_configs.path),
         model_name=model_name,
         out_dir=Path(bundle.path),

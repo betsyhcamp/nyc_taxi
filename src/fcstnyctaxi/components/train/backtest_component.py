@@ -18,9 +18,10 @@ def backtest(
     composed_configs: Input[Artifact],
     panel: Input[Dataset],
     calendar: Input[Dataset],
+    additional_exog: Input[Dataset],
     sidecar: Output[Artifact],
 ) -> None:
-    """Back one model over one run's origins and write its eight-file sidecar.
+    """Back one model over one run's origins and write its nine-file sidecar.
 
     One task per model, so `model_name` is a compile-time constant.
 
@@ -32,7 +33,9 @@ def backtest(
             `run_identity.json` beside it.
         panel (Input[Dataset]): The weekly actuals.
         calendar (Input[Dataset]): The fiscal calendar.
-        sidecar (Output[Artifact]): This model's eight-file directory; the wrapper
+        additional_exog (Input[Dataset]): The exogenous features, snapshotted into
+            the sidecar and not yet joined.
+        sidecar (Output[Artifact]): This model's nine-file directory; the wrapper
             sets its URI before the impl reads the path.
 
     Raises:
@@ -61,6 +64,7 @@ def backtest(
     summary = backtest_impl(
         panel_path=Path(panel.path),
         calendar_path=Path(calendar.path),
+        additional_exog_path=Path(additional_exog.path),
         compose_configs_dir=Path(composed_configs.path),
         model_name=model_name,
         out_dir=Path(sidecar.path),

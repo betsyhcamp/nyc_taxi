@@ -29,6 +29,7 @@ GIT_HASH = "abc1234-dirty"
 COMPOSED_CONFIGS_URI = f"{RUN_PREFIX}compose_configs/"
 PANEL_URI = "gs://sentinel-bucket/dev/feature/f-sentinel/panel.parquet"
 CALENDAR_URI = "gs://sentinel-bucket/dev/feature/f-sentinel/calendar.parquet"
+EXOG_URI = "gs://sentinel-bucket/dev/feature/f-sentinel/exogenous.parquet"
 
 # Derived: a literal would restate the convention, not check it.
 BUNDLE_URI = f"{RUN_PREFIX}final_fit/{MODEL_NAME}/"
@@ -58,12 +59,13 @@ def baked_git_hash(monkeypatch: pytest.MonkeyPatch) -> str:
     return GIT_HASH
 
 
-def _artifacts() -> tuple[Artifact, Dataset, Dataset, Model]:
+def _artifacts() -> tuple[Artifact, Dataset, Dataset, Dataset, Model]:
     """Fresh inputs and output; bundle starts at uri="" so .path reads ""."""
     return (
         Artifact(name="composed_configs", uri=COMPOSED_CONFIGS_URI),
         Dataset(name="panel", uri=PANEL_URI),
         Dataset(name="calendar", uri=CALENDAR_URI),
+        Dataset(name="additional_exog", uri=EXOG_URI),
         Model(name="bundle", uri=""),
     )
 
@@ -72,7 +74,7 @@ def test_wrapper_places_its_bundle_pairs_every_input_and_stamps_it(
     mock_impl: Any, baked_git_hash: str
 ) -> None:
     """Test that the wrapper places its bundle, pairs each input, and stamps it."""
-    composed_configs, panel, calendar, bundle = _artifacts()
+    composed_configs, panel, calendar, additional_exog, bundle = _artifacts()
     assert bundle.path == ""  # baseline: wrong until assigned
 
     COMPONENT.execute(
@@ -81,6 +83,7 @@ def test_wrapper_places_its_bundle_pairs_every_input_and_stamps_it(
         composed_configs=composed_configs,
         panel=panel,
         calendar=calendar,
+        additional_exog=additional_exog,
         bundle=bundle,
     )
 
@@ -93,6 +96,7 @@ def test_wrapper_places_its_bundle_pairs_every_input_and_stamps_it(
     assert kwargs["out_dir"] == Path(Model(uri=BUNDLE_URI).path)
     assert kwargs["panel_path"] == Path(panel.path)
     assert kwargs["calendar_path"] == Path(calendar.path)
+    assert kwargs["additional_exog_path"] == Path(additional_exog.path)
     assert kwargs["compose_configs_dir"] == Path(composed_configs.path)
     assert kwargs["model_name"] == MODEL_NAME
 
@@ -113,7 +117,7 @@ def test_missing_git_hash_raises_naming_the_variable(
     else:
         monkeypatch.setenv("FCST_GIT_HASH", baked_value)
 
-    composed_configs, panel, calendar, bundle = _artifacts()
+    composed_configs, panel, calendar, additional_exog, bundle = _artifacts()
 
     with pytest.raises(RuntimeError, match="FCST_GIT_HASH"):
         COMPONENT.execute(
@@ -122,6 +126,7 @@ def test_missing_git_hash_raises_naming_the_variable(
             composed_configs=composed_configs,
             panel=panel,
             calendar=calendar,
+            additional_exog=additional_exog,
             bundle=bundle,
         )
 
@@ -133,7 +138,7 @@ def test_impl_failure_propagates_and_leaves_metadata_unstamped(
 ) -> None:
     """Test that an impl failure reaches the caller and stamps no metadata."""
     mock_impl.side_effect = ValueError("out_dir is not named for model 'model_a'.")
-    composed_configs, panel, calendar, bundle = _artifacts()
+    composed_configs, panel, calendar, additional_exog, bundle = _artifacts()
 
     with pytest.raises(ValueError, match="not named for model"):
         COMPONENT.execute(
@@ -142,6 +147,7 @@ def test_impl_failure_propagates_and_leaves_metadata_unstamped(
             composed_configs=composed_configs,
             panel=panel,
             calendar=calendar,
+            additional_exog=additional_exog,
             bundle=bundle,
         )
 

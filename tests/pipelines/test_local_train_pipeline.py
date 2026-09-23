@@ -688,9 +688,8 @@ def test_compose_is_handed_each_path_paired_with_the_uri_it_was_built_from(
     monkeypatch: pytest.MonkeyPatch,
     mocker: MockerFixture,
 ) -> None:
-    """A path mirrored from the wrong URI still exists and still reads, so the
-    pairing is the only thing that catches it. The exogenous path is mirrored and
-    not downloaded, because nothing opens that file until the impls do."""
+    """A path staged from the wrong URI still exists and still reads, so the
+    pairing is the only thing that catches it."""
     root = tmp_path / "project"
     shutil.copytree(get_project_root_dir() / "config", root / "config")
     monkeypatch.setenv("PROJECT_ROOT", str(root))
@@ -745,7 +744,81 @@ def test_compose_is_handed_each_path_paired_with_the_uri_it_was_built_from(
         )
 
 
-def test_the_local_runner_resolves_both_uris_from_the_feature_run_id_alone(
+def test_both_impls_are_handed_the_staged_paths_compose_recorded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+) -> None:
+    """The staged inputs, not a second download: every step must read the bytes
+    compose validated, and three same-typed paths transpose without a type error."""
+    root = tmp_path / "project"
+    shutil.copytree(get_project_root_dir() / "config", root / "config")
+    monkeypatch.setenv("PROJECT_ROOT", str(root))
+    mocker.patch.object(
+        local_train_pipeline, "require_git_hash", return_value="abc1234"
+    )
+    # The real return value, so a staged path equals the mirror path it lands in.
+    mocker.patch.object(
+        local_train_pipeline,
+        "download_from_gcs",
+        side_effect=lambda uri, directory: directory / uri.rsplit("/", 1)[-1],
+    )
+    compose = mocker.patch.object(
+        local_train_pipeline, "compose_configs_impl", side_effect=_compose_outputs
+    )
+    backtest = mocker.patch.object(
+        local_train_pipeline, "backtest_impl", side_effect=_backtest_outputs
+    )
+    mocker.patch.object(
+        local_train_pipeline, "evaluate_impl", side_effect=_evaluate_outputs
+    )
+    final_fit = mocker.patch.object(
+        local_train_pipeline, "final_fit_impl", side_effect=_final_fit_outputs
+    )
+    mocker.patch.object(local_train_pipeline, "upload_to_gcs")
+    mocker.patch.object(local_train_pipeline, "sync_to_gcs", return_value=(7, 0))
+    mocker.patch.object(local_train_pipeline, "delete_from_gcs")
+    mocker.patch.object(
+        run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "local_train_pipeline",
+            "--env",
+            ENV,
+            "--feature-run-id",
+            FEATURE_RUN_ID,
+            "--run-id",
+            RUN_ID,
+            "--scratch-dir",
+            str(tmp_path / "scratch"),
+        ],
+    )
+
+    local_train_pipeline.main()
+
+    # From the compose call, not recomputed here: that is what ties each impl to the
+    # artifact compose recorded rather than to a path this test happens to build.
+    composed = compose.call_args.kwargs
+    expected = {
+        "panel_path": composed["panel"].path,
+        "calendar_path": composed["calendar"].path,
+        "additional_exog_path": composed["additional_exog"].path,
+    }
+    # Non-vacuity: three equal paths would satisfy every assertion below.
+    assert len(set(expected.values())) == 3
+
+    assert final_fit.call_count == 1
+    assert backtest.call_count == len(COMPOSE_SUMMARY.model_names)
+    for call in [*backtest.call_args_list, final_fit.call_args]:
+        for parameter, path in expected.items():
+            assert call.kwargs[parameter] == path
+
+
+def test_the_local_runner_resolves_all_three_uris_from_the_feature_run_id_alone(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     mocker: MockerFixture,
@@ -799,6 +872,7 @@ def test_the_local_runner_resolves_both_uris_from_the_feature_run_id_alone(
     assert [call.args[0] for call in downloads.call_args_list] == [
         RESOLVED_PANEL_URI,
         RESOLVED_CALENDAR_URI,
+        RESOLVED_EXOG_URI,
     ]
     # The evidence the override flags are to be retired on, from this caller.
     assert "source=resolved" in caplog.text

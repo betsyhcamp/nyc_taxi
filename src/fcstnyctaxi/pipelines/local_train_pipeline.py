@@ -246,7 +246,7 @@ def main() -> None:
 
     # Scratch persists, so a retry under the same --run-id finds stale files.
     # sync_to_gcs matches the prefix to compose_dir; it does not clean it. The
-    # backtest step needs no equivalent: its eight filenames are fixed in code,
+    # backtest step needs no equivalent: its nine filenames are fixed in code,
     # while this step emits one config per model_roles entry.
     if compose_dir.exists():
         shutil.rmtree(compose_dir)
@@ -260,10 +260,9 @@ def main() -> None:
         path=download_from_gcs(artifacts.calendar_uri, calendar_path.parent),
         uri=artifacts.calendar_uri,
     )
-    # Mirrored, not downloaded: nothing opens this file yet, and download_from_gcs
-    # returns the path _mirror_path builds, so staging it is one expression later.
     additional_exog = SourcedPath(
-        path=additional_exog_path, uri=artifacts.exogenous_uri
+        path=download_from_gcs(artifacts.exogenous_uri, additional_exog_path.parent),
+        uri=artifacts.exogenous_uri,
     )
 
     summary = compose_configs_impl(
@@ -319,6 +318,7 @@ def main() -> None:
         backtest_summary = backtest_impl(
             panel_path=panel.path,
             calendar_path=calendar.path,
+            additional_exog_path=additional_exog.path,
             compose_configs_dir=compose_dir,
             model_name=model_name,
             out_dir=model_dir,
@@ -397,6 +397,7 @@ def main() -> None:
     final_fit_impl(
         panel_path=panel.path,
         calendar_path=calendar.path,
+        additional_exog_path=additional_exog.path,
         compose_configs_dir=compose_dir,
         model_name=roles.challenger,
         out_dir=final_fit_dir,

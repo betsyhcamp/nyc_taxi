@@ -75,8 +75,7 @@ def test_local_path_as_calendar_uri_raises(valid_train_identity: dict) -> None:
 
 
 def test_local_path_as_additional_exog_uri_raises(valid_train_identity: dict) -> None:
-    """Same slip, third frame. The runner mirrors this path without downloading it,
-    so the staged name exists before anything has staged bytes there."""
+    """Same slip, third frame."""
     valid_train_identity["additional_exog_uri"] = "/tmp/scratch/exogenous.parquet"
 
     with pytest.raises(ValidationError, match="additional_exog_uri"):

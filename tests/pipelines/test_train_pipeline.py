@@ -223,13 +223,13 @@ def test_the_compose_task_takes_each_selector_from_its_own_parameter(
         assert parameters[name]["componentInputParameter"] == name
 
 
-def test_every_panel_and_calendar_reader_shares_one_importer(tmp_path: Path) -> None:
+def test_every_artifact_reader_shares_one_importer(tmp_path: Path) -> None:
     """Test that one importer per artifact feeds every reader: a second would hand a
     task bytes compose never validated, and a task cannot see its siblings."""
     ir = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)
     backtest_names = set(_backtest_tasks(ir))
 
-    for artifact_name in ("panel", "calendar"):
+    for artifact_name in ("panel", "calendar", "additional_exog"):
         producer_of = {
             name: task["inputs"]["artifacts"][artifact_name]["taskOutputArtifact"][
                 "producerTask"
