@@ -61,9 +61,9 @@ class TrainRunIdentity(BaseModel):
     """Provenance of one Training run — which artifacts it read, and who made them.
 
     ``feature_run_id`` is the **join key** relating a training run's tables to a
-    feature run's; ``panel_uri`` and ``calendar_uri`` are the **human pointer**.
-    Both are cheap and they verify each other once Feature publishes
-    run-scoped paths, since the URI then contains the id.
+    feature run's; ``panel_uri``, ``calendar_uri`` and ``additional_exog_uri``
+    are the **human pointer**. Both are cheap and they verify each other once
+    Feature publishes run-scoped paths, since the URI then contains the id.
 
     An output type, not an input contract: a KFP wrapper cannot construct one,
     because ``feature_run_id`` comes from reading the panel, and the impl/wrapper
@@ -78,3 +78,4 @@ class TrainRunIdentity(BaseModel):
     train_run_id: str = Field(min_length=1)
     panel_uri: str = Field(pattern=r"^gs://")
     calendar_uri: str = Field(pattern=r"^gs://")
+    additional_exog_uri: str = Field(pattern=r"^gs://")

@@ -306,3 +306,11 @@ def test_the_join_keys_are_columns_the_additional_exog_file_carries() -> None:
 def test_exactly_one_join_key_is_also_a_calendar_column() -> None:
     """Why exog_features needs two checks: `ds` passes an unknown-column test."""
     assert set(JOIN_KEYS) & set(CALENDAR_ALLOWED_COLUMNS) == {"ds"}
+
+
+def test_the_two_exogenous_contracts_share_no_column_but_the_join_keys() -> None:
+    """A shared name merges to _x/_y suffixes and vanishes from the selection.
+    Both tuples are repo-owned, so a collision takes a code edit."""
+    shared = set(CALENDAR_ALLOWED_COLUMNS) & set(ADDITIONAL_EXOG_REQUIRED_COLUMNS)
+
+    assert shared <= set(JOIN_KEYS)

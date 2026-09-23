@@ -132,6 +132,9 @@ def _identity() -> TrainRunIdentity:
         train_run_id=TRAIN_RUN_ID,
         panel_uri=f"gs://bucket/dev/feature/{FEATURE_RUN_ID}/time_series.parquet",
         calendar_uri=f"gs://bucket/dev/feature/{FEATURE_RUN_ID}/fiscal_calendar.parquet",
+        additional_exog_uri=(
+            f"gs://bucket/dev/feature/{FEATURE_RUN_ID}/exogenous_features.parquet"
+        ),
     )
 
 
@@ -258,6 +261,7 @@ def _manifest(
             "git_hash": identity.git_hash,
             "panel_uri": identity.panel_uri,
             "calendar_uri": identity.calendar_uri,
+            "additional_exog_uri": identity.additional_exog_uri,
         },
         "config": {
             "tiering": modeling.tiering.model_dump(),
@@ -1400,15 +1404,9 @@ def test_tier_survives_the_derivations_as_an_ordered_categorical(
 def test_lineage_values_propagate_into_every_table(
     outputs: EvaluateOutputs,
 ) -> None:
-    """The values, not that five columns exist."""
+    """The values, not that six columns exist."""
     identity = _identity()
-    stamped = {
-        "train_run_id": identity.train_run_id,
-        "feature_run_id": identity.feature_run_id,
-        "git_hash": identity.git_hash,
-        "panel_uri": identity.panel_uri,
-        "calendar_uri": identity.calendar_uri,
-    }
+    stamped = identity.model_dump()
 
     for table in (
         "per_series_comparison",
@@ -1674,6 +1672,22 @@ def test_one_model_in_both_roles_scores_itself_at_one(
     assert summary.hero_metric_values
     for value in summary.hero_metric_values.values():
         assert value == pytest.approx(1.0)
+
+
+def test_the_manifest_lineage_is_the_identity_the_tables_are_stamped_with(
+    staged_run: dict[str, Path],
+) -> None:
+    """Whole-object, as register_model compares the bundle's block: evaluate opens no
+    Feature artifact, so the block is the run's provenance and not what it read."""
+    evaluate_impl(**staged_run)
+    manifest = json.loads(
+        (staged_run["out_dir"] / "evaluate_manifest.json").read_text()
+    )
+    identity = json.loads(
+        (staged_run["compose_configs_dir"].parent / "run_identity.json").read_text()
+    )
+
+    assert manifest["lineage"] == identity
 
 
 def test_the_manifest_agrees_with_the_tables_beside_it(

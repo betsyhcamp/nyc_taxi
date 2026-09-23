@@ -5,6 +5,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
 import pandas as pd
 import pytest
 import yaml
@@ -89,6 +90,18 @@ def _set_model_settings(step_dir: Path, **updates: Any) -> None:
     _edit_yaml(step_dir / "modeling.yaml", _update)
 
 
+def _additional_exog(panel: pd.DataFrame, calendar: pd.DataFrame) -> pd.DataFrame:
+    """The exogenous file as Feature publishes it: every series over every calendar
+    week, so it covers the horizon the calendar leaves past the panel."""
+    frame = pd.MultiIndex.from_product(
+        [panel["unique_id"].unique(), calendar["ds"]], names=["unique_id", "ds"]
+    ).to_frame(index=False)
+    angle = 2 * np.pi * frame["ds"].dt.dayofyear / 365.25
+    return frame.assign(
+        holiday_days_in_week=0, week_sin=np.sin(angle), week_cos=np.cos(angle)
+    )
+
+
 def _stage(
     root: Path,
     panel: pd.DataFrame,
@@ -107,10 +120,14 @@ def _stage(
     executed_at = pd.Timestamp("2026-09-21")
     panel_path = inputs / "time_series.parquet"
     calendar_path = inputs / "fiscal_calendar.parquet"
+    additional_exog_path = inputs / "exogenous_features.parquet"
     panel.assign(feature_run_id=FEATURE_RUN_ID, executed_at=executed_at).to_parquet(
         panel_path
     )
     calendar.assign(executed_at=executed_at).to_parquet(calendar_path)
+    _additional_exog(panel, calendar).assign(executed_at=executed_at).to_parquet(
+        additional_exog_path
+    )
 
     step_dir = root / TRAIN_RUN_ID / "compose_configs"
     compose_configs_impl(
@@ -119,6 +136,9 @@ def _stage(
         panel=SourcedPath(path=panel_path, uri="gs://bucket/time_series.parquet"),
         calendar=SourcedPath(
             path=calendar_path, uri="gs://bucket/fiscal_calendar.parquet"
+        ),
+        additional_exog=SourcedPath(
+            path=additional_exog_path, uri="gs://bucket/exogenous_features.parquet"
         ),
         expected_feature_run_id=FEATURE_RUN_ID,
         train_run_id=TRAIN_RUN_ID,
@@ -134,6 +154,7 @@ def _stage(
     return {
         "panel_path": panel_path,
         "calendar_path": calendar_path,
+        "additional_exog_path": additional_exog_path,
         "compose_configs_dir": step_dir,
         "model_name": MODEL_NAME,
         "out_dir": root / TRAIN_RUN_ID / "final_fit" / MODEL_NAME,
@@ -285,6 +306,18 @@ def test_a_panel_week_missing_from_the_calendar_is_refused(
         final_fit_impl(**staged)
 
 
+def test_an_exogenous_path_naming_another_artifact_is_refused_by_frame_name(
+    staged: dict[str, Any],
+) -> None:
+    """Three staged paths transpose silently; the trim is what names which frame."""
+    staged["additional_exog_path"] = staged["calendar_path"]
+
+    with pytest.raises(
+        ValueError, match="additional exogenous is missing required columns"
+    ):
+        final_fit_impl(**staged)
+
+
 def test_a_calendar_missing_a_consumed_column_is_refused_by_name(
     tmp_path: Path, panel: pd.DataFrame, full_calendar: pd.DataFrame
 ) -> None:
@@ -380,7 +413,10 @@ def test_the_bundle_holds_an_in_process_fit_of_its_config(
     default = stand_in_fit(panel, hyperparameters["freq"])["setting"]
     assert hyperparameters["setting"] != default
     exog_df = build_exog_frame(
-        panel, full_calendar, exog_features=STAND_IN_EXOG_FEATURES
+        panel,
+        full_calendar,
+        _additional_exog(panel, full_calendar),
+        exog_features=STAND_IN_EXOG_FEATURES,
     )
 
     in_process = stand_in_fit(panel, exog_df=exog_df, **hyperparameters)
@@ -449,10 +485,16 @@ def test_the_manifest_names_what_a_reader_needs_to_load_and_predict(
         yaml.safe_load((staged["compose_configs_dir"] / "modeling.yaml").read_text())
     ).model_settings[MODEL_NAME]
 
+    identity = json.loads(
+        (staged["compose_configs_dir"].parent / "run_identity.json").read_text()
+    )
+
     assert manifest["model_name"] == MODEL_NAME
     assert manifest["config"]["save_callable"] == settings.save_callable
     assert manifest["config"]["exog_features"] == settings.exog_features
-    assert manifest["lineage"]["train_run_id"] == TRAIN_RUN_ID
+    # Whole-object: register_model revalidates this block as a TrainRunIdentity and
+    # compares it to the identity, so a missing slot fails every registration.
+    assert manifest["lineage"] == identity
 
 
 def test_the_summary_carries_the_run_ids_it_discovered(

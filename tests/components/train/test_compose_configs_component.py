@@ -37,9 +37,10 @@ DECLARED_MODEL_NAMES = list(resolve_model_names(CONFIG_DIR))
 # With one name, the reordered case below would silently become the matching case.
 assert len(DECLARED_MODEL_NAMES) >= 2
 
-# Distinct, so pairing assertions also prove panel and calendar were not swapped.
+# Distinct, so pairing assertions also prove no two inputs were swapped.
 PANEL_URI = "gs://sentinel-bucket/feature/f-sentinel/panel.parquet"
 CALENDAR_URI = "gs://sentinel-bucket/feature/f-sentinel/calendar.parquet"
+EXOG_URI = "gs://sentinel-bucket/feature/f-sentinel/exogenous.parquet"
 
 # Real, not a Mock: the wrapper feeds as_dict() to metadata.update(), which raises
 # on a Mock for a reason unrelated to anything under test.
@@ -81,11 +82,12 @@ def baked_git_hash(monkeypatch: pytest.MonkeyPatch) -> str:
     return GIT_HASH
 
 
-def _artifacts() -> tuple[Dataset, Dataset, Artifact]:
+def _artifacts() -> tuple[Dataset, Dataset, Dataset, Artifact]:
     """Fresh inputs and output; composed_configs starts at uri="" so .path reads ""."""
     return (
         Dataset(name="panel", uri=PANEL_URI),
         Dataset(name="calendar", uri=CALENDAR_URI),
+        Dataset(name="additional_exog", uri=EXOG_URI),
         Artifact(name="composed_configs", uri=""),
     )
 
@@ -100,7 +102,7 @@ def test_wrapper_wires_inputs_outputs_and_metadata(
     real_config_dir: Path, mock_impl: Any, baked_git_hash: str
 ) -> None:
     """Test that the wrapper places its output, pairs each input, and stamps it."""
-    panel, calendar, composed_configs = _artifacts()
+    panel, calendar, additional_exog, composed_configs = _artifacts()
     assert composed_configs.path == ""  # baseline: demonstrably wrong until assigned
 
     result = COMPONENT.execute(
@@ -110,6 +112,7 @@ def test_wrapper_wires_inputs_outputs_and_metadata(
         declared_model_names=DECLARED_MODEL_NAMES,
         panel=panel,
         calendar=calendar,
+        additional_exog=additional_exog,
         composed_configs=composed_configs,
     )
 
@@ -125,6 +128,9 @@ def test_wrapper_wires_inputs_outputs_and_metadata(
     assert kwargs["out_dir"] == Path(Artifact(uri=expected_uri).path)
     assert kwargs["panel"] == SourcedPath(path=Path(panel.path), uri=PANEL_URI)
     assert kwargs["calendar"] == SourcedPath(path=Path(calendar.path), uri=CALENDAR_URI)
+    assert kwargs["additional_exog"] == SourcedPath(
+        path=Path(additional_exog.path), uri=EXOG_URI
+    )
     assert kwargs["config_dir"] == CONFIG_DIR
     assert kwargs["env"] == ENV
     assert kwargs["expected_feature_run_id"] == FEATURE_RUN_ID
@@ -152,7 +158,7 @@ def test_missing_git_hash_raises_naming_the_variable(
     else:
         monkeypatch.setenv("FCST_GIT_HASH", baked_value)
 
-    panel, calendar, composed_configs = _artifacts()
+    panel, calendar, additional_exog, composed_configs = _artifacts()
 
     with pytest.raises(RuntimeError, match="FCST_GIT_HASH"):
         COMPONENT.execute(
@@ -162,6 +168,7 @@ def test_missing_git_hash_raises_naming_the_variable(
             declared_model_names=DECLARED_MODEL_NAMES,
             panel=panel,
             calendar=calendar,
+            additional_exog=additional_exog,
             composed_configs=composed_configs,
         )
 
@@ -172,10 +179,15 @@ def test_impl_failure_propagates_and_leaves_metadata_unstamped(
     real_config_dir: Path, mock_impl: Any, baked_git_hash: str
 ) -> None:
     """Test that an impl failure reaches the caller and stamps no metadata."""
-    mock_impl.side_effect = ValueError("panel and calendar are the same filepath")
-    panel, calendar, composed_configs = _artifacts()
+    # The impl's own message, paths included, so the fixture is a state it produces.
+    mock_impl.side_effect = ValueError(
+        "Miswiring error: panel /gcs/b/panel.parquet, calendar /gcs/b/panel.parquet "
+        "and additional exogenous /gcs/b/exogenous.parquet must name three "
+        "different files."
+    )
+    panel, calendar, additional_exog, composed_configs = _artifacts()
 
-    with pytest.raises(ValueError, match="same filepath"):
+    with pytest.raises(ValueError, match="three different files"):
         COMPONENT.execute(
             env=ENV,
             train_run_id=TRAIN_RUN_ID,
@@ -183,6 +195,7 @@ def test_impl_failure_propagates_and_leaves_metadata_unstamped(
             declared_model_names=DECLARED_MODEL_NAMES,
             panel=panel,
             calendar=calendar,
+            additional_exog=additional_exog,
             composed_configs=composed_configs,
         )
 
@@ -205,7 +218,7 @@ def test_a_template_from_another_tree_is_refused_naming_both_sides(
     real_config_dir: Path, mock_impl: Any, baked_git_hash: str, declared: list[str]
 ) -> None:
     """Test that a declared model set diverging from the image's own is refused."""
-    panel, calendar, composed_configs = _artifacts()
+    panel, calendar, additional_exog, composed_configs = _artifacts()
 
     with pytest.raises(ValueError) as excinfo:
         COMPONENT.execute(
@@ -215,6 +228,7 @@ def test_a_template_from_another_tree_is_refused_naming_both_sides(
             declared_model_names=declared,
             panel=panel,
             calendar=calendar,
+            additional_exog=additional_exog,
             composed_configs=composed_configs,
         )
 

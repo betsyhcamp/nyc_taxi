@@ -23,6 +23,7 @@ _CONFIG_FILENAME = "composed_config.yaml"
 _COMPARED_FRAMES = (
     "time_series_snapshot.parquet",
     "fiscal_calendar.parquet",
+    "additional_exog.parquet",
     "monthly_series.parquet",
     "raw_cv_forecasts.parquet",
     "metrics.parquet",

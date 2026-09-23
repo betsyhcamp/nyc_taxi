@@ -21,6 +21,7 @@ def valid_train_identity() -> dict:
         "train_run_id": "UTC20260905T130000000000Z",
         "panel_uri": "gs://b/panel.parquet",
         "calendar_uri": "gs://b/calendar.parquet",
+        "additional_exog_uri": "gs://b/exogenous.parquet",
     }
 
 
@@ -73,6 +74,14 @@ def test_local_path_as_calendar_uri_raises(valid_train_identity: dict) -> None:
         TrainRunIdentity(**valid_train_identity)
 
 
+def test_local_path_as_additional_exog_uri_raises(valid_train_identity: dict) -> None:
+    """Same slip, third frame."""
+    valid_train_identity["additional_exog_uri"] = "/tmp/scratch/exogenous.parquet"
+
+    with pytest.raises(ValidationError, match="additional_exog_uri"):
+        TrainRunIdentity(**valid_train_identity)
+
+
 def test_train_run_identity_is_frozen(valid_train_identity: dict) -> None:
     """Recorded provenance is immutable once constructed."""
     identity = TrainRunIdentity(**valid_train_identity)
@@ -105,7 +114,7 @@ def test_sql_text_as_sql_sha256_raises() -> None:
 
     Passing the wrong one would stamp an entire query as provenance, and a
     min_length constraint would not notice. This is the same shape of slip the
-    gs:// patterns close for panel_uri and calendar_uri.
+    gs:// patterns close for the three artifact URIs.
     """
     with pytest.raises(ValidationError, match="sql_sha256"):
         FeatureRunIdentity(

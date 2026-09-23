@@ -212,14 +212,13 @@ def main() -> None:
         display_name=f"{infra.display_name_prefix}-{run_id}",
         template_path=str(template),
         pipeline_root=environment.vertex.pipeline_root,
-        # No exogenous_uri: the template declares no parameter for it, and
-        # PipelineJob refuses a key the template does not declare.
         parameter_values={
             "env": args.env,
             "train_run_id": run_id,
             "feature_run_id": args.feature_run_id,
             "panel_uri": artifacts.panel_uri,
             "calendar_uri": artifacts.calendar_uri,
+            "additional_exog_uri": artifacts.exogenous_uri,
         },
         enable_caching=enable_caching,
     )

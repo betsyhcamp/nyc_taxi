@@ -15,7 +15,7 @@ def _require_fannable_model_names(model_names: tuple[str, ...]) -> None:
 
     Empty backs no model, writes nothing and exits clean. Duplicates do not raise
     in KFP: it emits a second positional task carrying one model_name, and both
-    resolve to one sidecar directory, so two tasks race on eight files.
+    resolve to one sidecar directory, so two tasks race on nine files.
 
     Args:
         model_names (tuple[str, ...]): The set the DAG would emit a task per.
@@ -67,12 +67,14 @@ def build_train_pipeline(
         feature_run_id: str,
         panel_uri: str,
         calendar_uri: str,
+        additional_exog_uri: str,
     ) -> None:
         """Compose every Training config for one run, back each model, score, fit, then
         register.
 
-        Feature is a separate pipeline, so its two artifacts arrive as URIs rather than
-        from an upstream task; dsl.importer types each and registers it in ML Metadata.
+        Feature is a separate pipeline, so its three artifacts arrive as URIs rather
+        than from an upstream task; dsl.importer types each and registers it in ML
+        Metadata.
         No run_prefix parameter: it needs bucket_name from a destination composed at
         runtime, so only the wrapper can resolve it.
         """
@@ -81,6 +83,9 @@ def build_train_pipeline(
         )
         calendar = dsl.importer(
             artifact_uri=calendar_uri, artifact_class=dsl.Dataset, reimport=False
+        )
+        additional_exog = dsl.importer(
+            artifact_uri=additional_exog_uri, artifact_class=dsl.Dataset, reimport=False
         )
         # type: ignore since a type checker sees the undecorated function, whose
         # Output[Artifact] parameter the decorator supplies.
@@ -91,8 +96,9 @@ def build_train_pipeline(
             declared_model_names=list(model_names),
             panel=panel.output,
             calendar=calendar.output,
+            additional_exog=additional_exog.output,
         )
-        # Plain Python at decoration time: one task per model. Both importer
+        # Plain Python at decoration time: one task per model. All three importer
         # handles are reused, so every task reads the artifact compose validated.
         # Kept by name so evaluate can select two of them by role.
         backtest_tasks = {}
@@ -103,6 +109,7 @@ def build_train_pipeline(
                 composed_configs=compose.outputs["composed_configs"],
                 panel=panel.output,
                 calendar=calendar.output,
+                additional_exog=additional_exog.output,
             ).set_display_name(f"backtest-{model_name}")
 
         # No importer handles: the sidecars hold every input. No set_display_name:
@@ -126,6 +133,7 @@ def build_train_pipeline(
                 composed_configs=compose.outputs["composed_configs"],
                 panel=panel.output,
                 calendar=calendar.output,
+                additional_exog=additional_exog.output,
             )
             .after(scoring)
             .set_display_name(f"final_fit-{model_roles.challenger}")
