@@ -825,8 +825,7 @@ def test_the_local_runner_resolves_all_three_uris_from_the_feature_run_id_alone(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test the drift the flag-name mirror test cannot see: this caller could still
-    require the overrides while both parsers declare the same flag names. The
-    download assertion also holds the backtest step to the already-staged inputs."""
+    require the overrides while both parsers declare the same flag names."""
     root = tmp_path / "project"
     shutil.copytree(get_project_root_dir() / "config", root / "config")
     monkeypatch.setenv("PROJECT_ROOT", str(root))

@@ -468,9 +468,8 @@ def test_a_role_model_without_callables_is_not_held_to_the_registry_caps(
 def test_one_artifact_passed_in_two_slots_raises(
     tmp_path: Path, aliased: str, onto: str
 ) -> None:
-    """Every pairing, since each loses a different input: the calendar in both
-    readable slots writes seven artifacts past the last actual, and an exogenous
-    slot aliasing another records provenance for a file no step will read."""
+    """Every pairing: the calendar in both readable slots writes seven artifacts
+    past the last actual, and an aliased exogenous slot records a file nothing reads."""
     panel, calendar, additional_exog = _write_inputs(
         tmp_path, _panel_frame(), _calendar_frame()
     )

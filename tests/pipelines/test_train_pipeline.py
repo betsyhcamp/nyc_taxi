@@ -190,11 +190,8 @@ def test_a_model_set_the_dag_cannot_fan_out_over_is_refused(
 
 
 def test_each_artifact_input_comes_from_its_own_importer(tmp_path: Path) -> None:
-    """Test that each of the three artifacts arrives from an importer of its own URI.
-
-    Both miswirings are silent until runtime: a shared importer reaches the impl's
-    three-different-files guard, and a transposed pair reaches nothing until pandas.
-    """
+    """Test that each artifact arrives from an importer of its own URI: a shared one
+    reaches the miswiring guard, a transposed pair nothing until pandas."""
     ir = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)
     tasks = ir["root"]["dag"]["tasks"]
 

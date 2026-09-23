@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
 import pandas as pd
 import pytest
 from tsbricks.backtesting import generate_folds
@@ -130,6 +131,13 @@ def ts_df() -> pd.DataFrame:
     )
 
 
+@pytest.fixture
+def exog_file_df(ts_df: pd.DataFrame, calendar_df: pd.DataFrame) -> pd.DataFrame:
+    """The exogenous file over every series and every calendar week, which is what
+    Feature publishes and what now decides the assembled frame's row set."""
+    return _additional_exog_over(ts_df, calendar_df)
+
+
 def _shipped_modeling() -> TrainModelingConfig:
     """The committed tiering, weighting and evaluation periods."""
     return cast(
@@ -177,7 +185,10 @@ _NO_EXOG: tuple[str, ...] = ()
 
 
 def test_the_fold_loop_produces_one_origin_per_configured_origin(
-    ts_df: pd.DataFrame, calendar_df: pd.DataFrame, modeling: TrainModelingConfig
+    ts_df: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    exog_file_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
 ) -> None:
     """The fixture's own check: without it a broken fixture reads as a broken check."""
     outputs = compute_backtest_outputs(
@@ -185,6 +196,7 @@ def test_the_fold_loop_produces_one_origin_per_configured_origin(
         modeling=modeling,
         ts_df=ts_df,
         calendar_df=calendar_df,
+        additional_exog_df=exog_file_df,
         exog_features=_NO_EXOG,
     )
 
@@ -196,7 +208,10 @@ def test_the_fold_loop_produces_one_origin_per_configured_origin(
 
 
 def test_only_the_configured_columns_reach_the_model(
-    ts_df: pd.DataFrame, calendar_df: pd.DataFrame, modeling: TrainModelingConfig
+    ts_df: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    exog_file_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
 ) -> None:
     """The impl decides the feature set now, so a calendar column outside it must
     not reach the model, where an extra column is adopted as a feature at fit."""
@@ -207,6 +222,7 @@ def test_only_the_configured_columns_reach_the_model(
         modeling=modeling,
         ts_df=ts_df,
         calendar_df=calendar_df,
+        additional_exog_df=exog_file_df,
         exog_features=selected,
     )
 
@@ -224,7 +240,10 @@ def test_only_the_configured_columns_reach_the_model(
 
 
 def test_repeated_forecast_origins_raise_before_the_loop(
-    ts_df: pd.DataFrame, calendar_df: pd.DataFrame, modeling: TrainModelingConfig
+    ts_df: pd.DataFrame,
+    calendar_df: pd.DataFrame,
+    exog_file_df: pd.DataFrame,
+    modeling: TrainModelingConfig,
 ) -> None:
     """BacktestConfig rejects a repeated pair, so the reachable case is two horizons."""
     with pytest.raises(ValueError, match="forecast origins repeat"):
@@ -233,6 +252,7 @@ def test_repeated_forecast_origins_raise_before_the_loop(
             modeling=modeling,
             ts_df=ts_df,
             calendar_df=calendar_df,
+            additional_exog_df=exog_file_df,
             exog_features=_NO_EXOG,
         )
 
@@ -242,6 +262,7 @@ def test_repeated_forecast_origins_raise_before_the_loop(
 def test_a_fold_count_disagreeing_with_the_pairs_raises_before_the_loop(
     ts_df: pd.DataFrame,
     calendar_df: pd.DataFrame,
+    exog_file_df: pd.DataFrame,
     modeling: TrainModelingConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -263,6 +284,7 @@ def test_a_fold_count_disagreeing_with_the_pairs_raises_before_the_loop(
             modeling=modeling,
             ts_df=ts_df,
             calendar_df=calendar_df,
+            additional_exog_df=exog_file_df,
             exog_features=_NO_EXOG,
         )
 
@@ -272,6 +294,7 @@ def test_a_fold_count_disagreeing_with_the_pairs_raises_before_the_loop(
 def test_an_unmapped_fold_id_raises_instead_of_nulling_the_origin(
     ts_df: pd.DataFrame,
     calendar_df: pd.DataFrame,
+    exog_file_df: pd.DataFrame,
     modeling: TrainModelingConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -296,6 +319,7 @@ def test_an_unmapped_fold_id_raises_instead_of_nulling_the_origin(
             modeling=modeling,
             ts_df=ts_df,
             calendar_df=calendar_df,
+            additional_exog_df=exog_file_df,
             exog_features=_NO_EXOG,
         )
 
@@ -303,6 +327,7 @@ def test_an_unmapped_fold_id_raises_instead_of_nulling_the_origin(
 def test_duplicate_monthly_series_keys_raise(
     ts_df: pd.DataFrame,
     calendar_df: pd.DataFrame,
+    exog_file_df: pd.DataFrame,
     modeling: TrainModelingConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -323,6 +348,7 @@ def test_duplicate_monthly_series_keys_raise(
             modeling=modeling,
             ts_df=ts_df,
             calendar_df=calendar_df,
+            additional_exog_df=exog_file_df,
             exog_features=_NO_EXOG,
         )
 
@@ -545,6 +571,7 @@ def full_outputs(
         modeling=_shipped_modeling(),
         ts_df=full_panel,
         calendar_df=full_calendar,
+        additional_exog_df=_additional_exog_over(full_panel, full_calendar),
         exog_features=tuple(
             _shipped_modeling().model_settings[MODEL_NAME].exog_features
         ),
@@ -639,10 +666,15 @@ def _raise_attempt_failed(*args: Any, **kwargs: Any) -> Any:
     raise RuntimeError("attempt failed")
 
 
-def _additional_exog(panel: pd.DataFrame) -> pd.DataFrame:
-    """The exogenous features file, on the keys Feature publishes it against."""
-    return panel[["unique_id", "ds"]].assign(
-        holiday_days_in_week=0, week_sin=0.0, week_cos=1.0
+def _additional_exog_over(panel: pd.DataFrame, calendar: pd.DataFrame) -> pd.DataFrame:
+    """The exogenous file as Feature publishes it: every series over every calendar
+    week, so it spans the dates a fold predicts into as well as the panel's own."""
+    frame = pd.MultiIndex.from_product(
+        [panel["unique_id"].unique(), calendar["ds"]], names=["unique_id", "ds"]
+    ).to_frame(index=False)
+    angle = 2 * np.pi * frame["ds"].dt.dayofyear / 365.25
+    return frame.assign(
+        holiday_days_in_week=0, week_sin=np.sin(angle), week_cos=np.cos(angle)
     )
 
 
@@ -667,9 +699,9 @@ def _stage(
         feature_run_id=FEATURE_RUN_ID, executed_at=executed_at
     ).to_parquet(panel_path)
     full_calendar.assign(executed_at=executed_at).to_parquet(calendar_path)
-    _additional_exog(full_panel).assign(executed_at=executed_at).to_parquet(
-        additional_exog_path
-    )
+    _additional_exog_over(full_panel, full_calendar).assign(
+        executed_at=executed_at
+    ).to_parquet(additional_exog_path)
 
     step_dir = _stage_compose_configs(tmp_path)
     save_config(

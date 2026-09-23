@@ -168,6 +168,7 @@ def compute_backtest_outputs(
     modeling: TrainModelingConfig,
     ts_df: pd.DataFrame,
     calendar_df: pd.DataFrame,
+    additional_exog_df: pd.DataFrame,
     exog_features: tuple[str, ...],
 ) -> BacktestOutputs:
     """Run the composable fold loop for one model config.
@@ -180,8 +181,10 @@ def compute_backtest_outputs(
         modeling: Only `tiering` and `weighting` are read.
         ts_df: The trimmed weekly panel.
         calendar_df: The trimmed fiscal calendar, read here as a dimension table.
-        exog_features: Calendar columns this model consumes, from its
-            `model_settings` entry. Empty for a model that takes none.
+        additional_exog_df: The trimmed exogenous features file, which drives the
+            assembled frame's row set.
+        exog_features: Columns this model consumes, from either contract and from
+            its `model_settings` entry. Empty for a model that takes none.
 
     Raises:
         ValueError: If origins repeat, if the fold count disagrees with the
@@ -216,9 +219,11 @@ def compute_backtest_outputs(
 
     fraction_by_origin = calendar_df.set_index("ds")["origin_month_fraction_elapsed"]
 
-    # Once, not per fold: the spine must carry every series and the frame must span
-    # the dates every fold predicts into. The model's feature set is decided here.
-    exog_df = build_exog_frame(ts_df, calendar_df, exog_features=exog_features)
+    # Once, not per fold: the file must carry every series and span the dates every
+    # fold predicts into. The model's feature set is decided here.
+    exog_df = build_exog_frame(
+        ts_df, calendar_df, additional_exog_df, exog_features=exog_features
+    )
 
     for fold_idx, (fold_id, splits) in enumerate(cv_folds.items()):
         fold_origin, fold_horizon = origin_horizon_pairs[fold_idx]
@@ -416,7 +421,7 @@ def backtest_impl(
         panel_path: The weekly actuals, stamped with a `feature_run_id`.
         calendar_path: The fiscal calendar, unstamped: Feature stamps the panel alone.
         additional_exog_path: The exogenous features, unstamped for the same reason.
-            Read, trimmed and snapshotted here; nothing joins it yet.
+            Read, trimmed, snapshotted, and joined into the assembled frame.
         compose_configs_dir: Holds this model's composed config and `modeling.yaml`,
             with `run_identity.json` beside it.
         model_name: Selects the composed config, and names `out_dir`.
@@ -492,6 +497,7 @@ def backtest_impl(
         modeling=modeling,
         ts_df=panel_df,
         calendar_df=calendar_df,
+        additional_exog_df=additional_exog_df,
         exog_features=tuple(modeling.model_settings[model_name].exog_features),
     )
 

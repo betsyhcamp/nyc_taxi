@@ -128,7 +128,7 @@ def final_fit_impl(
         panel_path: The weekly actuals, stamped with a `feature_run_id`.
         calendar_path: The fiscal calendar, unstamped: Feature stamps the panel alone.
         additional_exog_path: The exogenous features, unstamped for the same reason.
-            Read and trimmed here; the join that consumes it lands next.
+            Read, trimmed, and joined into the frame the model is fitted on.
         compose_configs_dir: Holds this model's composed config and `modeling.yaml`,
             with `run_identity.json` beside it.
         model_name: The model to fit, which must declare its callable pair. Selects
@@ -202,8 +202,6 @@ def final_fit_impl(
         allowed=CALENDAR_ALLOWED_COLUMNS,
         frame_name="calendar",
     )
-    # Read and trimmed one commit before anything joins it, so a path, download or
-    # wiring fault is attributable here rather than to the join.
     additional_exog_df = trim_to_allowlist(
         additional_exog_df,
         required=ADDITIONAL_EXOG_REQUIRED_COLUMNS,
@@ -213,7 +211,10 @@ def final_fit_impl(
     # The backtest assembles from the same entry, so the registered model trains on
     # the feature set that was scored.
     exog_df = build_exog_frame(
-        panel_df, calendar_df, exog_features=tuple(settings.exog_features)
+        panel_df,
+        calendar_df,
+        additional_exog_df,
+        exog_features=tuple(settings.exog_features),
     )
 
     # hyperparameters alone: predict_params belong to the fit-predict callable.

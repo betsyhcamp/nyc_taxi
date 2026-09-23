@@ -1,4 +1,5 @@
 import pandas as pd
+from pandas.api.types import is_numeric_dtype
 
 from fcstnyctaxi.schemas.run_outputs import JOIN_KEYS
 
@@ -8,6 +9,19 @@ def _require_unique_calendar_dates(calendar_df: pd.DataFrame) -> None:
     repeated = calendar_df.loc[calendar_df["ds"].duplicated(), "ds"].unique()
     if len(repeated):
         raise ValueError(f"calendar repeats ds {list(repeated[:5])}.")
+
+
+def _require_comparable_series_ids(
+    panel_df: pd.DataFrame, additional_exog_df: pd.DataFrame
+) -> None:
+    """Numeric against text is the one key pairing pandas refuses to merge."""
+    panel_ids = panel_df["unique_id"]
+    exog_ids = additional_exog_df["unique_id"]
+    if is_numeric_dtype(panel_ids) != is_numeric_dtype(exog_ids):
+        raise ValueError(
+            f"panel unique_id is {panel_ids.dtype} and the additional exogenous "
+            f"file's is {exog_ids.dtype}: the two artifacts key series differently."
+        )
 
 
 def _require_unique_exog_keys(exog_df: pd.DataFrame) -> None:
@@ -49,32 +63,40 @@ def _require_complete_coverage(
 def build_exog_frame(
     panel_df: pd.DataFrame,
     calendar_df: pd.DataFrame,
+    additional_exog_df: pd.DataFrame,
     *,
     exog_features: tuple[str, ...],
 ) -> pd.DataFrame:
-    """Broadcast the calendar across the panel's series, keyed for the model merge.
+    """Assemble one exogenous frame, the file driving and the calendar broadcast.
 
     One frame, not several: the runner forwards exactly one optional exogenous
-    argument. It spans every calendar date, so it serves both the training merge
-    and the horizon a fold predicts into. The keys are structural; `exog_features`
-    names only what rides on them.
+    argument. The additional file decides the row set and the calendar is merged
+    onto it on `ds`; the reverse inflates the calendar and destroys the `ds`
+    uniqueness tiering depends on. The keys are structural; `exog_features` names
+    only what rides on them.
 
     Args:
-        panel_df: The trimmed panel, supplying the series spine.
+        panel_df: The trimmed panel, whose keys the coverage check is made against.
         calendar_df: The trimmed fiscal calendar, unique on `ds`.
-        exog_features: Calendar columns to carry, in declaration order.
+        additional_exog_df: The trimmed exogenous features file, which drives.
+        exog_features: Columns to carry, from either contract, in declaration order.
 
     Raises:
-        ValueError: On a repeated calendar date, a duplicate assembled key, a
-            changed panel row count, or a coverage gap.
+        ValueError: On a repeated calendar date, a panel and a file that key series
+            differently, a duplicate assembled key, a changed panel row count, or a
+            coverage gap.
 
     Returns:
         pd.DataFrame: Columns `unique_id`, `ds`, then `exog_features`.
     """
     _require_unique_calendar_dates(calendar_df)
+    _require_comparable_series_ids(panel_df, additional_exog_df)
 
-    spine = panel_df[["unique_id"]].drop_duplicates()
-    exog_df = spine.merge(calendar_df[["ds", *exog_features]], how="cross")
+    # Both frames arrive trimmed to their own contracts, which share no column but
+    # ds, so the merged frame is the two contracts side by side and exog_features
+    # selects across it without knowing which artifact declares which name.
+    exog_df = additional_exog_df.merge(calendar_df, on="ds", how="left")
+    exog_df = exog_df[[*JOIN_KEYS, *exog_features]]
     _require_unique_exog_keys(exog_df)
 
     # The join the model will perform, so its faults are named here. No validate=:

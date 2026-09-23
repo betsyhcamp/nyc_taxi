@@ -5,6 +5,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
 import pandas as pd
 import pytest
 import yaml
@@ -89,10 +90,15 @@ def _set_model_settings(step_dir: Path, **updates: Any) -> None:
     _edit_yaml(step_dir / "modeling.yaml", _update)
 
 
-def _additional_exog(panel: pd.DataFrame) -> pd.DataFrame:
-    """The exogenous features file, on the keys Feature publishes it against."""
-    return panel[["unique_id", "ds"]].assign(
-        holiday_days_in_week=0, week_sin=0.0, week_cos=1.0
+def _additional_exog(panel: pd.DataFrame, calendar: pd.DataFrame) -> pd.DataFrame:
+    """The exogenous file as Feature publishes it: every series over every calendar
+    week, so it covers the horizon the calendar leaves past the panel."""
+    frame = pd.MultiIndex.from_product(
+        [panel["unique_id"].unique(), calendar["ds"]], names=["unique_id", "ds"]
+    ).to_frame(index=False)
+    angle = 2 * np.pi * frame["ds"].dt.dayofyear / 365.25
+    return frame.assign(
+        holiday_days_in_week=0, week_sin=np.sin(angle), week_cos=np.cos(angle)
     )
 
 
@@ -119,7 +125,7 @@ def _stage(
         panel_path
     )
     calendar.assign(executed_at=executed_at).to_parquet(calendar_path)
-    _additional_exog(panel).assign(executed_at=executed_at).to_parquet(
+    _additional_exog(panel, calendar).assign(executed_at=executed_at).to_parquet(
         additional_exog_path
     )
 
@@ -303,10 +309,7 @@ def test_a_panel_week_missing_from_the_calendar_is_refused(
 def test_an_exogenous_path_naming_another_artifact_is_refused_by_frame_name(
     staged: dict[str, Any],
 ) -> None:
-    """Three staged paths transpose silently; the trim is what names which frame.
-
-    Nothing joins this frame yet, so the trim is the only thing that would notice.
-    """
+    """Three staged paths transpose silently; the trim is what names which frame."""
     staged["additional_exog_path"] = staged["calendar_path"]
 
     with pytest.raises(
@@ -410,7 +413,10 @@ def test_the_bundle_holds_an_in_process_fit_of_its_config(
     default = stand_in_fit(panel, hyperparameters["freq"])["setting"]
     assert hyperparameters["setting"] != default
     exog_df = build_exog_frame(
-        panel, full_calendar, exog_features=STAND_IN_EXOG_FEATURES
+        panel,
+        full_calendar,
+        _additional_exog(panel, full_calendar),
+        exog_features=STAND_IN_EXOG_FEATURES,
     )
 
     in_process = stand_in_fit(panel, exog_df=exog_df, **hyperparameters)
