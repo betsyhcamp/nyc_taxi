@@ -190,10 +190,10 @@ def test_a_model_set_the_dag_cannot_fan_out_over_is_refused(
 
 
 def test_each_artifact_input_comes_from_its_own_importer(tmp_path: Path) -> None:
-    """Test that panel and calendar each arrive from an importer of their own URI.
+    """Test that each of the three artifacts arrives from an importer of its own URI.
 
     Both miswirings are silent until runtime: a shared importer reaches the impl's
-    same-filepath guard, and a transposed pair reaches nothing until pandas.
+    three-different-files guard, and a transposed pair reaches nothing until pandas.
     """
     ir = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)
     tasks = ir["root"]["dag"]["tasks"]
@@ -201,6 +201,7 @@ def test_each_artifact_input_comes_from_its_own_importer(tmp_path: Path) -> None
     for artifact_name, expected_parameter in (
         ("panel", "panel_uri"),
         ("calendar", "calendar_uri"),
+        ("additional_exog", "additional_exog_uri"),
     ):
         producer = tasks["compose-configs"]["inputs"]["artifacts"][artifact_name][
             "taskOutputArtifact"
@@ -421,4 +422,5 @@ def test_the_model_set_costs_no_pipeline_parameter(tmp_path: Path) -> None:
         "feature_run_id",
         "panel_uri",
         "calendar_uri",
+        "additional_exog_uri",
     }

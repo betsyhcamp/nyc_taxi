@@ -89,6 +89,17 @@ def _set_model_settings(step_dir: Path, **updates: Any) -> None:
     _edit_yaml(step_dir / "modeling.yaml", _update)
 
 
+def _additional_exog(panel: pd.DataFrame) -> pd.DataFrame:
+    """The exogenous features file on the panel's keys, carrying its contract.
+
+    Written although nothing opens it yet: compose records its URI, and the run
+    root is a whole Feature run rather than the part one step happens to read.
+    """
+    return panel[["unique_id", "ds"]].assign(
+        holiday_days_in_week=0, week_sin=0.0, week_cos=1.0
+    )
+
+
 def _stage(
     root: Path,
     panel: pd.DataFrame,
@@ -107,10 +118,12 @@ def _stage(
     executed_at = pd.Timestamp("2026-09-21")
     panel_path = inputs / "time_series.parquet"
     calendar_path = inputs / "fiscal_calendar.parquet"
+    additional_exog_path = inputs / "exogenous_features.parquet"
     panel.assign(feature_run_id=FEATURE_RUN_ID, executed_at=executed_at).to_parquet(
         panel_path
     )
     calendar.assign(executed_at=executed_at).to_parquet(calendar_path)
+    _additional_exog(panel).to_parquet(additional_exog_path)
 
     step_dir = root / TRAIN_RUN_ID / "compose_configs"
     compose_configs_impl(
@@ -119,6 +132,9 @@ def _stage(
         panel=SourcedPath(path=panel_path, uri="gs://bucket/time_series.parquet"),
         calendar=SourcedPath(
             path=calendar_path, uri="gs://bucket/fiscal_calendar.parquet"
+        ),
+        additional_exog=SourcedPath(
+            path=additional_exog_path, uri="gs://bucket/exogenous_features.parquet"
         ),
         expected_feature_run_id=FEATURE_RUN_ID,
         train_run_id=TRAIN_RUN_ID,
@@ -449,10 +465,16 @@ def test_the_manifest_names_what_a_reader_needs_to_load_and_predict(
         yaml.safe_load((staged["compose_configs_dir"] / "modeling.yaml").read_text())
     ).model_settings[MODEL_NAME]
 
+    identity = json.loads(
+        (staged["compose_configs_dir"].parent / "run_identity.json").read_text()
+    )
+
     assert manifest["model_name"] == MODEL_NAME
     assert manifest["config"]["save_callable"] == settings.save_callable
     assert manifest["config"]["exog_features"] == settings.exog_features
-    assert manifest["lineage"]["train_run_id"] == TRAIN_RUN_ID
+    # Whole-object: register_model revalidates this block as a TrainRunIdentity and
+    # compares it to the identity, so a missing slot fails every registration.
+    assert manifest["lineage"] == identity
 
 
 def test_the_summary_carries_the_run_ids_it_discovered(

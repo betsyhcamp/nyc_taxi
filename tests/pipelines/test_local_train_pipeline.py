@@ -683,6 +683,68 @@ def test_a_narrowed_rerun_scores_the_pair_the_run_id_has_accumulated(
     assert final_fit.call_args.kwargs["model_name"] == roles.challenger
 
 
+def test_compose_is_handed_each_path_paired_with_the_uri_it_was_built_from(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+) -> None:
+    """A path mirrored from the wrong URI still exists and still reads, so the
+    pairing is the only thing that catches it. The exogenous path is mirrored and
+    not downloaded, because nothing opens that file until the impls do."""
+    root = tmp_path / "project"
+    shutil.copytree(get_project_root_dir() / "config", root / "config")
+    monkeypatch.setenv("PROJECT_ROOT", str(root))
+    mocker.patch.object(
+        local_train_pipeline, "require_git_hash", return_value="abc1234"
+    )
+    # The real return value, so a staged path equals the mirror path it lands in.
+    mocker.patch.object(
+        local_train_pipeline,
+        "download_from_gcs",
+        side_effect=lambda uri, directory: directory / uri.rsplit("/", 1)[-1],
+    )
+    compose = mocker.patch.object(
+        local_train_pipeline, "compose_configs_impl", return_value=COMPOSE_SUMMARY
+    )
+    mocker.patch.object(
+        local_train_pipeline, "backtest_impl", return_value=BACKTEST_SUMMARY
+    )
+    mocker.patch.object(local_train_pipeline, "upload_to_gcs")
+    mocker.patch.object(local_train_pipeline, "sync_to_gcs", return_value=(7, 0))
+    mocker.patch.object(
+        run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
+    )
+
+    scratch = tmp_path / "scratch"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "local_train_pipeline",
+            "--env",
+            ENV,
+            "--feature-run-id",
+            FEATURE_RUN_ID,
+            "--run-id",
+            RUN_ID,
+            "--scratch-dir",
+            str(scratch),
+        ],
+    )
+
+    local_train_pipeline.main()
+
+    kwargs = compose.call_args.kwargs
+    for name, uri in (
+        ("panel", RESOLVED_PANEL_URI),
+        ("calendar", RESOLVED_CALENDAR_URI),
+        ("additional_exog", RESOLVED_EXOG_URI),
+    ):
+        assert kwargs[name] == SourcedPath(
+            path=local_train_pipeline._mirror_path(uri, scratch), uri=uri
+        )
+
+
 def test_the_local_runner_resolves_both_uris_from_the_feature_run_id_alone(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

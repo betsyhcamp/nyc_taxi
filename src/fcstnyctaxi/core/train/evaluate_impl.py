@@ -488,7 +488,7 @@ def _derive(fold_metrics: pd.DataFrame, group_keys: list[str]) -> pd.DataFrame:
 
 
 def _stamp_lineage(frame: pd.DataFrame, identity: TrainRunIdentity) -> pd.DataFrame:
-    """The five columns every table carries. The two uris are a transitive claim:
+    """The six columns every table carries. The three uris are a transitive claim:
     evaluate never opens a Feature artifact, and the manifest and calendar checks
     are what back them."""
     return frame.assign(
@@ -497,6 +497,7 @@ def _stamp_lineage(frame: pd.DataFrame, identity: TrainRunIdentity) -> pd.DataFr
         git_hash=identity.git_hash,
         panel_uri=identity.panel_uri,
         calendar_uri=identity.calendar_uri,
+        additional_exog_uri=identity.additional_exog_uri,
     )
 
 
@@ -696,6 +697,7 @@ def _build_manifest(
             "git_hash": identity.git_hash,
             "panel_uri": identity.panel_uri,
             "calendar_uri": identity.calendar_uri,
+            "additional_exog_uri": identity.additional_exog_uri,
         },
         "config": {
             "tiering": modeling.tiering.model_dump(),

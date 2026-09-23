@@ -92,6 +92,7 @@ def _build_manifest(
             "git_hash": identity.git_hash,
             "panel_uri": identity.panel_uri,
             "calendar_uri": identity.calendar_uri,
+            "additional_exog_uri": identity.additional_exog_uri,
         },
         "config": {
             "fit_callable": settings.fit_callable,

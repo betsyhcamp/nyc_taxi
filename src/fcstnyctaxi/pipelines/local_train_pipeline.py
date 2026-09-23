@@ -234,6 +234,7 @@ def main() -> None:
     # Before the clear below, so a rejected URI cannot cost the previous output.
     panel_path = _mirror_path(artifacts.panel_uri, mirror_root)
     calendar_path = _mirror_path(artifacts.calendar_uri, mirror_root)
+    additional_exog_path = _mirror_path(artifacts.exogenous_uri, mirror_root)
 
     logger.info(
         "compose_configs starting: run_id=%s feature_run_id=%s out_dir=%s uri=%s",
@@ -259,12 +260,18 @@ def main() -> None:
         path=download_from_gcs(artifacts.calendar_uri, calendar_path.parent),
         uri=artifacts.calendar_uri,
     )
+    # Mirrored, not downloaded: nothing opens this file yet, and download_from_gcs
+    # returns the path _mirror_path builds, so staging it is one expression later.
+    additional_exog = SourcedPath(
+        path=additional_exog_path, uri=artifacts.exogenous_uri
+    )
 
     summary = compose_configs_impl(
         config_dir=config_dir,
         env=args.env,
         panel=panel,
         calendar=calendar,
+        additional_exog=additional_exog,
         expected_feature_run_id=args.feature_run_id,
         train_run_id=run_id,
         git_hash=git_hash,

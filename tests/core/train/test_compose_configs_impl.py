@@ -66,19 +66,38 @@ def _panel_frame(feature_run_id: str | None = FEATURE_RUN_ID) -> pd.DataFrame:
     )
 
 
+def _additional_exog_frame(panel_df: pd.DataFrame) -> pd.DataFrame:
+    """The exogenous features file on the panel's own keys, carrying its contract."""
+    keys = panel_df[["unique_id", "ds"]]
+    return keys.assign(
+        holiday_days_in_week=0,
+        week_sin=0.0,
+        week_cos=1.0,
+    )
+
+
 def _write_inputs(
     tmp_path: Path, panel_df: pd.DataFrame, calendar_df: pd.DataFrame
-) -> tuple[SourcedPath, SourcedPath]:
-    """Land two frames as parquet and pair each with a plausible durable URI."""
+) -> tuple[SourcedPath, SourcedPath, SourcedPath]:
+    """Land three frames as parquet and pair each with a plausible durable URI.
+
+    The exogenous file is written although this step never opens it, so the
+    fixture is a Feature run rather than the subset one step happens to read.
+    """
     panel_path = tmp_path / "time_series.parquet"
     calendar_path = tmp_path / "fiscal_calendar.parquet"
+    additional_exog_path = tmp_path / "exogenous_features.parquet"
     panel_df.to_parquet(panel_path)
     calendar_df.to_parquet(calendar_path)
+    _additional_exog_frame(panel_df).to_parquet(additional_exog_path)
 
     prefix = f"gs://bucket/dev/feature/{FEATURE_RUN_ID}/data_prep"
     return (
         SourcedPath(path=panel_path, uri=f"{prefix}/time_series.parquet"),
         SourcedPath(path=calendar_path, uri=f"{prefix}/fiscal_calendar.parquet"),
+        SourcedPath(
+            path=additional_exog_path, uri=f"{prefix}/exogenous_features.parquet"
+        ),
     )
 
 
@@ -104,7 +123,7 @@ def _run(
     config_dir: Path = CONFIG_DIR,
 ) -> ComposeConfigsSummary:
     """Compose one run into its step directory, defaulting to a consistent pair."""
-    panel, calendar = _write_inputs(
+    panel, calendar, additional_exog = _write_inputs(
         tmp_path,
         _panel_frame() if panel_df is None else panel_df,
         _calendar_frame() if calendar_df is None else calendar_df,
@@ -114,6 +133,7 @@ def _run(
         env="dev",
         panel=panel,
         calendar=calendar,
+        additional_exog=additional_exog,
         expected_feature_run_id=expected_feature_run_id,
         train_run_id=TRAIN_RUN_ID,
         git_hash=GIT_HASH,
@@ -204,6 +224,7 @@ def test_run_identity_reloads_and_stamps_what_was_read(
     assert identity.git_hash == GIT_HASH
     assert identity.panel_uri.endswith("time_series.parquet")
     assert identity.calendar_uri.endswith("fiscal_calendar.parquet")
+    assert identity.additional_exog_uri.endswith("exogenous_features.parquet")
 
 
 def test_run_identity_lands_at_the_run_root_not_in_the_step_directory(
@@ -226,7 +247,9 @@ def test_a_step_directory_outside_its_run_root_is_refused(tmp_path: Path) -> Non
     The run root is derived from out_dir rather than passed, so without this a
     caller handing over a flat directory silently scatters run_identity.json.
     """
-    panel, calendar = _write_inputs(tmp_path, _panel_frame(), _calendar_frame())
+    panel, calendar, additional_exog = _write_inputs(
+        tmp_path, _panel_frame(), _calendar_frame()
+    )
 
     with pytest.raises(ValueError, match="must be a step directory under the run root"):
         compose_configs_impl(
@@ -234,6 +257,7 @@ def test_a_step_directory_outside_its_run_root_is_refused(tmp_path: Path) -> Non
             env="dev",
             panel=panel,
             calendar=calendar,
+            additional_exog=additional_exog,
             expected_feature_run_id=FEATURE_RUN_ID,
             train_run_id=TRAIN_RUN_ID,
             git_hash=GIT_HASH,
@@ -364,7 +388,9 @@ def test_nothing_is_written_when_the_lineage_check_fails(tmp_path: Path) -> None
 
 def test_nothing_is_written_when_an_identity_field_is_invalid(tmp_path: Path) -> None:
     """Validated before the first write; the slip is a local path where a URI goes."""
-    panel, calendar = _write_inputs(tmp_path, _panel_frame(), _calendar_frame())
+    panel, calendar, additional_exog = _write_inputs(
+        tmp_path, _panel_frame(), _calendar_frame()
+    )
 
     with pytest.raises(ValidationError):
         compose_configs_impl(
@@ -372,6 +398,7 @@ def test_nothing_is_written_when_an_identity_field_is_invalid(tmp_path: Path) ->
             env="dev",
             panel=SourcedPath(path=panel.path, uri="/tmp/staged/time_series.parquet"),
             calendar=calendar,
+            additional_exog=additional_exog,
             expected_feature_run_id=FEATURE_RUN_ID,
             train_run_id=TRAIN_RUN_ID,
             git_hash=GIT_HASH,
@@ -430,18 +457,35 @@ def test_a_role_model_without_callables_is_not_held_to_the_registry_caps(
     assert long_name in summary.model_names
 
 
-def test_one_artifact_passed_as_both_panel_and_calendar_raises(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("aliased", "onto"),
+    [
+        ("panel", "calendar"),
+        ("panel", "additional_exog"),
+        ("calendar", "additional_exog"),
+    ],
+)
+def test_one_artifact_passed_in_two_slots_raises(
+    tmp_path: Path, aliased: str, onto: str
 ) -> None:
-    """The calendar in both slots would write seven artifacts past the last actual."""
-    _, calendar = _write_inputs(tmp_path, _panel_frame(), _calendar_frame())
+    """Every pairing, since each loses a different input: the calendar in both
+    readable slots writes seven artifacts past the last actual, and an exogenous
+    slot aliasing another records provenance for a file no step will read."""
+    panel, calendar, additional_exog = _write_inputs(
+        tmp_path, _panel_frame(), _calendar_frame()
+    )
+    arguments = {
+        "panel": panel,
+        "calendar": calendar,
+        "additional_exog": additional_exog,
+    }
+    arguments[onto] = arguments[aliased]
 
-    with pytest.raises(ValueError, match="same file"):
+    with pytest.raises(ValueError, match="three different files"):
         compose_configs_impl(
             config_dir=CONFIG_DIR,
             env="dev",
-            panel=calendar,
-            calendar=calendar,
+            **arguments,
             expected_feature_run_id=FEATURE_RUN_ID,
             train_run_id=TRAIN_RUN_ID,
             git_hash=GIT_HASH,

@@ -342,6 +342,9 @@ def _identity() -> TrainRunIdentity:
         train_run_id=TRAIN_RUN_ID,
         panel_uri=f"gs://bucket/dev/feature/{FEATURE_RUN_ID}/time_series.parquet",
         calendar_uri=f"gs://bucket/dev/feature/{FEATURE_RUN_ID}/fiscal_calendar.parquet",
+        additional_exog_uri=(
+            f"gs://bucket/dev/feature/{FEATURE_RUN_ID}/exogenous_features.parquet"
+        ),
     )
 
 
@@ -457,8 +460,9 @@ def test_the_manifest_records_the_effective_settings_not_the_defaults() -> None:
     manifest = _build_manifest(MODEL_NAME, _summary(), _identity(), tuned)
 
     assert manifest["config"]["tiering"]["trailing_weeks"] == 13
-    assert manifest["lineage"]["train_run_id"] == TRAIN_RUN_ID
-    assert manifest["lineage"]["git_hash"] == _identity().git_hash
+    # Whole-object, as register_model compares the bundle's block: every field of
+    # the identity is echoed, so a slot left out of the block is a silent drift.
+    assert manifest["lineage"] == _identity().model_dump()
 
 
 def test_the_manifest_survives_json_serialisation() -> None:

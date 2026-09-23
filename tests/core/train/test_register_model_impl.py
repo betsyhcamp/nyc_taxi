@@ -149,22 +149,33 @@ def _sdk(registry: FakeRegistry) -> MagicMock:
 @pytest.fixture
 def inputs(
     tmp_path: Path, full_panel: pd.DataFrame, full_calendar: pd.DataFrame
-) -> tuple[SourcedPath, SourcedPath]:
-    """The two frames as Feature publishes them, the panel stamped with its run id."""
+) -> tuple[SourcedPath, SourcedPath, SourcedPath]:
+    """The three frames as Feature publishes them, the panel stamped with its run id.
+
+    The exogenous file is written although no step opens it yet, so compose records
+    a URI naming bytes that exist.
+    """
     inputs_dir = tmp_path / "inputs"
     inputs_dir.mkdir()
     panel_path = inputs_dir / "time_series.parquet"
     calendar_path = inputs_dir / "fiscal_calendar.parquet"
+    additional_exog_path = inputs_dir / "exogenous_features.parquet"
     full_panel.assign(feature_run_id=FEATURE_RUN_ID).to_parquet(panel_path)
     full_calendar.to_parquet(calendar_path)
+    full_panel[["unique_id", "ds"]].assign(
+        holiday_days_in_week=0, week_sin=0.0, week_cos=1.0
+    ).to_parquet(additional_exog_path)
     return (
         SourcedPath(path=panel_path, uri="gs://bucket/time_series.parquet"),
         SourcedPath(path=calendar_path, uri="gs://bucket/fiscal_calendar.parquet"),
+        SourcedPath(
+            path=additional_exog_path, uri="gs://bucket/exogenous_features.parquet"
+        ),
     )
 
 
 def _compose(
-    inputs: tuple[SourcedPath, SourcedPath],
+    inputs: tuple[SourcedPath, SourcedPath, SourcedPath],
     root: Path,
     run_id: str,
     git_hash: str,
@@ -173,12 +184,13 @@ def _compose(
     env: str = ENV,
 ) -> Path:
     """Run compose_configs for one run under root, returning its run root."""
-    panel, calendar = inputs
+    panel, calendar, additional_exog = inputs
     compose_configs_impl(
         config_dir=config_dir or stand_in_config_dir(root),
         env=env,
         panel=panel,
         calendar=calendar,
+        additional_exog=additional_exog,
         expected_feature_run_id=FEATURE_RUN_ID,
         train_run_id=run_id,
         git_hash=git_hash,
@@ -187,9 +199,9 @@ def _compose(
     return root / run_id
 
 
-def _fit(inputs: tuple[SourcedPath, SourcedPath], run_dir: Path) -> None:
+def _fit(inputs: tuple[SourcedPath, SourcedPath, SourcedPath], run_dir: Path) -> None:
     """Run final_fit on the challenger, leaving its bundle under run_dir."""
-    panel, calendar = inputs
+    panel, calendar, _ = inputs
     final_fit_impl(
         panel_path=panel.path,
         calendar_path=calendar.path,
@@ -205,7 +217,7 @@ def _copied_config_dir(tmp_path: Path) -> Path:
 
 
 def _stage(
-    inputs: tuple[SourcedPath, SourcedPath],
+    inputs: tuple[SourcedPath, SourcedPath, SourcedPath],
     root: Path,
     run_id: str = TRAIN_RUN_ID,
     git_hash: str = GIT_HASH,
@@ -217,7 +229,9 @@ def _stage(
 
 
 @pytest.fixture
-def run_dir(inputs: tuple[SourcedPath, SourcedPath], tmp_path: Path) -> Path:
+def run_dir(
+    inputs: tuple[SourcedPath, SourcedPath, SourcedPath], tmp_path: Path
+) -> Path:
     """This test's run root, with a self-check that both upstream steps completed."""
     run_dir = _stage(inputs, tmp_path)
     assert (run_dir / "compose_configs" / "manifest.json").is_file()
@@ -328,7 +342,9 @@ def test_run_outputs_records_what_the_registry_returned(
 
 
 def test_a_reworded_label_moves_the_display_name_and_never_the_id(
-    inputs: tuple[SourcedPath, SourcedPath], registry: FakeRegistry, tmp_path: Path
+    inputs: tuple[SourcedPath, SourcedPath, SourcedPath],
+    registry: FakeRegistry,
+    tmp_path: Path,
 ) -> None:
     """The two prefixes are identical in the committed tree, so only a reworded label
     shows which one each name was composed from."""
@@ -350,7 +366,9 @@ def test_a_reworded_label_moves_the_display_name_and_never_the_id(
 
 
 def test_env_is_read_from_the_runs_own_record(
-    inputs: tuple[SourcedPath, SourcedPath], registry: FakeRegistry, tmp_path: Path
+    inputs: tuple[SourcedPath, SourcedPath, SourcedPath],
+    registry: FakeRegistry,
+    tmp_path: Path,
 ) -> None:
     """EnvironmentConfig declares no env, so a literal would stamp every run dev."""
     config_dir = _copied_config_dir(tmp_path)
@@ -367,7 +385,7 @@ def test_env_is_read_from_the_runs_own_record(
 
 
 def test_a_second_run_adds_a_version_to_the_same_resource(
-    inputs: tuple[SourcedPath, SourcedPath],
+    inputs: tuple[SourcedPath, SourcedPath, SourcedPath],
     run_dir: Path,
     registry: FakeRegistry,
     tmp_path: Path,
@@ -405,7 +423,7 @@ def test_a_restart_uploads_nothing_and_writes_the_same_record(
 
 
 def test_a_rerun_on_another_commit_raises_and_leaves_no_record(
-    inputs: tuple[SourcedPath, SourcedPath],
+    inputs: tuple[SourcedPath, SourcedPath, SourcedPath],
     run_dir: Path,
     registry: FakeRegistry,
     tmp_path: Path,
@@ -444,7 +462,7 @@ def test_two_versions_under_one_run_id_raise_naming_both(
 
 
 def test_a_run_dir_that_is_not_this_runs_root_is_refused(
-    inputs: tuple[SourcedPath, SourcedPath],
+    inputs: tuple[SourcedPath, SourcedPath, SourcedPath],
     run_dir: Path,
     registry: FakeRegistry,
     tmp_path: Path,
@@ -459,7 +477,9 @@ def test_a_run_dir_that_is_not_this_runs_root_is_refused(
 
 
 def test_a_train_run_id_that_is_not_label_safe_is_refused(
-    inputs: tuple[SourcedPath, SourcedPath], registry: FakeRegistry, tmp_path: Path
+    inputs: tuple[SourcedPath, SourcedPath, SourcedPath],
+    registry: FakeRegistry,
+    tmp_path: Path,
 ) -> None:
     """A run minted before ids were lowercased; the service would refuse its label."""
     legacy_run_dir = _stage(inputs, tmp_path, run_id="t-20260913T000000000000Z")
@@ -485,7 +505,7 @@ def test_a_bundle_uri_naming_another_model_is_refused(
 
 
 def test_a_bundle_fitted_under_another_identity_is_refused(
-    inputs: tuple[SourcedPath, SourcedPath],
+    inputs: tuple[SourcedPath, SourcedPath, SourcedPath],
     run_dir: Path,
     registry: FakeRegistry,
     tmp_path: Path,

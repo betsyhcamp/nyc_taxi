@@ -67,12 +67,14 @@ def build_train_pipeline(
         feature_run_id: str,
         panel_uri: str,
         calendar_uri: str,
+        additional_exog_uri: str,
     ) -> None:
         """Compose every Training config for one run, back each model, score, fit, then
         register.
 
-        Feature is a separate pipeline, so its two artifacts arrive as URIs rather than
-        from an upstream task; dsl.importer types each and registers it in ML Metadata.
+        Feature is a separate pipeline, so its three artifacts arrive as URIs rather
+        than from an upstream task; dsl.importer types each and registers it in ML
+        Metadata.
         No run_prefix parameter: it needs bucket_name from a destination composed at
         runtime, so only the wrapper can resolve it.
         """
@@ -81,6 +83,11 @@ def build_train_pipeline(
         )
         calendar = dsl.importer(
             artifact_uri=calendar_uri, artifact_class=dsl.Dataset, reimport=False
+        )
+        # An importer although compose only records the URI: the Read commit hands
+        # this same handle to both training impls, which do open the file.
+        additional_exog = dsl.importer(
+            artifact_uri=additional_exog_uri, artifact_class=dsl.Dataset, reimport=False
         )
         # type: ignore since a type checker sees the undecorated function, whose
         # Output[Artifact] parameter the decorator supplies.
@@ -91,6 +98,7 @@ def build_train_pipeline(
             declared_model_names=list(model_names),
             panel=panel.output,
             calendar=calendar.output,
+            additional_exog=additional_exog.output,
         )
         # Plain Python at decoration time: one task per model. Both importer
         # handles are reused, so every task reads the artifact compose validated.

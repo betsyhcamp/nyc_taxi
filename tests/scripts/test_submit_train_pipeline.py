@@ -197,6 +197,7 @@ def test_submitted_parameters_and_provenance_come_from_the_real_template(
         "feature_run_id": FEATURE_RUN_ID,
         "panel_uri": PANEL_URI,
         "calendar_uri": CALENDAR_URI,
+        "additional_exog_uri": EXOG_URI,
     }
     assert os.environ["FCST_TRAIN_IMAGE"] in caplog.text
     assert hashlib.sha256(template.read_bytes()).hexdigest() in caplog.text
@@ -374,7 +375,7 @@ def test_a_template_pinning_no_container_executors_warns_and_still_submits(
     vertex.PipelineJob.return_value.submit.assert_called_once()
 
 
-def test_the_submitter_resolves_both_uris_from_the_feature_run_id_alone(
+def test_the_submitter_resolves_all_three_uris_from_the_feature_run_id_alone(
     template: Path,
     vertex: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
@@ -404,6 +405,7 @@ def test_the_submitter_resolves_both_uris_from_the_feature_run_id_alone(
     parameter_values = vertex.PipelineJob.call_args.kwargs["parameter_values"]
     assert parameter_values["panel_uri"] == RESOLVED_PANEL_URI
     assert parameter_values["calendar_uri"] == RESOLVED_CALENDAR_URI
+    assert parameter_values["additional_exog_uri"] == RESOLVED_EXOG_URI
     # The evidence the override flags are to be retired on, from this caller.
     assert "source=resolved" in caplog.text
 
