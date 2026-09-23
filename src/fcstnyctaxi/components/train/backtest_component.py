@@ -34,7 +34,7 @@ def backtest(
         panel (Input[Dataset]): The weekly actuals.
         calendar (Input[Dataset]): The fiscal calendar.
         additional_exog (Input[Dataset]): The exogenous features, snapshotted into
-            the sidecar and not yet joined.
+            the sidecar and joined into the assembled frame.
         sidecar (Output[Artifact]): This model's nine-file directory; the wrapper
             sets its URI before the impl reads the path.
 

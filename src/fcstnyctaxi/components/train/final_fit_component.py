@@ -33,8 +33,8 @@ def final_fit(
             `run_identity.json` beside it.
         panel (Input[Dataset]): The weekly actuals.
         calendar (Input[Dataset]): The fiscal calendar.
-        additional_exog (Input[Dataset]): The exogenous features, read and trimmed
-            and not yet joined.
+        additional_exog (Input[Dataset]): The exogenous features, read, trimmed and
+            joined into the frame the model is fitted on.
         bundle (Output[Model]): This model's bundle directory; the wrapper sets
             its URI before the impl reads the path. `system.Model` is lineage
             only and registers nothing.
