@@ -1,9 +1,10 @@
 """Each slice's `run_outputs.json`, Feature's for Training and Training's for
-Inference, and the columns Feature promises.
+Inference, the shared pointer holding one record per slice, and the columns
+Feature promises.
 
-Training's models forbid extras, since this repo writes and reads them; Feature's
-don't, since a third party's added field must not break a reader that ignores it.
-All are frozen, as provenance.
+Training's records forbid extras, since this repo writes and reads them; Feature's
+and the pointer's don't, since a third party's added field must not break a reader
+that ignores it. All are frozen, as provenance.
 
 The column tuples are an allowlist, not a validation: a new column on a
 consultant-owned artifact cannot become a model input. Feature owns shape.
@@ -124,3 +125,19 @@ class TrainRunOutputs(BaseModel):
     git_hash: str = Field(min_length=1)
     completed_at: AwareDatetime
     training_data: TrainingData
+
+
+class LatestRunPointer(BaseModel):
+    """At the environment root, ``_latest.json``: each slice's newest run record.
+
+    A key holds that slice's whole ``run_outputs.json`` document, and no value is
+    validated: a sibling's record is not Train's to reject, and checking ``train``
+    would let the record being replaced block its replacement. The one check left
+    is pydantic's own, that the document is an object.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    feature: Any = None
+    train: Any = None
+    inference: Any = None

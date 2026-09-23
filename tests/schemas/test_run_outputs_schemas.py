@@ -9,6 +9,7 @@ from fcstnyctaxi.schemas.run_outputs import (
     PANEL_REQUIRED_COLUMNS,
     FeatureArtifacts,
     FeatureRunOutputs,
+    LatestRunPointer,
     TrainRunOutputs,
 )
 
@@ -206,6 +207,62 @@ def test_a_completed_at_with_no_offset_is_refused() -> None:
 
     with pytest.raises(ValidationError, match="completed_at"):
         TrainRunOutputs.model_validate(payload)
+
+
+# ================================================
+# LatestRunPointer
+# ================================================
+
+
+def _pointer_payload() -> dict:
+    """The environment-root pointer as seeded: one Feature record, no `train` key."""
+    pointer = {
+        "feature": _payload(
+            env="dev",
+            schema_version="0.1.0",
+            git_hash="a" * 40,
+            completed_at="2026-09-22T22:51:09.687130+00:00",
+            panel={
+                "rows": 60,
+                "series": 3,
+                "first_ds": "2025-01-05",
+                "last_ds": "2025-10-19",
+            },
+        ),
+        "inference": "unset",
+    }
+    # A broken fixture reads as a broken check: this is a record Feature emits.
+    FeatureRunOutputs.model_validate(pointer["feature"])
+    return pointer
+
+
+def test_the_seeded_pointer_validates() -> None:
+    """The seed carries no `train`, so Train creates that key on its first run."""
+    pointer = LatestRunPointer.model_validate(_pointer_payload())
+
+    assert pointer.train is None
+
+
+def test_a_pointer_carrying_an_undeclared_key_is_accepted() -> None:
+    """Accepted, then dropped by the model: why the writer edits the parsed object."""
+    raw = _pointer_payload()
+    raw["quarantine"] = "a key this repo does not model"
+
+    pointer = LatestRunPointer.model_validate(raw)
+
+    assert "quarantine" not in pointer.model_dump()
+    assert "quarantine" in raw
+
+
+@pytest.mark.parametrize(
+    "document",
+    ["[]", '"a string"', "3", "null"],
+    ids=["array", "string", "number", "null"],
+)
+def test_a_document_that_is_not_an_object_is_refused(document: str) -> None:
+    """The one shape check the pointer makes; anything else would edit to nonsense."""
+    with pytest.raises(ValidationError):
+        LatestRunPointer.model_validate_json(document)
 
 
 # ================================================
