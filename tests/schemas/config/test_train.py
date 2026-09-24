@@ -65,7 +65,7 @@ def test_valid_dict_constructs_train_infra_config(valid_infra_dict: dict) -> Non
 def test_train_infra_rejects_an_unknown_key(valid_infra_dict: dict) -> None:
     """extra="forbid" refuses a stray key rather than silently dropping it. Asserts
     the refusal, not the field list, so adding a real field cannot break it."""
-    valid_infra_dict["output_bucket"] = "nyc-taxi-ehc--modeling"
+    valid_infra_dict["output_bucket"] = "test-project--modeling"
 
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         TrainInfraConfig(**valid_infra_dict)

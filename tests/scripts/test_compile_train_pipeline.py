@@ -4,7 +4,7 @@ import os
 # value aborts collection for this whole module.
 os.environ.setdefault(
     "FCST_TRAIN_IMAGE",
-    "us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers/train@sha256:"
+    "us-central1-docker.pkg.dev/test-project/fcst-ml-containers/train@sha256:"
     + "a" * 64,
 )
 
@@ -20,7 +20,7 @@ from scripts import compile_train_pipeline
 
 PROJECT_ROOT = get_project_root_dir()
 
-REPO = "us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers"
+REPO = "us-central1-docker.pkg.dev/test-project/fcst-ml-containers"
 EXPECTED = f"{REPO}/train@sha256:" + "d" * 64
 NESTED = f"{REPO}/team/train@sha256:" + "d" * 64
 # A second Training digest, as a re-push before a fresh compile would leave.

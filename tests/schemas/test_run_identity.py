@@ -120,7 +120,7 @@ def test_sql_text_as_sql_sha256_raises() -> None:
         FeatureRunIdentity(
             git_hash="a1b2c3d",
             feature_run_id="UTC20260905T120000000000Z",
-            sql_sha256="SELECT ds, unique_id, y FROM `nyc-taxi-ehc.curated.fact`",
+            sql_sha256="SELECT ds, unique_id, y FROM `test-project.curated.fact`",
         )
 
 

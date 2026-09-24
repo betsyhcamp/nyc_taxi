@@ -4,7 +4,7 @@ import os
 # and an unset value aborts collection for this whole module.
 os.environ.setdefault(
     "FCST_TRAIN_IMAGE",
-    "us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers/train@sha256:"
+    "us-central1-docker.pkg.dev/test-project/fcst-ml-containers/train@sha256:"
     + "a" * 64,
 )
 
@@ -64,7 +64,7 @@ RESOLVED_MANIFEST = FeatureRunOutputs(
         exogenous_uri=RESOLVED_EXOG_URI,
     ),
 ).model_dump_json()
-SERVICE_ACCOUNT = "svc-train@nyc-taxi-ehc.iam.gserviceaccount.com"
+SERVICE_ACCOUNT = "svc-train@test-project.iam.gserviceaccount.com"
 RESOURCE_NAME = "projects/123456789/locations/us-central1/pipelineJobs/fcst-train-x"
 
 # Flags each command line owns because of how it executes, not what it models.

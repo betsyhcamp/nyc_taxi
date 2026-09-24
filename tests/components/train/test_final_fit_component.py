@@ -3,7 +3,7 @@ import os
 # Before the imports, which bind base_image; unset aborts the whole suite.
 os.environ.setdefault(
     "FCST_TRAIN_IMAGE",
-    "us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers/train@sha256:"
+    "us-central1-docker.pkg.dev/test-project/fcst-ml-containers/train@sha256:"
     + "a" * 64,
 )
 

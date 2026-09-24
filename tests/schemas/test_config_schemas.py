@@ -16,7 +16,7 @@ def valid_config_dict() -> dict:
             "project_id": "nyc_taxi_ehc",
             "location": "us-central1",
             "env": "dev",
-            "bucket_name": "nyc-taxi-ehc--modeling",
+            "bucket_name": "test-project--modeling",
         },
         "docker": {"extract_db_to_bucket": "extractdbimagename:sha1234"},
         "vertex": {
