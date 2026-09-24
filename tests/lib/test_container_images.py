@@ -5,7 +5,7 @@ from fcstnyctaxi.lib.container_images import (
     require_digest_ref,
 )
 
-REPO = "us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers"
+REPO = "us-central1-docker.pkg.dev/test-project/fcst-ml-containers"
 FLAT = f"{REPO}/train@sha256:" + "b" * 64
 # Nested names are legal in Artifact Registry; the prefix is still three segments.
 NESTED = f"{REPO}/team/train@sha256:" + "c" * 64

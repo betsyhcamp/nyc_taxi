@@ -4,7 +4,7 @@ import os
 # value aborts collection for the whole suite.
 os.environ.setdefault(
     "FCST_TRAIN_IMAGE",
-    "us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers/train@sha256:"
+    "us-central1-docker.pkg.dev/test-project/fcst-ml-containers/train@sha256:"
     + "a" * 64,
 )
 
@@ -364,7 +364,7 @@ def test_the_register_task_records_the_image_it_runs_on(
     read from the component: the environment is made to disagree here to prove it."""
     monkeypatch.setenv(
         "FCST_TRAIN_IMAGE",
-        "us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers/train@sha256:"
+        "us-central1-docker.pkg.dev/test-project/fcst-ml-containers/train@sha256:"
         + "b" * 64,
     )
     ir = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)
