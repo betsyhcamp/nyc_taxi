@@ -382,8 +382,12 @@ def test_the_shipped_tree_composes_every_phase_one_destination() -> None:
     infra = compose_config(CONFIG_DIR, train_infra_bindings())
     modeling = compose_config(CONFIG_DIR, train_modeling_bindings())
 
-    assert environment.config.storage.bucket_name == "nyc-taxi-ehc--modeling"
-    assert infra.config.display_name_prefix == "fcst-train-pipeline"
+    # Against the files, not literals: any site's values must pass, and a value
+    # composition drops or rewrites must not.
+    dev_yaml = yaml.safe_load((CONFIG_DIR / "environments" / "dev.yaml").read_text())
+    infra_yaml = yaml.safe_load((CONFIG_DIR / "train" / "infra.yaml").read_text())
+    assert environment.config.storage.bucket_name == dev_yaml["storage"]["bucket_name"]
+    assert infra.config.display_name_prefix == infra_yaml["display_name_prefix"]
     # Not the model names themselves: those change whenever a role is reassigned,
     # and deriving the expectation from the same call would make this unfailable.
     # The invariant is that every configured role names a model file that exists.
