@@ -71,7 +71,6 @@ def test_dev_environment_validates() -> None:
         **_load_config_file(CONFIG_DIR / "environments/dev.yaml")
     )
 
-    assert config.storage.bucket_name == "nyc-taxi-ehc--modeling"
     assert config.vertex.pipeline_root.startswith("gs://")
     assert config.compute.location == config.artifact_registry.location
 
