@@ -1,0 +1,38 @@
+# Where gate and evidence runs go, so verification stops landing beside
+# production runs and moving `_latest.json` at the environment root.
+#
+# A gate run must pass --panel-uri, --calendar-uri and --additional-exog-uri:
+# the Feature run resolves under `env`, and `gate/feature/` never exists.
+#
+# Copies dev.yaml's values; environment files do not inherit, so the two change
+# together. `artifact_registry` above all, since compose_configs pulls images
+# from the selected environment: a fork there stops testing dev's. Guarded in
+# test_config_tree.py; dev.yaml holds the per-field reasoning.
+
+compute:
+  project_id: nyc-taxi-ehc
+  location: us-central1
+
+storage:
+  bucket_name: nyc-taxi-ehc--modeling
+
+vertex:
+  pipeline_root: gs://nyc-taxi-ehc--modeling/vertex-pipeline-roots/
+
+artifact_registry:
+  project_id: nyc-taxi-ehc
+  location: us-central1
+  images:
+    feature:
+      repository: fcst-ml-containers
+      image: feature
+    train:
+      repository: fcst-ml-containers
+      image: train
+    inference:
+      repository: fcst-ml-containers
+      image: inference
+
+source_data:
+  project_id: nyc-taxi-ehc
+  location: us-central1

@@ -84,9 +84,10 @@ def duplicated_roles_tree(tmp_path: Path) -> Path:
 # ================================================
 
 
-def test_available_environments_lists_the_shipped_tree() -> None:
-    """The committed tree defines dev and nothing else."""
-    assert available_environments(CONFIG_DIR) == ["dev"]
+def test_available_environments_reads_the_shipped_tree() -> None:
+    """dev is among what the committed tree offers. The set itself is not pinned:
+    a new environments/*.yaml must not fail this."""
+    assert "dev" in available_environments(CONFIG_DIR)
 
 
 def test_available_environments_is_sorted_and_ignores_yml(

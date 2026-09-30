@@ -33,9 +33,13 @@ from pathlib import Path
 
 from tsbricks.backtesting.schema import BacktestConfig
 
-from fcstnyctaxi.lib.config.bindings import model_names_from_roles
+from fcstnyctaxi.lib.config.bindings import (
+    model_names_from_roles,
+    require_known_environment,
+)
 from fcstnyctaxi.lib.config.loading import _load_config_file
 from fcstnyctaxi.lib.registry_ids import compose_display_name, compose_model_id
+from fcstnyctaxi.lib.storage_layout import resolve_environment_root
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import TrainInfraConfig, TrainModelingConfig
@@ -73,6 +77,32 @@ def test_dev_environment_validates() -> None:
 
     assert config.vertex.pipeline_root.startswith("gs://")
     assert config.compute.location == config.artifact_registry.location
+
+
+def test_gate_environment_is_selectable_and_roots_beside_dev() -> None:
+    """gate is a known env whose root is a sibling of dev's rather than dev's own."""
+    require_known_environment(CONFIG_DIR, "gate")
+
+    gate_root = resolve_environment_root(CONFIG_DIR, "gate")
+
+    assert gate_root.endswith("/gate/")
+    assert gate_root != resolve_environment_root(CONFIG_DIR, "dev")
+
+
+def test_gate_does_not_fork_from_dev() -> None:
+    """Every block deciding what a gate tests must agree with dev's. Nothing
+    expresses that, so gate.yaml's header comment is true only because this fails."""
+    gate = EnvironmentConfig(**_load_config_file(CONFIG_DIR / "environments/gate.yaml"))
+    dev = EnvironmentConfig(**_load_config_file(CONFIG_DIR / "environments/dev.yaml"))
+
+    # `vertex` is the one block a gate may fork, pipeline_root being KFP scratch;
+    # every other block decides what a gate tests.
+    may_diverge = frozenset({"vertex"})
+    # Self-check: the exclusion must name a real block.
+    assert may_diverge <= set(EnvironmentConfig.model_fields)
+
+    for block in sorted(set(EnvironmentConfig.model_fields) - may_diverge):
+        assert getattr(gate, block) == getattr(dev, block), block
 
 
 def test_train_infra_validates() -> None:
