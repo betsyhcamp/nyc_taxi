@@ -4,7 +4,7 @@ import pytest
 
 from dashboard.shared import paths
 from fcstnyctaxi.core.train import evaluate_impl
-from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
+from fcstnyctaxi.lib.storage_layout import RUN_OUTPUTS_FILENAME, resolve_run_prefix
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.pipelines import local_train_pipeline
 
@@ -103,3 +103,22 @@ def test_an_unknown_environment_raises_rather_than_building_a_path() -> None:
         paths.evaluate_prefix(CONFIG_DIR, "nonsuch", RUN_ID)
     with pytest.raises(ValueError, match="nonsuch"):
         paths.sidecar_prefix(CONFIG_DIR, "nonsuch", RUN_ID, MODEL)
+
+
+# ================================================
+# the two URIs the badge and the selector read
+# ================================================
+
+
+def test_run_outputs_uri_names_the_marker_at_the_run_root(run_prefix: str) -> None:
+    """Resolved under the wrong slice, every run badges "not registered"."""
+    expected = f"{run_prefix}{RUN_OUTPUTS_FILENAME}"
+    assert paths.run_outputs_uri(CONFIG_DIR, ENV, RUN_ID) == expected
+
+
+def test_the_pointer_sits_above_the_slice_partition() -> None:
+    """One file carries a key per slice, so a slice-scoped pointer strands two."""
+    pointer = paths.pointer_uri(CONFIG_DIR, ENV)
+    environment_root = f"{pointer.rsplit('/', 1)[0]}/"
+    assert paths.train_slice_root(CONFIG_DIR, ENV).startswith(environment_root)
+    assert environment_root != paths.train_slice_root(CONFIG_DIR, ENV)

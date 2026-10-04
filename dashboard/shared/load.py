@@ -1,0 +1,74 @@
+"""Every read the page makes, cached on plain strings.
+
+Streamlit reruns the whole script on each widget change, so the cache does real work
+"""
+
+import json
+from typing import Any
+
+import fsspec
+import pandas as pd
+import streamlit as st
+from fsspec.core import url_to_fs
+
+from dashboard.shared import paths
+
+
+@st.cache_data(show_spinner=False)
+def slice_root_uri(config_dir: str, env: str) -> str:
+    """Where the run lister looks."""
+    return paths.train_slice_root(config_dir, env)
+
+
+@st.cache_data(show_spinner=False)
+def pointer_uri(config_dir: str, env: str) -> str:
+    """`_latest.json` at the environment root."""
+    return paths.pointer_uri(config_dir, env)
+
+
+@st.cache_data(show_spinner=False)
+def evaluate_uri(config_dir: str, env: str, run_id: str) -> str:
+    """One run's evaluate directory, the prefix every table read below extends."""
+    return paths.evaluate_prefix(config_dir, env, run_id)
+
+
+@st.cache_data(show_spinner=False)
+def run_outputs_uri(config_dir: str, env: str, run_id: str) -> str:
+    """The pipeline's completion marker, read only for the selected run."""
+    return paths.run_outputs_uri(config_dir, env, run_id)
+
+
+@st.cache_data(show_spinner=False)
+def load_evaluate_manifest(prefix: str) -> dict[str, Any]:
+    """The whole manifest. Every field of the identity strip comes from it."""
+    return _read_json(f"{prefix}{paths.EVALUATE_MANIFEST}")
+
+
+@st.cache_data(show_spinner=False)
+def load_run_output(uri: str) -> dict[str, Any] | None:
+    """The completion marker, or None when the run never registered.
+
+    Absence is information, not an error. Returned unvalidated: the schema
+    forbids extras, so validating would let a field the dashboard never reads
+    blank the page.
+    """
+    fs, path = url_to_fs(uri)
+    return _read_json(uri) if fs.exists(path) else None
+
+
+@st.cache_data(show_spinner=False)
+def load_summary_metrics(prefix: str) -> pd.DataFrame:
+    """Scorecard grain."""
+    return pd.read_parquet(f"{prefix}{paths.SUMMARY_METRICS}")
+
+
+@st.cache_data(show_spinner=False)
+def load_fold_metrics(prefix: str) -> pd.DataFrame:
+    """Fold grain. The largest tableread."""
+    return pd.read_parquet(f"{prefix}{paths.FOLD_METRICS}")
+
+
+def _read_json(uri: str) -> dict[str, Any]:
+    """One JSON object, over whichever filesystem the URI names."""
+    with fsspec.open(uri) as handle:
+        return json.load(handle)
