@@ -53,6 +53,12 @@ def test_train_slice_root_stops_above_the_run_id() -> None:
 # ================================================
 
 
+def test_the_manifest_filename_is_the_one_the_producer_writes() -> None:
+    """The run gate reads this name. Misspelled, the dropdown is always empty, and
+    a fixture writing it through this same constant cannot notice."""
+    assert paths.EVALUATE_MANIFEST == evaluate_impl._MANIFEST_FILENAME
+
+
 def test_evaluate_prefix_names_the_directory_the_producer_writes(
     run_prefix: str,
 ) -> None:

@@ -11,6 +11,9 @@ _SLICE: SliceName = "train"
 _EVALUATE_STEP = "evaluate"
 _BACKTEST_STEP = "backtest"
 
+EVALUATE_MANIFEST = "evaluate_manifest.json"
+"""The evaluate step's completion marker, written last and deleted first."""
+
 
 def train_slice_root(config_dir: str, env: str) -> str:
     """What the run lister enumerates, so above the run id rather than at it.
@@ -63,3 +66,16 @@ def sidecar_prefix(config_dir: str, env: str, run_id: str, model_name: str) -> s
     """
     run_prefix = resolve_run_prefix(Path(config_dir), env, _SLICE, run_id)
     return f"{run_prefix}{_BACKTEST_STEP}/{model_name}/"
+
+
+def evaluate_manifest_pattern(slice_root: str) -> str:
+    """The glob that gates the run listing, one call rather than one `exists` per
+    run: on 27 runs that measured 0.38s against 6.36s.
+
+    Args:
+        slice_root: From `train_slice_root`, ending in "/".
+
+    Returns:
+        str: `<slice_root>*/evaluate/evaluate_manifest.json`.
+    """
+    return f"{slice_root}*/{_EVALUATE_STEP}/{EVALUATE_MANIFEST}"
