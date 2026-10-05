@@ -1,6 +1,6 @@
 """Every read the page makes, cached on plain strings.
 
-Streamlit reruns the whole script on each widget change, so the cache does real work
+Streamlit reruns the whole script on each widget change, so the cache does real work.
 """
 
 import json
@@ -97,7 +97,7 @@ def load_summary_metrics(prefix: str) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def load_fold_metrics(prefix: str) -> pd.DataFrame:
-    """Fold grain. The largest tableread."""
+    """Fold grain. The largest table read."""
     return pd.read_parquet(f"{prefix}{paths.FOLD_METRICS}")
 
 

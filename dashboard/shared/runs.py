@@ -19,7 +19,7 @@ def discover_run_ids(slice_root: str, fs: AbstractFileSystem) -> tuple[str, ...]
     # Two fixed segments follow the wildcard, and gcsfs strips the gs:// scheme
     # off what it returns, so the run directory is the grandparent.
     run_ids = {PurePosixPath(hit).parents[1].name for hit in hits}
-    # Lexical order is chronological for generated ids only
+    # Lexical order is chronological for generated ids only.
     return tuple(sorted(run_ids, key=str.lower, reverse=True))
 
 

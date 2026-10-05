@@ -1,4 +1,7 @@
-"""Backtest monitor for one train run: `streamlit run dashboard/app.py` Assembly only"""
+"""Backtest monitor for one train run. Assembly only.
+
+Run `uv run streamlit run dashboard/app.py` from the repo root.
+"""
 
 import sys
 from pathlib import Path

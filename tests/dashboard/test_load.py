@@ -267,7 +267,7 @@ def test_a_missing_setting_raises_rather_than_defaulting(
         load.dashboard_config(f"{tmp_path / 'config.toml'}")
 
 
-def test_the_shipped_config_parses(tmp_path: Path) -> None:
+def test_the_shipped_config_parses() -> None:
     """The file the app actually reads, against a tree that must exist."""
     settings = load.dashboard_config("dashboard/config.toml")
     assert Path(
