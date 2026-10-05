@@ -2,9 +2,12 @@ from itertools import pairwise
 
 import matplotlib
 import pytest
+import yaml
 from matplotlib.colors import to_hex
 
 from dashboard.shared import palette
+from fcstnyctaxi.lib.utils import get_project_root_dir
+from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 
 # WCAG for the first two. 2.0 is the ordinal-ramp convention, 0.06 an OKLab L
 # step, both against the plot area.
@@ -208,6 +211,20 @@ def test_the_tier_symbols_avoid_both_horizon_markers() -> None:
 def test_every_displayed_metric_has_a_rule(rules: dict[str, object]) -> None:
     """A displayed metric with no rule raises KeyError at render time, not here."""
     assert not set(palette.METRICS) - set(rules)
+
+
+def test_the_palette_covers_the_configured_tier_vocabulary() -> None:
+    """The ramp is validated at five steps and keyed by these exact names, while
+    the pipeline's vocabulary is configured. Nothing else compares the two, so a
+    renamed or resized tier set would surface as a KeyError in the contribution
+    scatter of [[backtest_monitor_diagnostics]] rather than here. See that spec's
+    Future directions entry before changing either side."""
+    modeling = TrainModelingConfig.model_validate(
+        yaml.safe_load(
+            (get_project_root_dir() / "config/train/modeling.yaml").read_text()
+        )
+    )
+    assert list(palette.TIERS) == modeling.tiering.tier_labels
 
 
 def test_every_tier_has_both_a_color_and_a_symbol() -> None:
