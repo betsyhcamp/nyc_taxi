@@ -58,6 +58,10 @@ def manifest(identity: TrainRunIdentity) -> dict[str, Any]:
     # be the strip's bug and not the fixture's.
     assert "train_run_id" in built["lineage"]
     assert "n_origins" in built["origins"]
+    # And the two roles must differ, or a transposed pair reads identically and
+    # the role test passes vacuously. `ModelRoles` permits one model in both as a
+    # smoke test, and this reads the committed config, so that is reachable.
+    assert built["challenger_model"] != built["benchmark_model"]
     return built
 
 

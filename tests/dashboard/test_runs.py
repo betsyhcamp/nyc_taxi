@@ -147,6 +147,11 @@ def test_generated_ids_order_chronologically_despite_differing_case(
     fake_fs: AbstractFileSystem,
 ) -> None:
     """The same-date pair an ASCII sort inverts, uppercase carrying the later time."""
+    pair = (EARLIER_LOWERCASE, LATER_UPPERCASE)
+    # Self-check: the pair must distinguish the two sorts, or a case-sensitive
+    # sort passes this test too and the fixture has quietly stopped working.
+    assert sorted(pair, reverse=True) != sorted(pair, key=str.lower, reverse=True)
+
     for run_id in (EARLIER_LOWERCASE, LATER_UPPERCASE):
         _write_run(fake_fs, run_id, evaluated=True, registered=False)
 
