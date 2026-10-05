@@ -199,7 +199,7 @@ def _benchmark_tick(horizon: str, value: float) -> go.Scatter:
 
     A relative metric needs no tick, its benchmark reading ~1.0 by construction, and
     the axis color keeps the mark out of the horizon palette. Absolute metrics need the
-    benchmark forecast as a refereence.
+    benchmark forecast as a reference.
     """
     return go.Scatter(
         x=[horizon],

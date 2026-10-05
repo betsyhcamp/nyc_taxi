@@ -131,9 +131,7 @@ def test_the_badge_labels_cannot_be_read_as_each_other() -> None:
     assert "not" not in header.REGISTERED
 
 
-def test_a_run_with_no_completion_marker_badges_as_evaluated(
-    manifest: dict[str, Any],
-) -> None:
+def test_a_run_with_no_completion_marker_badges_as_evaluated() -> None:
     """The run this monitor exists for. Absence is information, not an error."""
     status = header.registration(None)
     assert status.label == header.NOT_REGISTERED

@@ -43,11 +43,6 @@ def test_train_slice_root_is_the_immediate_parent_of_a_run_root(
     assert run_prefix == f"{paths.train_slice_root(CONFIG_DIR, ENV)}{RUN_ID}/"
 
 
-def test_train_slice_root_stops_above_the_run_id() -> None:
-    """Composing the run prefix here would list one run's steps, not the runs."""
-    assert RUN_ID not in paths.train_slice_root(CONFIG_DIR, ENV)
-
-
 # ================================================
 # evaluate_prefix tests
 # ================================================

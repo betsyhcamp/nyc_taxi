@@ -70,7 +70,6 @@ def base_layout(**overrides: Any) -> dict[str, Any]:
         "plot_bgcolor": palette.PLOT_BGCOLOR,
         "font": {"color": palette.FONT_COLOR, "size": 12},
         "margin": {"l": 48, "r": 16, "t": 32, "b": 32},
-        "bargap": 0.25,
     }
     return layout | overrides
 

@@ -146,7 +146,7 @@ def _faceted(cols: int) -> go.Figure:
     """
     figure = make_subplots(rows=1, cols=cols, shared_yaxes=True)
     for col in range(1, cols + 1):
-        figure.add_trace(go.Bar(x=["h"], y=[0.2], base=[1.0]), row=1, col=col)
+        figure.add_trace(go.Scatter(x=["h"], y=[0.8], mode="markers"), row=1, col=col)
     return figure
 
 
@@ -185,7 +185,7 @@ def test_the_plot_area_is_the_one_the_palette_is_validated_against() -> None:
 
 def test_the_grid_is_drawn_below_the_traces() -> None:
     """Plotly defaults it above, where a translucent line tints every mark."""
-    figure = go.Figure(go.Bar(x=["a"], y=[1.0]))
+    figure = go.Figure(go.Scatter(x=["a"], y=[1.0], mode="markers"))
     axes.style_axes(figure)
     assert figure.layout.yaxis.layer == "below traces"
 
@@ -193,6 +193,6 @@ def test_the_grid_is_drawn_below_the_traces() -> None:
 def test_the_zero_line_is_off() -> None:
     """A metric whose reference is zero draws it through `add_reference`, and two
     lines at one value read as a rendering fault."""
-    figure = go.Figure(go.Bar(x=["a"], y=[1.0]))
+    figure = go.Figure(go.Scatter(x=["a"], y=[1.0], mode="markers"))
     axes.style_axes(figure)
     assert figure.layout.yaxis.zeroline is False
