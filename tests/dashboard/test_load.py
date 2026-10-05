@@ -1,6 +1,7 @@
 import json
 from collections.abc import Iterator
 from pathlib import Path
+from unittest.mock import Mock
 
 import pandas as pd
 import pytest
@@ -42,9 +43,14 @@ def _write_run(root: Path, run_id: str, *, registered: bool) -> None:
     _table(run_id, rows=2).to_parquet(evaluate / paths.SUMMARY_METRICS)
     _table(run_id, rows=3).to_parquet(evaluate / paths.FOLD_METRICS)
     if registered:
-        (root / run_id / "run_output.json").write_text(
-            json.dumps({"train_run_id": run_id, "published": {"model_tag": MODEL_TAG}})
-        )
+        _register(root, run_id)
+
+
+def _register(root: Path, run_id: str) -> None:
+    """The completion marker registration writes at the run root."""
+    (root / run_id / "run_output.json").write_text(
+        json.dumps({"train_run_id": run_id, "published": {"model_tag": MODEL_TAG}})
+    )
 
 
 @pytest.fixture
@@ -111,6 +117,25 @@ def test_a_registered_run_reads_its_model_tag(
     marker = load.load_run_output(f"{tmp_path / REGISTERED}/run_output.json")
     assert marker is not None
     assert marker["published"]["model_tag"] == MODEL_TAG
+
+
+def test_a_late_registration_is_seen_once_the_cache_expires(
+    tmp_path: Path, cache_clock: Mock
+) -> None:
+    """Otherwise a run registering after its page first loaded badges as
+    unregistered for the life of the server."""
+    _write_run(tmp_path, EVALUATED_ONLY, registered=False)
+    uri = f"{tmp_path / EVALUATED_ONLY}/run_output.json"
+    assert load.load_run_output(uri) is None
+
+    _register(tmp_path, EVALUATED_ONLY)
+    # Self-check: short of expiry the read is still the cached absence, so the
+    # refresh below is the expiry's doing.
+    cache_clock.return_value = load.MUTABLE_TTL_SECONDS - 1
+    assert load.load_run_output(uri) is None
+
+    cache_clock.return_value = load.MUTABLE_TTL_SECONDS + 1
+    assert load.load_run_output(uri) is not None
 
 
 def test_an_unvalidated_marker_still_loads(tmp_path: Path) -> None:

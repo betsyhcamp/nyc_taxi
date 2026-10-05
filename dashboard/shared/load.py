@@ -17,6 +17,11 @@ from dashboard.shared import paths
 
 _REQUIRED_SETTINGS = ("env", "config_dir")
 
+# For the run listing, the pointer and the registration marker, which change under
+# a fixed URI. The cache belongs to the server process, so a browser refresh never
+# clears it. A run's tables do not change under its id and stay at ttl=None.
+MUTABLE_TTL_SECONDS = 60
+
 
 @st.cache_data(show_spinner=False)
 def dashboard_config(config_path: str) -> dict[str, str]:
@@ -72,7 +77,7 @@ def load_evaluate_manifest(prefix: str) -> dict[str, Any]:
     return _read_json(f"{prefix}{paths.EVALUATE_MANIFEST}")
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=MUTABLE_TTL_SECONDS)
 def load_run_output(uri: str) -> dict[str, Any] | None:
     """The completion marker, or None when the run never registered.
 

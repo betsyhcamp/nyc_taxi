@@ -1,11 +1,12 @@
 import json
 from datetime import UTC, date, datetime
+from unittest.mock import Mock
 
 import pytest
 from fsspec import AbstractFileSystem
 from fsspec.implementations.memory import MemoryFileSystem
 
-from dashboard.shared import paths, runs
+from dashboard.shared import load, paths, runs
 from fcstnyctaxi.lib.utils import generate_run_id
 from fcstnyctaxi.schemas.run_outputs import (
     LatestRunPointer,
@@ -219,3 +220,34 @@ def test_the_default_falls_back_when_the_pointer_names_an_unlisted_run(
 def test_no_offered_runs_yields_no_default() -> None:
     """Pure, so the empty environment needs no filesystem at all."""
     assert runs.default_run_id((), None) is None
+
+
+# ================================================
+# expiry of the cached reads
+# ================================================
+
+
+def test_a_new_run_and_its_pointer_are_seen_together_once_the_cache_expires(
+    fake_fs: AbstractFileSystem, cache_clock: Mock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Otherwise a long-running server never offers a run evaluated after its first
+    read, and a pointer expiring alone names a run the listing lacks."""
+    monkeypatch.setattr(runs.gcsfs, "GCSFileSystem", MemoryFileSystem)
+    first, second = generate_run_id(), generate_run_id()
+    assert first != second, "generate_run_id collided"
+    _write_run(fake_fs, first, evaluated=True, registered=True)
+    fake_fs.pipe(POINTER_URI, _pointer_json(first))
+    assert runs.list_run_ids(TRAIN_ROOT) == (first,)
+    assert runs.pointer_run_id(POINTER_URI) == first
+
+    _write_run(fake_fs, second, evaluated=True, registered=True)
+    fake_fs.pipe(POINTER_URI, _pointer_json(second))
+    # Short of expiry both still read stale: the cache is in play, and neither
+    # read expires ahead of the other.
+    cache_clock.return_value = load.MUTABLE_TTL_SECONDS - 1
+    assert second not in runs.list_run_ids(TRAIN_ROOT)
+    assert runs.pointer_run_id(POINTER_URI) == first
+
+    cache_clock.return_value = load.MUTABLE_TTL_SECONDS + 1
+    assert second in runs.list_run_ids(TRAIN_ROOT)
+    assert runs.pointer_run_id(POINTER_URI) == second

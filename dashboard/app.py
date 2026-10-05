@@ -50,8 +50,8 @@ def main() -> None:
     )
     if pointed is not None and pointed not in offered:
         st.warning(
-            f"The run pointer names {pointed}, which has no evaluate output and "
-            "so cannot be opened. Showing the newest run that has one."
+            f"The run pointer names {pointed}, which is not in the current "
+            "listing. Showing the newest listed run instead."
         )
 
     prefix = load.evaluate_uri(config_dir, env, run_id)

@@ -5,7 +5,7 @@ import gcsfs
 import streamlit as st
 from fsspec import AbstractFileSystem
 
-from dashboard.shared import paths
+from dashboard.shared import load, paths
 
 
 def discover_run_ids(slice_root: str, fs: AbstractFileSystem) -> tuple[str, ...]:
@@ -40,20 +40,21 @@ def read_pointer_run_id(pointer_uri: str, fs: AbstractFileSystem) -> str | None:
 def default_run_id(run_ids: tuple[str, ...], pointer_run_id: str | None) -> str | None:
     """The pointer's run when the listing offers it, else the newest, else None.
 
-    The pointer can name a run whose evaluate output is gone.
+    The pointer can name a run the listing lacks: its evaluate output gone, or
+    written after the listing was cached.
     """
     if pointer_run_id in run_ids:
         return pointer_run_id
     return run_ids[0] if run_ids else None
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=load.MUTABLE_TTL_SECONDS)
 def list_run_ids(slice_root: str) -> tuple[str, ...]:
     """`discover_run_ids` against GCS, cached on the prefix."""
     return discover_run_ids(slice_root, gcsfs.GCSFileSystem())
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=load.MUTABLE_TTL_SECONDS)
 def pointer_run_id(pointer_uri: str) -> str | None:
     """`read_pointer_run_id` against GCS, cached on the URI."""
     return read_pointer_run_id(pointer_uri, gcsfs.GCSFileSystem())
