@@ -1,4 +1,4 @@
-"""The two bar rows.
+"""The two scorecard rows, drawn as lollipops.
 
 `summary_metrics` is derived from `fold_metrics` by the producer's own `_derive`,
 with one fold per cell so the mean equals the planted value exactly. That gives
@@ -9,6 +9,7 @@ from collections.abc import Sequence
 
 import pandas as pd
 import pytest
+from streamlit.testing.v1 import AppTest
 
 from dashboard.shared import palette
 from dashboard.train import scorecard
@@ -65,9 +66,23 @@ def _summary(metric: str) -> pd.DataFrame:
     return derived
 
 
-def _bars(figure: object) -> list:
-    """The challenger bars, which carry a `base`."""
-    return [trace for trace in figure.data if trace.type == "bar" and len(trace.x)]
+def _markers(figure: object) -> list:
+    """The challenger's value markers, one per drawn cell."""
+    return [
+        trace
+        for trace in figure.data
+        if trace.mode and "markers" in trace.mode and trace.name in HORIZONS
+    ]
+
+
+def _stems(figure: object) -> list:
+    """The lines from the reference to each value."""
+    return [trace for trace in figure.data if trace.mode == "lines"]
+
+
+def _ticks(figure: object) -> list:
+    """The muted benchmark marks, drawn only for an absolute metric."""
+    return [trace for trace in figure.data if trace.name == "benchmark"]
 
 
 def _facet_count(figure: object) -> int:
@@ -97,9 +112,7 @@ def test_a_configured_tier_with_no_rows_still_renders_a_panel() -> None:
     """Plotly materializes no axis for a facet holding no trace, so without a
     placeholder the tier's panel loses its frame and the grid reads as shifted."""
     figure = _row("wrmae_pooled")
-    placeholders = [
-        trace for trace in figure.data if trace.type == "bar" and not len(trace.x)
-    ]
+    placeholders = [trace for trace in figure.data if not len(trace.x)]
     assert len(placeholders) == 1
 
 
@@ -110,9 +123,9 @@ def test_the_reference_reaches_the_empty_facet_too() -> None:
     assert len(shapes) == 1 + len(TIER_LABELS)
 
 
-def test_the_absent_tier_draws_no_bar() -> None:
+def test_the_absent_tier_draws_no_marker() -> None:
     """An empty panel, not a zero: a zero would read as a measured value."""
-    drawn = {trace.x[0] for trace in _bars(_row("wrmae_pooled"))}
+    drawn = {trace.x[0] for trace in _markers(_row("wrmae_pooled"))}
     assert drawn == set(HORIZONS)
 
 
@@ -121,34 +134,47 @@ def test_the_absent_tier_draws_no_bar() -> None:
 # ================================================
 
 
-def test_only_the_challenger_is_drawn_as_a_bar() -> None:
-    """The benchmark scores itself at 1.0; a bar for it would halve the row."""
-    bars = _bars(_row("wrmae_pooled"))
-    assert len(bars) == 2 * len({tier for tier, _ in _PLANTED})
+def test_only_the_challenger_is_drawn_as_a_marker() -> None:
+    """The benchmark scores itself at 1.0; a marker for it would halve the row."""
+    assert len(_markers(_row("wrmae_pooled"))) == 2 * len(
+        {tier for tier, _ in _PLANTED}
+    )
 
 
-def test_bars_grow_from_the_guardrail_not_from_zero() -> None:
-    """From a zero baseline 0.97 and 1.03 look 5.8% apart while sitting on
-    opposite sides of the guardrail."""
-    assert {trace.base[0] for trace in _bars(_row("wrmae_pooled"))} == {1.0}
+def test_the_marker_sits_at_the_value() -> None:
+    """Read upward off the axis. Position is what a truncated axis does not
+    distort, which is why the value is here and not in a bar length."""
+    drawn = {
+        (trace.x[0], round(trace.y[0], 6)) for trace in _markers(_row("wrmae_pooled"))
+    }
+    assert drawn >= {("horizon_2", 1.04), ("horizon_1", 0.83)}
 
 
-def test_an_absolute_metric_grows_from_zero() -> None:
-    """WAPE has no guardrail to grow from, so its baseline is the axis floor."""
-    assert {trace.base[0] for trace in _bars(_row("wape"))} == {0.0}
+def test_the_stem_runs_from_the_reference_to_the_value() -> None:
+    """The deviation, carried by a line that never claims to be a length."""
+    for trace in _stems(_row("wrmae_pooled")):
+        assert trace.y[0] == pytest.approx(palette.REFERENCE_LINE["wrmae_pooled"])
 
 
-def test_the_real_value_survives_the_delta_encoding() -> None:
-    """Plotly reads `y` as length from `base`, so hover would show the delta."""
-    for trace in _bars(_row("wrmae_pooled")):
-        assert trace.customdata[0][0] == pytest.approx(trace.base[0] + trace.y[0])
+def test_a_metric_with_no_reference_draws_no_stem() -> None:
+    """WAPE has nothing to deviate from, so a stem would anchor at the axis floor
+    and reintroduce the length distortion the marker avoids."""
+    assert not _stems(_row("wape"))
+    assert _markers(_row("wape"))
+
+
+def test_a_breach_crosses_the_reference_rather_than_inverting() -> None:
+    """The breaching marker sits above the line with its stem pointing up, which
+    is the whole reason direction encodes the guardrail."""
+    breaching = [trace for trace in _markers(_row("wrmae_pooled")) if trace.y[0] > 1.0]
+    assert breaching
 
 
 def test_a_breach_is_not_recolored() -> None:
     """Color means horizon everywhere. Recoloring would destroy horizon identity
     exactly where the guardrail failed, which is where it is needed most."""
     by_horizon: dict[str, set[str]] = {}
-    for trace in _bars(_row("wrmae_pooled")):
+    for trace in _markers(_row("wrmae_pooled")):
         by_horizon.setdefault(trace.x[0], set()).add(trace.marker.color)
     assert all(len(colors) == 1 for colors in by_horizon.values())
 
@@ -156,31 +182,66 @@ def test_a_breach_is_not_recolored() -> None:
 def test_the_bars_carry_the_challengers_values_not_the_benchmarks() -> None:
     """The two models differ by a constant here, so reading the wrong one shows a
     complete and plausible row of the wrong model's numbers."""
-    drawn = {
-        (trace.x[0], round(trace.customdata[0][0], 6)) for trace in _bars(_row("wape"))
-    }
+    drawn = {(trace.x[0], round(trace.y[0], 6)) for trace in _markers(_row("wape"))}
     planted = {(horizon, round(value, 6)) for (_, horizon), value in _PLANTED.items()}
     assert {value for _, value in drawn} <= {value for _, value in planted}
 
 
 def test_each_horizon_keeps_its_own_color() -> None:
     """The one thing color does carry, so the two must not collapse."""
-    colors = {trace.x[0]: trace.marker.color for trace in _bars(_row("wrmae_pooled"))}
+    colors = {
+        trace.x[0]: trace.marker.color for trace in _markers(_row("wrmae_pooled"))
+    }
     assert colors == {
         horizon: palette.rgba(palette.HORIZON_COLOR[horizon]) for horizon in HORIZONS
     }
 
 
+def test_each_stem_carries_its_own_horizons_color() -> None:
+    """A stem in the other horizon's hue reads as that horizon's deviation. Sets,
+    not a dict: one entry per horizon would keep only the last facet's stem."""
+    drawn: dict[str, set[str]] = {}
+    for trace in _stems(_row("wrmae_pooled")):
+        drawn.setdefault(trace.x[0], set()).add(trace.line.color)
+    assert drawn == {
+        horizon: {palette.rgba(palette.HORIZON_COLOR[horizon])} for horizon in HORIZONS
+    }
+
+
+def test_each_horizon_keeps_its_own_marker_shape() -> None:
+    """Shape is the second channel, so horizon survives a grayscale print."""
+    shapes = {
+        trace.x[0]: trace.marker.symbol for trace in _markers(_row("wrmae_pooled"))
+    }
+    assert shapes == dict(palette.HORIZON_MARKER)
+
+
 def test_the_legend_names_each_horizon_exactly_once() -> None:
     """The tick labels are hidden, so the legend is the only thing identifying
     which bar is which horizon, and six facets must not repeat it six times."""
-    named = [trace.name for trace in _bars(_row("wrmae_pooled")) if trace.showlegend]
+    named = [trace.name for trace in _markers(_row("wrmae_pooled")) if trace.showlegend]
     assert sorted(named) == sorted(HORIZONS)
 
 
 def test_every_bar_is_annotated_with_its_n_obs() -> None:
     """Accurate for all three metrics, each guarding at fold level."""
-    assert all(trace.text[0] == "2,040" for trace in _bars(_row("wrmae_pooled")))
+    assert all(trace.text[0] == "2,040" for trace in _markers(_row("wrmae_pooled")))
+
+
+def test_the_count_sits_opposite_its_stem() -> None:
+    """Labeling the stem's side prints the count over the line it annotates."""
+    reference = palette.REFERENCE_LINE["wrmae_pooled"]
+    markers = _markers(_row("wrmae_pooled"))
+    # Self-check: the planted values straddle the reference, so both sides run.
+    assert {trace.y[0] > reference for trace in markers} == {True, False}
+    for trace in markers:
+        above = trace.y[0] > reference
+        assert trace.textposition == ("top center" if above else "bottom center")
+
+
+def test_a_metric_with_no_reference_labels_above_the_marker() -> None:
+    """WAPE draws no stem, so no side of the marker is occupied."""
+    assert all(t.textposition == "top center" for t in _markers(_row("wape")))
 
 
 # ================================================
@@ -190,19 +251,17 @@ def test_every_bar_is_annotated_with_its_n_obs() -> None:
 
 def test_an_absolute_metric_carries_a_benchmark_tick() -> None:
     """A 12% WAPE is uninterpretable without one."""
-    ticks = [trace for trace in _row("wape").data if trace.type == "scatter"]
-    assert len(ticks) == len(_bars(_row("wape")))
+    assert len(_ticks(_row("wape"))) == len(_markers(_row("wape")))
 
 
 def test_a_relative_metric_carries_none() -> None:
     """Its benchmark reads ~1.0 by construction, which the reference already is."""
-    assert not [trace for trace in _row("wrmae_pooled").data if trace.type == "scatter"]
+    assert not _ticks(_row("wrmae_pooled"))
 
 
 def test_the_benchmark_tick_is_not_a_horizon_color() -> None:
     """Chrome drawn in a horizon color would claim to be that horizon's data."""
-    ticks = [trace for trace in _row("wape").data if trace.type == "scatter"]
-    colors = {trace.marker.line.color for trace in ticks}
+    colors = {trace.marker.line.color for trace in _ticks(_row("wape"))}
     assert not colors & set(palette.HORIZON_COLOR.values())
 
 
@@ -212,9 +271,39 @@ def test_every_benchmark_tick_lands_inside_the_axis() -> None:
     figure = _row("wape")
     full = figure.full_figure_for_development(warn=False)
     low, high = full.layout.yaxis.range
-    ticks = [trace for trace in figure.data if trace.type == "scatter"]
+    ticks = _ticks(figure)
     assert ticks
     assert all(low <= trace.y[0] <= high for trace in ticks)
+
+
+_TWO_ROWS_ONE_METRIC = """
+import pandas as pd
+
+from dashboard.train import scorecard
+
+frame = pd.DataFrame(
+    {
+        "model": ["m_a"] * 4 + ["m_b"] * 4,
+        "horizon": ["horizon_1", "horizon_2"] * 4,
+        "tier": ["global", "global", "low", "low"] * 2,
+        "metric": ["signed_bias_pooled"] * 8,
+        "value": [0.01, -0.02, 0.03, -0.01] * 2,
+        "n_obs": [10] * 8,
+    }
+)
+for row in ("skill", "bias"):
+    scorecard.render_bar_row(
+        frame, ("low",), "m_a", "m_b", key=row, default_metric="signed_bias_pooled"
+    )
+"""
+
+
+def test_two_rows_showing_one_metric_do_not_collide() -> None:
+    """Streamlit derives a chart's element id from its parameters, so two rows on
+    the same metric draw identical figures and the second raises. One click
+    reaches that state, and the defaults differing is what hides it."""
+    app = AppTest.from_string(_TWO_ROWS_ONE_METRIC).run()
+    assert not app.exception, app.exception[0].message if app.exception else ""
 
 
 # ================================================

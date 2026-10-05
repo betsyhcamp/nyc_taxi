@@ -4,6 +4,8 @@ Streamlit reruns the whole script on each widget change, so the cache does real 
 """
 
 import json
+import tomllib
+from pathlib import Path
 from typing import Any
 
 import fsspec
@@ -12,6 +14,32 @@ import streamlit as st
 from fsspec.core import url_to_fs
 
 from dashboard.shared import paths
+
+_REQUIRED_SETTINGS = ("env", "config_dir")
+
+
+@st.cache_data(show_spinner=False)
+def dashboard_config(config_path: str) -> dict[str, str]:
+    """`env` and `config_dir`, with a relative `config_dir` made absolute.
+
+    Resolved against the file's own project root, not the working directory:
+    Streamlit can be launched from anywhere, and a config tree that fails to
+    resolve composes a different environment or none at all.
+    """
+    path = Path(config_path)
+    settings = tomllib.loads(path.read_text())
+    absent = [key for key in _REQUIRED_SETTINGS if key not in settings]
+    if absent:
+        raise ValueError(
+            f"{path} supplies no {absent}, and every prefix the dashboard reads "
+            "resolves from those two, so a default here would quietly open an "
+            "environment the file does not name."
+        )
+
+    config_dir = Path(str(settings["config_dir"]))
+    if not config_dir.is_absolute():
+        config_dir = path.resolve().parents[1] / config_dir
+    return {"env": str(settings["env"]), "config_dir": str(config_dir)}
 
 
 @st.cache_data(show_spinner=False)

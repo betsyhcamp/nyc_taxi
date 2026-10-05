@@ -16,9 +16,11 @@ _BENCHMARK_MARK = {
     "size": 18,
     "line": {"color": palette.AXIS_COLOR, "width": 2},
 }
+_MARKER_SIZE = 13
+_STEM_WIDTH = 3
 
 
-# The two scorecard bar rows: `global` then the configured tiers, challenger only.
+# The two scorecard rows: `global` then the configured tiers, challenger only.
 def bar_row(
     summary_metrics: pd.DataFrame,
     metric: str,
@@ -26,7 +28,7 @@ def bar_row(
     challenger_model: str,
     benchmark_model: str,
 ) -> go.Figure:
-    """One row of grouped bars, two per facet, horizon_1 and horizon_2.
+    """One row of lollipops, two per facet, horizon_1 and horizon_2.
 
     The grid comes from the configured `tier_labels`, not the labels present, so
     an absent tier draws an empty facet rather than shifting the grid.
@@ -44,7 +46,6 @@ def bar_row(
     low, high = axes.metric_range(scaled, metric)
 
     reference = palette.REFERENCE_LINE[metric]
-    baseline = 0.0 if reference is None else reference
 
     figure = make_subplots(
         rows=1,
@@ -61,8 +62,10 @@ def bar_row(
                 continue
             value, n_obs = cell
             drawn += 1
+            if reference is not None:
+                figure.add_trace(_stem(horizon, value, reference), row=1, col=column)
             figure.add_trace(
-                _bar(horizon, value, n_obs, baseline, legend=column == 1),
+                _marker(horizon, value, n_obs, reference, legend=column == 1),
                 row=1,
                 col=column,
             )
@@ -101,12 +104,15 @@ def render_bar_row(
         "metric",
         palette.METRICS,
         index=palette.METRICS.index(default_metric),
-        key=key,
+        key=f"{key}_metric",
     )
     figure = bar_row(
         summary_metrics, metric, tier_labels, challenger_model, benchmark_model
     )
-    st.plotly_chart(figure, use_container_width=True)
+    # Keyed, because Streamlit derives a chart's element id from its parameters:
+    # two rows showing the same metric draw identical figures, and the second
+    # would raise on the collision.
+    st.plotly_chart(figure, width="stretch", key=f"{key}_chart")
 
 
 def _cells(rows: pd.DataFrame, model: str) -> dict[tuple[str, str], tuple[float, int]]:
@@ -130,30 +136,60 @@ def _cells(rows: pd.DataFrame, model: str) -> dict[tuple[str, str], tuple[float,
     }
 
 
-def _bar(
-    horizon: str, value: float, n_obs: int, baseline: float, *, legend: bool
-) -> go.Bar:
-    """One challenger bar, from the baseline to its value.
+def _stem(horizon: str, value: float, reference: float) -> go.Scatter:
+    """The line from the reference to the value.
 
-    Plotly reads `y` as the bar's length from `base`, so the real value rides in
-    `customdata` or hover shows the delta. Color is the horizon's and never the
-    magnitude's: a breach is direction from the baseline.
+    Drawn only where the metric has a reference: the stem exists to show the
+    deviation from it, so without one it would anchor at the axis floor and
+    reintroduce exactly the length distortion the marker avoids.
     """
-    return go.Bar(
+    return go.Scatter(
+        x=[horizon, horizon],
+        y=[reference, value],
+        mode="lines",
+        line={
+            "color": palette.rgba(palette.HORIZON_COLOR[horizon]),
+            "width": _STEM_WIDTH,
+        },
+        legendgroup=horizon,
+        showlegend=False,
+        hoverinfo="skip",
+    )
+
+
+def _label_position(value: float, reference: float | None) -> str:
+    """The side of the marker the stem does not occupy, so the two never overlap."""
+    if reference is None or value >= reference:
+        return "top center"
+    return "bottom center"
+
+
+def _marker(
+    horizon: str, value: float, n_obs: int, reference: float | None, *, legend: bool
+) -> go.Scatter:
+    """The value itself, read off the axis at the marker's height.
+
+    Color and shape both carry horizon and neither carries magnitude: a breach is
+    a marker above the reference with its stem pointing up, never a recoloring.
+    """
+    return go.Scatter(
         x=[horizon],
-        y=[value - baseline],
-        base=[baseline],
+        y=[value],
+        mode="markers+text",
         name=horizon,
         legendgroup=horizon,
         showlegend=legend,
-        marker_color=palette.rgba(palette.HORIZON_COLOR[horizon]),
+        marker={
+            "color": palette.rgba(palette.HORIZON_COLOR[horizon]),
+            "symbol": palette.HORIZON_MARKER[horizon],
+            "size": _MARKER_SIZE,
+        },
         text=[f"{n_obs:,}"],
-        textposition="outside",
+        textposition=_label_position(value, reference),
         textfont={"size": 9},
-        customdata=[[value, n_obs]],
+        customdata=[[n_obs]],
         hovertemplate=(
-            f"{horizon}<br>%{{customdata[0]:.4f}}<br>n_obs %{{customdata[1]:,}}"
-            "<extra></extra>"
+            f"{horizon}<br>%{{y:.4f}}<br>n_obs %{{customdata[0]:,}}<extra></extra>"
         ),
     )
 
@@ -177,7 +213,7 @@ def _benchmark_tick(horizon: str, value: float) -> go.Scatter:
     )
 
 
-def _empty_facet() -> go.Bar:
+def _empty_facet() -> go.Scatter:
     """A placeholder for a configured tier with no rows.
 
     Measured: Plotly materializes no axis for a facet holding no trace, and
@@ -185,4 +221,4 @@ def _empty_facet() -> go.Bar:
     So without this the tier's panel loses its frame and the reference rule
     breaks mid-row, instead of rendering as the empty panel the grid promises.
     """
-    return go.Bar(x=[], y=[], showlegend=False, hoverinfo="skip")
+    return go.Scatter(x=[], y=[], mode="markers", showlegend=False, hoverinfo="skip")

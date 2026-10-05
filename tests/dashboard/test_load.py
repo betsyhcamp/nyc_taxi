@@ -139,6 +139,59 @@ def test_mutating_a_loaded_frame_does_not_poison_the_cache(
 
 
 # ================================================
+# the dashboard's own config
+# ================================================
+
+
+def test_the_config_supplies_both_settings(tmp_path: Path) -> None:
+    """The two values every prefix in the dashboard resolves from."""
+    (tmp_path / "config.toml").write_text('env = "dev"\nconfig_dir = "config"\n')
+    settings = load.dashboard_config(f"{tmp_path / 'config.toml'}")
+    assert settings["env"] == "dev"
+
+
+def test_a_relative_config_dir_is_resolved_against_the_project_root(
+    tmp_path: Path,
+) -> None:
+    """Streamlit can be launched from anywhere, so a path left relative to the
+    working directory composes a different environment or none at all."""
+    (tmp_path / "config.toml").write_text('env = "dev"\nconfig_dir = "config"\n')
+    resolved = Path(load.dashboard_config(f"{tmp_path / 'config.toml'}")["config_dir"])
+    assert resolved.is_absolute()
+    assert resolved == tmp_path.resolve().parent / "config"
+
+
+def test_an_absolute_config_dir_is_left_alone(tmp_path: Path) -> None:
+    """Resolving an absolute path against anything would corrupt it."""
+    absolute = tmp_path / "elsewhere"
+    (tmp_path / "config.toml").write_text(f'env = "dev"\nconfig_dir = "{absolute}"\n')
+    settings = load.dashboard_config(f"{tmp_path / 'config.toml'}")
+    assert settings["config_dir"] == str(absolute)
+
+
+@pytest.mark.parametrize("omitted", ["env", "config_dir"])
+def test_a_missing_setting_raises_rather_than_defaulting(
+    tmp_path: Path, omitted: str
+) -> None:
+    """A default would quietly open an environment the file does not name."""
+    kept = {"env": '"dev"', "config_dir": '"config"'}
+    kept.pop(omitted)
+    (tmp_path / "config.toml").write_text(
+        "\n".join(f"{key} = {value}" for key, value in kept.items())
+    )
+    with pytest.raises(ValueError, match=omitted):
+        load.dashboard_config(f"{tmp_path / 'config.toml'}")
+
+
+def test_the_shipped_config_parses(tmp_path: Path) -> None:
+    """The file the app actually reads, against a tree that must exist."""
+    settings = load.dashboard_config("dashboard/config.toml")
+    assert Path(
+        settings["config_dir"], "environments", f"{settings['env']}.yaml"
+    ).is_file()
+
+
+# ================================================
 # the filenames, against the producer's own names
 # ================================================
 
