@@ -1,6 +1,9 @@
 import json
+import re
+import shutil
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock
 
 import pandas as pd
@@ -96,6 +99,62 @@ def test_the_two_tables_are_cached_apart(two_runs: dict[str, str]) -> None:
     """One prefix serves both reads, so the filename has to separate them."""
     prefix = two_runs[REGISTERED]
     assert len(load.load_summary_metrics(prefix)) != len(load.load_fold_metrics(prefix))
+
+
+# ================================================
+# the lineage check
+# ================================================
+
+
+def _read(prefix: str) -> tuple[dict[str, Any], dict[str, pd.DataFrame]]:
+    """One run's manifest and tables, through the loaders the page reads them by."""
+    return load.load_evaluate_manifest(prefix), {
+        paths.SUMMARY_METRICS: load.load_summary_metrics(prefix),
+        paths.FOLD_METRICS: load.load_fold_metrics(prefix),
+    }
+
+
+def _plant(two_runs: dict[str, str], filename: str) -> str:
+    """Copy the other run's file over the registered run's, as a manual copy would."""
+    target = two_runs[REGISTERED]
+    shutil.copy(f"{two_runs[EVALUATED_ONLY]}{filename}", f"{target}{filename}")
+    return target
+
+
+def test_a_run_whose_files_are_its_own_passes(two_runs: dict[str, str]) -> None:
+    """Every pipeline-written run is in this state, so the check must stay quiet."""
+    load.check_lineage(REGISTERED, *_read(two_runs[REGISTERED]))
+
+
+def test_another_runs_manifest_under_this_run_raises(two_runs: dict[str, str]) -> None:
+    """The identity strip would describe one run above another run's numbers."""
+    prefix = _plant(two_runs, paths.EVALUATE_MANIFEST)
+    with pytest.raises(ValueError, match="manifest"):
+        load.check_lineage(REGISTERED, *_read(prefix))
+
+
+@pytest.mark.parametrize("filename", [paths.SUMMARY_METRICS, paths.FOLD_METRICS])
+def test_another_runs_table_under_this_run_raises(
+    two_runs: dict[str, str], filename: str
+) -> None:
+    """The loader accepts it and the page charts it under this run's name. Both
+    tables, so a check reading only the first is not enough."""
+    prefix = _plant(two_runs, filename)
+    with pytest.raises(ValueError, match=re.escape(filename)):
+        load.check_lineage(REGISTERED, *_read(prefix))
+
+
+def test_a_table_mixing_two_runs_raises(two_runs: dict[str, str]) -> None:
+    """Containing the selected run is not enough: the other run's rows are not its."""
+    manifest, frames = _read(two_runs[REGISTERED])
+    other = load.load_summary_metrics(two_runs[EVALUATED_ONLY])
+    mixed = pd.concat([frames[paths.SUMMARY_METRICS], other])
+    # Self-check: the selected run is among the ids, so only an exact-set check
+    # catches this rather than any check that the run is present.
+    assert REGISTERED in set(mixed["train_run_id"])
+    frames[paths.SUMMARY_METRICS] = mixed
+    with pytest.raises(ValueError, match=re.escape(paths.SUMMARY_METRICS)):
+        load.check_lineage(REGISTERED, manifest, frames)
 
 
 # ================================================

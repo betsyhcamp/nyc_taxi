@@ -101,6 +101,38 @@ def load_fold_metrics(prefix: str) -> pd.DataFrame:
     return pd.read_parquet(f"{prefix}{paths.FOLD_METRICS}")
 
 
+def check_lineage(
+    run_id: str, manifest: dict[str, Any], frames: dict[str, pd.DataFrame]
+) -> None:
+    """Raise unless the manifest and every table name the selected run.
+
+    `evaluate_impl` never files a table under another run's id, so this guards a
+    manual copy or edit, which the loaders accept.
+
+    Args:
+        run_id: The run the selector chose.
+        manifest: Its evaluate manifest.
+        frames: Each loaded table, keyed by the name an error reports.
+
+    Raises:
+        ValueError: The manifest or any table names a run other than `run_id`.
+    """
+    declared = manifest.get("lineage", {}).get("train_run_id")
+    if declared != run_id:
+        raise ValueError(
+            f"the evaluate manifest under run {run_id!r} names {declared!r}, so the "
+            "identity strip would describe a run other than the one selected."
+        )
+    for name, frame in frames.items():
+        stamped = set(frame["train_run_id"].unique())
+        if stamped != {run_id}:
+            raise ValueError(
+                f"{name} under run {run_id!r} is stamped "
+                f"{sorted(str(value) for value in stamped)}, so the "
+                "page would chart another run's rows under this run's name."
+            )
+
+
 def _read_json(uri: str) -> dict[str, Any]:
     """One JSON object, over whichever filesystem the URI names."""
     with fsspec.open(uri) as handle:

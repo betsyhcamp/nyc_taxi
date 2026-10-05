@@ -1,8 +1,4 @@
-"""The backtest monitor over one train run: `streamlit run dashboard/app.py`.
-
-Assembly only. Every number comes from a cached loader and every panel from a
-module that takes frames, so nothing here decides anything.
-"""
+"""Backtest monitor for one train run: `streamlit run dashboard/app.py` Assembly only"""
 
 import sys
 from pathlib import Path
@@ -17,7 +13,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 # E402 below is the price of that shim: these cannot precede it and resolve.
 import streamlit as st  # noqa: E402
 
-from dashboard.shared import load, runs  # noqa: E402
+from dashboard.shared import load, paths, runs  # noqa: E402
 from dashboard.train import header, scorecard  # noqa: E402
 
 _CONFIG_PATH = Path(__file__).resolve().parent / "config.toml"
@@ -57,6 +53,12 @@ def main() -> None:
     prefix = load.evaluate_uri(config_dir, env, run_id)
     manifest = load.load_evaluate_manifest(prefix)
     summary_metrics = load.load_summary_metrics(prefix)
+    fold_metrics = load.load_fold_metrics(prefix)
+    load.check_lineage(
+        run_id,
+        manifest,
+        {paths.SUMMARY_METRICS: summary_metrics, paths.FOLD_METRICS: fold_metrics},
+    )
     tier_labels = manifest["config"]["tiering"]["tier_labels"]
 
     header.render_identity_strip(
@@ -66,9 +68,7 @@ def main() -> None:
 
     # Above the bar rows and gating them: if `n_series` moved, a skill number
     # below is uninterpretable rather than merely surprising.
-    header.render_coverage_table(
-        summary_metrics, load.load_fold_metrics(prefix), tier_labels
-    )
+    header.render_coverage_table(summary_metrics, fold_metrics, tier_labels)
     st.divider()
 
     for key, default_metric in _ROWS:
