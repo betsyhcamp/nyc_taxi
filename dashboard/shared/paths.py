@@ -8,8 +8,9 @@ from fcstnyctaxi.lib.storage_layout import (
 )
 from fcstnyctaxi.schemas.config.common import SliceName
 
-# Typed, so a token outside SliceName is a type error rather than a 404.
-_SLICE: SliceName = "train"
+# Typed, so a token outside SliceName is a type error rather than a 404. Also
+# the key `runs.py` reads `_latest.json` by, which holds one record per slice.
+TRAIN_SLICE: SliceName = "train"
 _EVALUATE_STEP = "evaluate"
 _BACKTEST_STEP = "backtest"
 
@@ -33,7 +34,7 @@ def train_slice_root(config_dir: str, env: str) -> str:
     Returns:
         str: `gs://<bucket>/<env>/train/`.
     """
-    return f"{resolve_environment_root(Path(config_dir), env)}{_SLICE}/"
+    return f"{resolve_environment_root(Path(config_dir), env)}{TRAIN_SLICE}/"
 
 
 def evaluate_prefix(config_dir: str, env: str, run_id: str) -> str:
@@ -50,7 +51,7 @@ def evaluate_prefix(config_dir: str, env: str, run_id: str) -> str:
     Returns:
         str: `gs://<bucket>/<env>/train/<run_id>/evaluate/`.
     """
-    run_prefix = resolve_run_prefix(Path(config_dir), env, _SLICE, run_id)
+    run_prefix = resolve_run_prefix(Path(config_dir), env, TRAIN_SLICE, run_id)
     return f"{run_prefix}{_EVALUATE_STEP}/"
 
 
@@ -69,7 +70,7 @@ def sidecar_prefix(config_dir: str, env: str, run_id: str, model_name: str) -> s
     Returns:
         str: `gs://<bucket>/<env>/train/<run_id>/backtest/<model_name>/`.
     """
-    run_prefix = resolve_run_prefix(Path(config_dir), env, _SLICE, run_id)
+    run_prefix = resolve_run_prefix(Path(config_dir), env, TRAIN_SLICE, run_id)
     return f"{run_prefix}{_BACKTEST_STEP}/{model_name}/"
 
 
@@ -113,4 +114,4 @@ def run_outputs_uri(config_dir: str, env: str, run_id: str) -> str:
     Returns:
         str: `gs://<bucket>/<env>/train/<run_id>/run_output.json`.
     """
-    return resolve_run_outputs_uri(Path(config_dir), env, _SLICE, run_id)
+    return resolve_run_outputs_uri(Path(config_dir), env, TRAIN_SLICE, run_id)

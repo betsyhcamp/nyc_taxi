@@ -7,8 +7,6 @@ from fsspec import AbstractFileSystem
 
 from dashboard.shared import paths
 
-_POINTER_SLICE = "train"
-
 
 def discover_run_ids(slice_root: str, fs: AbstractFileSystem) -> tuple[str, ...]:
     """Run ids whose evaluate step finished, newest first.
@@ -33,7 +31,7 @@ def read_pointer_run_id(pointer_uri: str, fs: AbstractFileSystem) -> str | None:
     """
     if not fs.exists(pointer_uri):
         return None
-    record = json.loads(fs.cat(pointer_uri)).get(_POINTER_SLICE)
+    record = json.loads(fs.cat(pointer_uri)).get(paths.TRAIN_SLICE)
     if not isinstance(record, dict):
         return None
     return record.get("train_run_id")
