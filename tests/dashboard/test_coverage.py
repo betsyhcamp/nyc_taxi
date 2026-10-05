@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+from streamlit.testing.v1 import AppTest
 
 from dashboard.train import header
 from fcstnyctaxi.core.train import evaluate_impl
@@ -17,6 +18,9 @@ TIERS = ("global", "low")
 METRICS = ("metric_x", "metric_y")
 CONFIGURED_TIERS = ("low", "middle", "high")
 
+# A later generation of the same run: one more horizon_1 origin, all else equal.
+LATER_FOLDS = {**FOLDS, "horizon_1": (*FOLDS["horizon_1"], "2025-04-13")}
+
 DROPPED_CELL = {
     "model": "model_a",
     "horizon": "horizon_1",
@@ -25,8 +29,14 @@ DROPPED_CELL = {
 }
 
 
-def _fold_metrics(*, drop_one: bool) -> pd.DataFrame:
-    """Fold grain, optionally with one fold's value NaN as a drop produces."""
+def _fold_metrics(
+    *,
+    drop_one: bool,
+    folds: dict[str, tuple[str, ...]] = FOLDS,
+    metrics: tuple[str, ...] = METRICS,
+) -> pd.DataFrame:
+    """Fold grain, optionally with one fold's value NaN as a drop produces. The
+    folds and metrics vary to build another generation of the same run."""
     rows = [
         {
             "model": model,
@@ -39,17 +49,17 @@ def _fold_metrics(*, drop_one: bool) -> pd.DataFrame:
             "n_obs": 4,
         }
         for model in MODELS
-        for horizon, origins in FOLDS.items()
+        for horizon, origins in folds.items()
         for origin in origins
         for tier in TIERS
-        for metric in METRICS
+        for metric in metrics
     ]
     frame = pd.DataFrame(rows)
     # The horizons must score different counts, or the per-horizon expectation is
     # never exercised: with them equal, comparing every cell against one count
     # passes every test in this file.
-    scored = {len(origins) for origins in FOLDS.values()}
-    assert len(scored) == len(FOLDS), "the horizons must differ in fold count"
+    scored = {len(origins) for origins in folds.values()}
+    assert len(scored) == len(folds), "the horizons must differ in fold count"
     if not drop_one:
         return frame
 
@@ -140,10 +150,10 @@ def test_a_dropped_fold_is_reported_and_its_cell_named(
 ) -> None:
     """The only witness of the upward nanmean dropping a fold."""
     summary, folds = one_dropped
-    coverage = header.fold_coverage(summary, header.folds_per_horizon(folds))
+    coverage = header.fold_coverage(summary, folds)
 
-    assert len(coverage.short) == 1
-    named = coverage.short.iloc[0]
+    assert len(coverage.mismatched) == 1
+    named = coverage.mismatched.iloc[0]
     assert {key: named[key] for key in DROPPED_CELL} == DROPPED_CELL
     assert named["n_folds_used"] < named["folds_scored"]
 
@@ -153,8 +163,9 @@ def test_the_structural_horizon_asymmetry_is_not_a_shortfall(
 ) -> None:
     """Every horizon_2 cell reads fewer folds and none of them is short."""
     summary, folds = full
-    coverage = header.fold_coverage(summary, header.folds_per_horizon(folds))
-    assert coverage.short.empty
+    coverage = header.fold_coverage(summary, folds)
+    assert coverage.mismatched.empty
+    assert coverage.missing.empty
 
 
 def test_the_rollup_counts_every_cell_in_the_file(
@@ -163,22 +174,65 @@ def test_the_rollup_counts_every_cell_in_the_file(
     """Narrowing to the displayed metrics would hide an integrity failure in the
     others, which is why this is a data check and not a display check."""
     summary, folds = full
-    coverage = header.fold_coverage(summary, header.folds_per_horizon(folds))
+    coverage = header.fold_coverage(summary, folds)
     assert coverage.cells == len(summary)
 
 
 def test_a_horizon_with_no_folds_raises_rather_than_passing(
     full: tuple[pd.DataFrame, pd.DataFrame],
 ) -> None:
-    """Compared against nothing, such a cell passes every check silently."""
+    """A horizon only the summary scores means the tables are not one run's."""
     summary, folds = full
-    partial = {
-        horizon: count
-        for horizon, count in header.folds_per_horizon(folds).items()
-        if horizon == "horizon_1"
-    }
     with pytest.raises(ValueError, match="horizon_2"):
-        header.fold_coverage(summary, partial)
+        header.fold_coverage(summary, folds[folds["horizon"] == "horizon_1"])
+
+
+# ================================================
+# row 2, the two tables against each other
+# ================================================
+
+
+def test_a_cell_using_more_folds_than_its_horizon_scored_is_reported() -> None:
+    """A summary from a generation with one more origin: an excess is as much a
+    disagreement as a shortfall."""
+    folds = _fold_metrics(drop_one=False)
+    summary = _derive(_fold_metrics(drop_one=False, folds=LATER_FOLDS), _SCORE_KEYS)
+    later = summary[summary["horizon"] == "horizon_1"]
+    # Self-check: the later generation really scored more horizon_1 folds.
+    assert set(later["n_folds_used"]) == {len(LATER_FOLDS["horizon_1"])}
+
+    coverage = header.fold_coverage(summary, folds)
+    assert len(coverage.mismatched) == len(later)
+    assert set(coverage.mismatched["horizon"]) == {"horizon_1"}
+    excess = coverage.mismatched["n_folds_used"] > coverage.mismatched["folds_scored"]
+    assert excess.all()
+
+
+def test_a_cell_the_summary_lacks_is_reported_and_named() -> None:
+    """Counted off the summary instead, a dropped metric shrinks the denominator
+    and reads as full coverage."""
+    folds = _fold_metrics(drop_one=False)
+    summary = _derive(_fold_metrics(drop_one=False, metrics=METRICS[:1]), _SCORE_KEYS)
+    # Self-check: the summary really lacks a metric the fold table holds.
+    assert set(summary["metric"]) < set(folds["metric"])
+
+    coverage = header.fold_coverage(summary, folds)
+    assert set(coverage.missing["metric"]) == set(METRICS[1:])
+    assert coverage.cells == len(_derive(folds, _SCORE_KEYS))
+    assert coverage.mismatched.empty
+
+
+def test_a_cell_the_fold_table_lacks_is_reported_as_scoring_none() -> None:
+    """The reverse disagreement: a summary cell with no fold behind it."""
+    folds = _fold_metrics(drop_one=False, metrics=METRICS[:1])
+    summary = _derive(_fold_metrics(drop_one=False), _SCORE_KEYS)
+    # Self-check: the fold table really lacks a metric the summary holds.
+    assert set(folds["metric"]) < set(summary["metric"])
+
+    coverage = header.fold_coverage(summary, folds)
+    assert set(coverage.mismatched["metric"]) == set(METRICS[1:])
+    assert (coverage.mismatched["folds_scored"] == 0).all()
+    assert coverage.missing.empty
 
 
 # ================================================
@@ -216,14 +270,37 @@ def test_presence_is_read_off_values_not_categories(
 
 
 # ================================================
-# the renderer, smoke only
+# the renderer
 # ================================================
 
 
-def test_the_table_renders_in_both_coverage_states(
+# Unannotated: `AppTest.from_function` runs this function's source as a script of
+# its own, where the annotations are evaluated and `pd` is undefined.
+def _coverage_page(summary, fold_metrics, tier_labels):
+    """The coverage table alone, as a script `AppTest` can run."""
+    from dashboard.train import header
+
+    header.render_coverage_table(summary, fold_metrics, tier_labels)
+
+
+def _fold_coverage_line(summary: pd.DataFrame, fold_metrics: pd.DataFrame) -> str:
+    """What the fold coverage row prints for this pair of tables."""
+    app = AppTest.from_function(
+        _coverage_page, args=(summary, fold_metrics, CONFIGURED_TIERS)
+    ).run()
+    assert not app.exception, app.exception[0].message if app.exception else ""
+    return next(line.value for line in app.markdown if "fold coverage" in line.value)
+
+
+def test_the_rollup_reads_full_coverage_only_when_the_tables_agree(
     full: tuple[pd.DataFrame, pd.DataFrame],
     one_dropped: tuple[pd.DataFrame, pd.DataFrame],
 ) -> None:
-    """The shortfall branch opens an expander the clean branch does not."""
-    for summary, folds in (full, one_dropped):
-        header.render_coverage_table(summary, folds, CONFIGURED_TIERS)
+    """A disagreement printed as full coverage is what this row exists to prevent,
+    whether a cell is off its count or absent."""
+    _, folds = full
+    lacking = _derive(_fold_metrics(drop_one=False, metrics=METRICS[:1]), _SCORE_KEYS)
+
+    assert "full coverage" in _fold_coverage_line(*full)
+    assert "full coverage" not in _fold_coverage_line(*one_dropped)
+    assert "full coverage" not in _fold_coverage_line(lacking, folds)

@@ -98,10 +98,11 @@ def _cell(column: Any, label: str, value: str) -> None:
 
 @dataclass(frozen=True)
 class FoldCoverage:
-    """The rollup's denominator, and the cells behind it when any fell short."""
+    """The rollup's denominator, and the cells behind it when the tables disagree."""
 
     cells: int
-    short: pd.DataFrame
+    mismatched: pd.DataFrame
+    missing: pd.DataFrame
 
 
 def folds_per_horizon(fold_metrics: pd.DataFrame) -> dict[str, int]:
@@ -116,30 +117,44 @@ def folds_per_horizon(fold_metrics: pd.DataFrame) -> dict[str, int]:
 
 
 def fold_coverage(
-    summary_metrics: pd.DataFrame, expected_folds: dict[str, int]
+    summary_metrics: pd.DataFrame, fold_metrics: pd.DataFrame
 ) -> FoldCoverage:
-    """Each cell's `n_folds_used` against the folds its own horizon scored.
+    """Each summary cell's `n_folds_used` against the folds its horizon scored,
+    over every cell either table holds.
 
-    Over every metric in the file, not the three displayed: this is the only
-    witness of the upward nanmean silently dropping a fold. Per horizon rather
-    than one count, since a single expectation would report every horizon_2 cell
-    as short when scoring fewer folds is structural.
+    Over every metric, not the three displayed: the only witness of the upward
+    nanmean dropping a fold. Per horizon, since horizon_2 scoring fewer is
+    structural. A healthy run derives one table from the other, so an excess
+    fold or a cell only one table holds is a disagreement too.
     """
-    expected = summary_metrics["horizon"].map(expected_folds)
-    unmapped = summary_metrics.loc[expected.isna(), "horizon"].unique()
-    if len(unmapped):
+    scored = folds_per_horizon(fold_metrics)
+    unmapped = set(summary_metrics["horizon"].astype(str)) - set(scored)
+    if unmapped:
         raise ValueError(
             f"summary_metrics scores horizon(s) {sorted(unmapped)} that "
-            "fold_metrics holds no fold for, so those cells would pass this "
-            "check by being compared against nothing."
+            "fold_metrics holds no fold for, so the two tables come from "
+            "different runs or different generations of one."
         )
 
-    short = summary_metrics[summary_metrics["n_folds_used"] < expected]
+    # As strings: `tier` is an ordered categorical, and two generations of a
+    # table can carry different category sets.
+    expected = fold_metrics[_CELL_KEYS].drop_duplicates().astype(str)
+    expected = expected.assign(folds_scored=expected["horizon"].map(scored))
+    used = summary_metrics[_CELL_KEYS + ["n_folds_used"]].astype(
+        {key: str for key in _CELL_KEYS}
+    )
+    cells = expected.merge(used, on=_CELL_KEYS, how="outer", indicator=True)
+    # A summary cell the fold table never scored expects no folds at all.
+    cells["folds_scored"] = cells["folds_scored"].fillna(0).astype(int)
+
+    in_summary = cells["_merge"] != "left_only"
+    off_count = in_summary & (cells["n_folds_used"] != cells["folds_scored"])
     return FoldCoverage(
-        cells=len(summary_metrics),
-        short=short[_CELL_KEYS + ["n_folds_used"]].assign(
-            folds_scored=expected[short.index]
-        ),
+        cells=len(cells),
+        mismatched=cells.loc[
+            off_count, _CELL_KEYS + ["n_folds_used", "folds_scored"]
+        ].astype({"n_folds_used": int}),
+        missing=cells.loc[~in_summary, _CELL_KEYS],
     )
 
 
@@ -164,7 +179,7 @@ def render_coverage_table(
 ) -> None:
     """The four rows, as a rollup rather than one row per cell."""
     scored = folds_per_horizon(fold_metrics)
-    coverage = fold_coverage(summary_metrics, scored)
+    coverage = fold_coverage(summary_metrics, fold_metrics)
     absent = absent_tier_labels(summary_metrics, tier_labels)
 
     counts = ", ".join(
@@ -177,14 +192,22 @@ def render_coverage_table(
         "horizon_1 only."
     )
 
-    if coverage.short.empty:
+    if coverage.mismatched.empty and coverage.missing.empty:
         st.markdown(f"**fold coverage**  all {coverage.cells} cells at full coverage")
     else:
         st.markdown(
-            f"**fold coverage**  {len(coverage.short)} of {coverage.cells} cells short"
+            f"**fold coverage**  of {coverage.cells} cells, "
+            f"{len(coverage.mismatched)} off their fold count and "
+            f"{len(coverage.missing)} absent from summary_metrics"
         )
-        with st.expander("the cells that fell short"):
-            st.dataframe(coverage.short, hide_index=True)
+        with st.expander("the cells the two tables disagree on"):
+            for caption, disagreeing in (
+                ("off their fold count", coverage.mismatched),
+                ("in fold_metrics, absent from summary_metrics", coverage.missing),
+            ):
+                if not disagreeing.empty:
+                    st.caption(caption)
+                    st.dataframe(disagreeing, hide_index=True)
 
     if absent:
         st.markdown(f"**tier labels**  configured but unused: {', '.join(absent)}")
