@@ -66,13 +66,13 @@ def main() -> None:
     )
     st.divider()
 
-    # Above the bar rows and gating them: if `n_series` moved, a skill number
+    # Above the metric rows and gating them: if `n_series` moved, a skill number
     # below is uninterpretable rather than merely surprising.
     header.render_coverage_table(summary_metrics, fold_metrics, tier_labels)
     st.divider()
 
     for key, default_metric in _ROWS:
-        scorecard.render_bar_row(
+        scorecard.render_metric_row(
             summary_metrics,
             tier_labels,
             manifest["challenger_model"],

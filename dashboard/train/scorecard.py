@@ -21,7 +21,7 @@ _STEM_WIDTH = 3
 
 
 # The two scorecard rows: `global` then the configured tiers, challenger only.
-def bar_row(
+def metric_row(
     summary_metrics: pd.DataFrame,
     metric: str,
     tier_labels: Sequence[str],
@@ -89,7 +89,7 @@ def bar_row(
     return figure
 
 
-def render_bar_row(
+def render_metric_row(
     summary_metrics: pd.DataFrame,
     tier_labels: Sequence[str],
     challenger_model: str,
@@ -106,7 +106,7 @@ def render_bar_row(
         index=palette.METRICS.index(default_metric),
         key=f"{key}_metric",
     )
-    figure = bar_row(
+    figure = metric_row(
         summary_metrics, metric, tier_labels, challenger_model, benchmark_model
     )
     # Keyed, because Streamlit derives a chart's element id from its parameters:

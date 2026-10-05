@@ -92,8 +92,8 @@ def _facet_count(figure: object) -> int:
 
 
 def _row(metric: str, tier_labels: Sequence[str] = TIER_LABELS):
-    """One bar row over the planted frame."""
-    return scorecard.bar_row(
+    """One metric row over the planted frame."""
+    return scorecard.metric_row(
         _summary(metric), metric, tier_labels, CHALLENGER, BENCHMARK
     )
 
@@ -130,7 +130,7 @@ def test_the_absent_tier_draws_no_marker() -> None:
 
 
 # ================================================
-# what the bars encode
+# what the marks encode
 # ================================================
 
 
@@ -179,7 +179,7 @@ def test_a_breach_is_not_recolored() -> None:
     assert all(len(colors) == 1 for colors in by_horizon.values())
 
 
-def test_the_bars_carry_the_challengers_values_not_the_benchmarks() -> None:
+def test_the_markers_carry_the_challengers_values_not_the_benchmarks() -> None:
     """The two models differ by a constant here, so reading the wrong one shows a
     complete and plausible row of the wrong model's numbers."""
     drawn = {(trace.x[0], round(trace.y[0], 6)) for trace in _markers(_row("wape"))}
@@ -218,12 +218,12 @@ def test_each_horizon_keeps_its_own_marker_shape() -> None:
 
 def test_the_legend_names_each_horizon_exactly_once() -> None:
     """The tick labels are hidden, so the legend is the only thing identifying
-    which bar is which horizon, and six facets must not repeat it six times."""
+    which marker is which horizon, and six facets must not repeat it six times."""
     named = [trace.name for trace in _markers(_row("wrmae_pooled")) if trace.showlegend]
     assert sorted(named) == sorted(HORIZONS)
 
 
-def test_every_bar_is_annotated_with_its_n_obs() -> None:
+def test_every_marker_is_annotated_with_its_n_obs() -> None:
     """Accurate for all three metrics, each guarding at fold level."""
     assert all(trace.text[0] == "2,040" for trace in _markers(_row("wrmae_pooled")))
 
@@ -292,7 +292,7 @@ frame = pd.DataFrame(
     }
 )
 for row in ("skill", "bias"):
-    scorecard.render_bar_row(
+    scorecard.render_metric_row(
         frame, ("low",), "m_a", "m_b", key=row, default_metric="signed_bias_pooled"
     )
 """
@@ -312,7 +312,7 @@ def test_two_rows_showing_one_metric_do_not_collide() -> None:
 
 
 def test_the_y_range_is_shared_across_the_facets_of_a_row() -> None:
-    """So the reference lands at one height and bar heights are comparable."""
+    """So the reference lands at one height and marker heights are comparable."""
     full = _row("wrmae_pooled").full_figure_for_development(warn=False)
     ranges = {
         tuple(full.layout[key].range)
