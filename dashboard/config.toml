@@ -1,0 +1,7 @@
+# What `resolve_run_prefix` needs, and nothing else.
+#
+# Not a fragment of `config/`, which is the pipeline's tree, composed by
+# `compose_config` and validated by pydantic schemas. A dashboard environment
+# pointer is not a pipeline fragment and must not enter that composition.
+env = "dev"
+config_dir = "config"

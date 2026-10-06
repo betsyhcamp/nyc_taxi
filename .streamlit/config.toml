@@ -1,0 +1,5 @@
+# Every plot area is white, and every contrast figure in dashboard/shared/palette.py
+# is validated against white. A dark app theme would island a white figure in a dark
+# page and set the figure's own dark text beside Streamlit's light text.
+[theme]
+base = "light"
