@@ -26,6 +26,7 @@ from fcstnyctaxi.schemas.run_outputs import (
 )
 from fcstnyctaxi.schemas.storage.common import (
     LATEST_POINTER_FILENAME,
+    RUN_IDENTITY_FILENAME,
     RUN_OUTPUT_FILENAME,
 )
 
@@ -116,7 +117,7 @@ def register_model_impl(
         RegisterModelSummary: The registered version, and whether this call uploaded it.
     """
     identity = TrainRunIdentity.model_validate_json(
-        (compose_configs_dir.parent / "run_identity.json").read_text()
+        (compose_configs_dir.parent / RUN_IDENTITY_FILENAME).read_text()
     )
     # Before any label is built: the schema holds the id to min_length=1 alone.
     require_label_safe_run_id(identity.train_run_id, "run_identity.json train_run_id")

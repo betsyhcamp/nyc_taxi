@@ -46,7 +46,10 @@ from fcstnyctaxi.lib.utils import (
     require_path_safe_run_id,
 )
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
-from fcstnyctaxi.schemas.storage.common import RUN_OUTPUT_FILENAME
+from fcstnyctaxi.schemas.storage.common import (
+    RUN_IDENTITY_FILENAME,
+    RUN_OUTPUT_FILENAME,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -284,7 +287,7 @@ def main() -> None:
 
     # First, so a failed step publish still leaves a record of what the run read.
     # Not sync_to_gcs here: at the run prefix it deletes every sibling step's output.
-    upload_to_gcs(compose_dir.parent / "run_identity.json", run_prefix)
+    upload_to_gcs(compose_dir.parent / RUN_IDENTITY_FILENAME, run_prefix)
 
     # The impl writes manifest.json last, so publishing it alone and last makes its
     # presence at the prefix mean complete rather than started.
@@ -299,7 +302,7 @@ def main() -> None:
         uploaded,
         removed,
         compose_uri,
-        f"{run_prefix}run_identity.json",
+        f"{run_prefix}{RUN_IDENTITY_FILENAME}",
         run_id,
         summary.model_names,
         summary.n_origins,

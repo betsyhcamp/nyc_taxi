@@ -24,7 +24,7 @@ from fcstnyctaxi.schemas.run_outputs import (
     CALENDAR_REQUIRED_COLUMNS,
     PANEL_REQUIRED_COLUMNS,
 )
-from fcstnyctaxi.schemas.storage.common import BUNDLE_MODEL_DIR
+from fcstnyctaxi.schemas.storage.common import BUNDLE_MODEL_DIR, RUN_IDENTITY_FILENAME
 
 _log = logging.getLogger(__name__)
 
@@ -148,7 +148,7 @@ def final_fit_impl(
     if out_dir.name != model_name:
         raise ValueError(f"out_dir {out_dir} is not named for model {model_name!r}.")
 
-    identity_path = compose_configs_dir.parent / "run_identity.json"
+    identity_path = compose_configs_dir.parent / RUN_IDENTITY_FILENAME
     if not identity_path.is_file():
         raise ValueError(
             f"No run_identity.json at {identity_path}, which compose_configs writes."

@@ -41,6 +41,7 @@ from fcstnyctaxi.schemas.config.train import (
     TrainModelingConfig,
 )
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
+from fcstnyctaxi.schemas.storage.common import RUN_IDENTITY_FILENAME
 
 
 @dataclass(frozen=True)
@@ -276,7 +277,7 @@ def compose_configs_impl(
             out_dir / filename,
         )
 
-    (run_dir / "run_identity.json").write_text(
+    (run_dir / RUN_IDENTITY_FILENAME).write_text(
         identity.model_dump_json(indent=2) + "\n"
     )
     # `manifest.json` written is the step's completion marker. Keep this write last.

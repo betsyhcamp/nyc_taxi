@@ -20,6 +20,7 @@ from fcstnyctaxi.lib.fold_metrics import (
 from fcstnyctaxi.lib.period_utils import ORIGIN_TIME_UNIT, derive_horizon_label
 from fcstnyctaxi.schemas.config.train import ModelRoles, TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
+from fcstnyctaxi.schemas.storage.common import RUN_IDENTITY_FILENAME
 
 _log = logging.getLogger(__name__)
 
@@ -759,7 +760,7 @@ def evaluate_impl(
             "directory satisfies the run-root check and fails only this one."
         )
 
-    identity_path = compose_configs_dir.parent / "run_identity.json"
+    identity_path = compose_configs_dir.parent / RUN_IDENTITY_FILENAME
     if not identity_path.is_file():
         raise ValueError(
             f"No run_identity.json at {identity_path}: compose_configs writes it "
