@@ -50,6 +50,8 @@ def final_fit(
     from pathlib import Path
 
     from fcstnyctaxi.core.train.final_fit_impl import final_fit_impl
+    from fcstnyctaxi.lib.storage_layout import build_prefix_uri
+    from fcstnyctaxi.schemas.storage.train import FINAL_FIT_DIR
 
     # Unreachable in the DAG: compose_configs reads the same baked value from the
     # same image and fails first. Kept for a direct call.
@@ -63,7 +65,7 @@ def final_fit(
     # MUST precede the .path read: .path recomputes from .uri, Model included, and
     # reversed, the run succeeds at KFP's own prefix. The impl never checks the step
     # segment, so a wrong one writes into a sibling step's directory silently.
-    bundle.uri = f"{run_prefix}final_fit/{model_name}/"
+    bundle.uri = build_prefix_uri(run_prefix, FINAL_FIT_DIR, model_name)
 
     summary = final_fit_impl(
         panel_path=Path(panel.path),

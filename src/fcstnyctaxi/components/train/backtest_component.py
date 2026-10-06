@@ -47,6 +47,8 @@ def backtest(
     from pathlib import Path
 
     from fcstnyctaxi.core.train.backtest_impl import backtest_impl
+    from fcstnyctaxi.lib.storage_layout import build_prefix_uri
+    from fcstnyctaxi.schemas.storage.train import BACKTEST_DIR
 
     # Unreachable in the DAG: compose_configs reads the same baked value from the
     # same image and fails first. Kept for a direct call.
@@ -59,7 +61,7 @@ def backtest(
 
     # Artifact.path recomputes from self.uri, so this MUST precede the .path read
     # below. Reversed, the run succeeds at KFP's own prefix.
-    sidecar.uri = f"{run_prefix}backtest/{model_name}/"
+    sidecar.uri = build_prefix_uri(run_prefix, BACKTEST_DIR, model_name)
 
     summary = backtest_impl(
         panel_path=Path(panel.path),

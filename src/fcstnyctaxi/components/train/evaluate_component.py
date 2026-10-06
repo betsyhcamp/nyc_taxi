@@ -42,6 +42,8 @@ def evaluate(
     from pathlib import Path
 
     from fcstnyctaxi.core.train.evaluate_impl import evaluate_impl
+    from fcstnyctaxi.lib.storage_layout import build_prefix_uri
+    from fcstnyctaxi.schemas.storage.train import EVALUATE_DIR
 
     # Unreachable in the DAG: compose_configs fails first. Kept for a direct call.
     git_hash = os.environ.get("FCST_GIT_HASH")
@@ -53,7 +55,7 @@ def evaluate(
 
     # Artifact.path recomputes from self.uri, so this MUST precede the .path read.
     # Reversed, the run succeeds at KFP's own prefix.
-    scores.uri = f"{run_prefix}evaluate/"
+    scores.uri = build_prefix_uri(run_prefix, EVALUATE_DIR)
 
     summary = evaluate_impl(
         challenger_dir=Path(challenger_sidecar.path),
