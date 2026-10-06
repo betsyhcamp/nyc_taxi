@@ -48,10 +48,12 @@ except NameError:
     display = print
 
 # %%
-# Pinned, immutable, and already proven equivalent to this notebook by
-# backtest's own gate, so trusting them needs no new setup.
-PINNED_RUN_URI = "gs://nyc-taxi-ehc--modeling/dev/train/20260918T030436650350Z/"
-CHALLENGER_MODEL = "lightgbm"
+# The production run behind model version @11, named by dev/_latest.json, so the
+# hardest in the bucket to lose. Repinned from 20260918T030436650350Z, whose
+# run_identity.json predates the required additional_exog_uri. Both sides below
+# read the same sidecars, so how those were produced is not under test.
+PINNED_RUN_URI = "gs://nyc-taxi-ehc--modeling/dev/train/20260929t045735959418z/"
+CHALLENGER_MODEL = "xgboost"
 BENCHMARK_MODEL = "naive"
 
 # The local runner's own mirror, so a re-run restages nothing. One recursive
