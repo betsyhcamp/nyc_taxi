@@ -13,7 +13,7 @@ _IMAGE = require_digest_ref(os.environ.get("FCST_TRAIN_IMAGE"), "FCST_TRAIN_IMAG
 
 @dsl.component(base_image=_IMAGE, packages_to_install=[])
 def evaluate(
-    run_prefix: str,
+    run_root: str,
     composed_configs: Input[Artifact],
     challenger_sidecar: Input[Artifact],
     benchmark_sidecar: Input[Artifact],
@@ -25,7 +25,7 @@ def evaluate(
     this wrapper cannot touch.
 
     Args:
-        run_prefix (str): The run root, from `compose_configs`.
+        run_root (str): The run root, from `compose_configs`.
         composed_configs (Input[Artifact]): The compose step's directory:
             modeling.yaml, with run_identity.json beside it.
         challenger_sidecar (Input[Artifact]): The challenger's backtest directory.
@@ -55,7 +55,7 @@ def evaluate(
 
     # Artifact.path recomputes from self.uri, so this MUST precede the .path read.
     # Reversed, the run succeeds at KFP's own prefix.
-    scores.uri = build_prefix_uri(run_prefix, EVALUATE_DIR)
+    scores.uri = build_prefix_uri(run_root, EVALUATE_DIR)
 
     summary = evaluate_impl(
         challenger_dir=Path(challenger_sidecar.path),

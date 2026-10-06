@@ -21,7 +21,7 @@ def register_model(
     """Register one run's bundle as a model version, and write the run's record.
 
     Takes no model name (the impl reads the manifest's, checked against the URI), no
-    run_prefix (the output URI is a registry name) and no FCST_GIT_HASH (the impl's
+    run_root (the output URI is a registry name) and no FCST_GIT_HASH (the impl's
     hash is the label's, so it is the only one).
 
     Args:

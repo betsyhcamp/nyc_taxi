@@ -98,11 +98,11 @@ def main() -> None:
     require_path_safe_run_id(feature_run_id, "--feature-run-id")
 
     bucket = resolve_bucket(get_project_root_dir() / "config", args.env)
-    run_prefix = build_run_root(bucket, args.env, "feature", feature_run_id)
-    panel_uri = build_object_uri(run_prefix, _STEP, _PANEL_FILENAME)
-    calendar_uri = build_object_uri(run_prefix, _STEP, _CALENDAR_FILENAME)
-    exog_uri = build_object_uri(run_prefix, _STEP, _EXOG_FILENAME)
-    outputs_uri = build_object_uri(run_prefix, RUN_OUTPUT_FILENAME)
+    run_root = build_run_root(bucket, args.env, "feature", feature_run_id)
+    panel_uri = build_object_uri(run_root, _STEP, _PANEL_FILENAME)
+    calendar_uri = build_object_uri(run_root, _STEP, _CALENDAR_FILENAME)
+    exog_uri = build_object_uri(run_root, _STEP, _EXOG_FILENAME)
+    outputs_uri = build_object_uri(run_root, RUN_OUTPUT_FILENAME)
 
     panel_df = _with_lineage_column(pd.read_parquet(_SOURCE_PANEL_URI), feature_run_id)
     # No lineage column on these two: Feature stamps the panel alone.

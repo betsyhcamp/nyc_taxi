@@ -165,7 +165,7 @@ def main() -> None:
     config_dir = get_project_root_dir() / "config"
     # First, for the --env guard: an unknown selector names the available ones.
     bucket = resolve_bucket(config_dir, args.env)
-    run_prefix = build_run_root(bucket, args.env, "train", run_id)
+    run_root = build_run_root(bucket, args.env, "train", run_id)
     environment = cast(
         EnvironmentConfig,
         compose_config(config_dir, environment_bindings(args.env)).config,
@@ -191,13 +191,13 @@ def main() -> None:
     )
 
     logger.info(
-        "submitting: template=%s sha256=%s mtime=%s images=%s run_prefix=%s "
+        "submitting: template=%s sha256=%s mtime=%s images=%s run_root=%s "
         "run_id=%s feature_run_id=%s caching=%s",
         template,
         hashlib.sha256(template_bytes).hexdigest(),
         datetime.fromtimestamp(template.stat().st_mtime, UTC).isoformat(),
         sorted(images),
-        run_prefix,
+        run_root,
         run_id,
         args.feature_run_id,
         enable_caching,

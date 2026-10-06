@@ -13,7 +13,7 @@ _IMAGE = require_digest_ref(os.environ.get("FCST_TRAIN_IMAGE"), "FCST_TRAIN_IMAG
 
 @dsl.component(base_image=_IMAGE, packages_to_install=[])
 def final_fit(
-    run_prefix: str,
+    run_root: str,
     model_name: str,
     composed_configs: Input[Artifact],
     panel: Input[Dataset],
@@ -26,7 +26,7 @@ def final_fit(
     One task, so `model_name` is a compile-time constant.
 
     Args:
-        run_prefix (str): The run root, from `compose_configs`; this step appends
+        run_root (str): The run root, from `compose_configs`; this step appends
             its own name and the model's.
         model_name (str): Selects the composed config and names the bundle.
         composed_configs (Input[Artifact]): The compose step's directory, with
@@ -65,7 +65,7 @@ def final_fit(
     # MUST precede the .path read: .path recomputes from .uri, Model included, and
     # reversed, the run succeeds at KFP's own prefix. The impl never checks the step
     # segment, so a wrong one writes into a sibling step's directory silently.
-    bundle.uri = build_prefix_uri(run_prefix, FINAL_FIT_DIR, model_name)
+    bundle.uri = build_prefix_uri(run_root, FINAL_FIT_DIR, model_name)
 
     summary = final_fit_impl(
         panel_path=Path(panel.path),

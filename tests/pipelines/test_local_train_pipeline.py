@@ -229,10 +229,8 @@ def test_a_malformed_train_config_raises_before_the_resolve_and_the_clear(
     rmtree = mocker.spy(local_train_pipeline.shutil, "rmtree")
 
     scratch = tmp_path / "scratch"
-    run_prefix = f"gs://{BUCKET}/{ENV}/train/{RUN_ID}/"
-    out_dir = local_train_pipeline._mirror_path(
-        f"{run_prefix}compose_configs/", scratch
-    )
+    run_root = f"gs://{BUCKET}/{ENV}/train/{RUN_ID}/"
+    out_dir = local_train_pipeline._mirror_path(f"{run_root}compose_configs/", scratch)
     out_dir.mkdir(parents=True)
     (out_dir / "run_identity.json").write_text(PREVIOUS_OUTPUT)
 
@@ -371,7 +369,7 @@ def test_each_backtest_is_published_before_the_next_one_runs(
 
     local_train_pipeline.main()
 
-    run_prefix = f"gs://{BUCKET}/{ENV}/train/{RUN_ID}/"
+    run_root = f"gs://{BUCKET}/{ENV}/train/{RUN_ID}/"
     # Without the flag the run stops after the fit: no registry write, no record.
     # Two uploads after registering: the run's record, then the shared pointer.
     registered = [] if serving_image is None else ["register", "upload", "upload"]
@@ -389,8 +387,8 @@ def test_each_backtest_is_published_before_the_next_one_runs(
         "delete",
         *registered,
     ]
-    assert publishes.mock_calls[0].args[1] == run_prefix
-    delete.assert_called_once_with(f"{run_prefix}{RUN_OUTPUT_FILENAME}")
+    assert publishes.mock_calls[0].args[1] == run_root
+    delete.assert_called_once_with(f"{run_root}{RUN_OUTPUT_FILENAME}")
     assert [call.kwargs["completion_marker"] for call in sync.call_args_list] == [
         "manifest.json",
         "backtest_manifest.json",
@@ -401,8 +399,8 @@ def test_each_backtest_is_published_before_the_next_one_runs(
     # out_dir is mirrored from these, so pinning the URIs pins both locations.
     challenger = _challenger(root)
     assert [call.args[1] for call in sync.call_args_list[1:]] == [
-        f"{run_prefix}backtest/{name}/" for name in COMPOSE_SUMMARY.model_names
-    ] + [f"{run_prefix}evaluate/", f"{run_prefix}final_fit/{challenger}/"]
+        f"{run_root}backtest/{name}/" for name in COMPOSE_SUMMARY.model_names
+    ] + [f"{run_root}evaluate/", f"{run_root}final_fit/{challenger}/"]
     # The registration target only: the benchmark is backtested and never fitted.
     assert final_fit.call_count == 1
     assert final_fit.call_args.kwargs["model_name"] == challenger
@@ -413,16 +411,16 @@ def test_each_backtest_is_published_before_the_next_one_runs(
         kwargs = register.call_args.kwargs
         assert kwargs["bundle"] == SourcedPath(
             path=final_fit.call_args.kwargs["out_dir"],
-            uri=f"{run_prefix}final_fit/{challenger}/",
+            uri=f"{run_root}final_fit/{challenger}/",
         )
         assert kwargs["compose_configs_dir"] == compose.call_args.kwargs["out_dir"]
         assert kwargs["run_dir"] == kwargs["compose_configs_dir"].parent
         assert kwargs["serving_container_image_uri"] == SERVING_IMAGE
         assert publishes.mock_calls[-2].args == (
             kwargs["run_dir"] / RUN_OUTPUT_FILENAME,
-            run_prefix,
+            run_root,
         )
-        # Last, and to the environment root: the run prefix would hide it per run.
+        # Last, and to the environment root: the run root would hide it per run.
         assert publishes.mock_calls[-1].args == (
             latest_pointer_path(kwargs["run_dir"]),
             f"gs://{BUCKET}/{ENV}/",
@@ -499,7 +497,7 @@ def test_the_published_destinations_are_ones_the_transport_accepts(
     bundle = published / "final_fit" / _challenger(root)
     assert (bundle / "final_fit_manifest.json").is_file()
     assert (bundle / BUNDLE_MODEL_DIR / "weights.bin").is_file()
-    # A file to the run prefix, like run_identity.json, but last of the run.
+    # A file to the run root, like run_identity.json, but last of the run.
     assert (published / "run_output.json").is_file()
 
 
@@ -652,11 +650,11 @@ def test_a_narrowed_rerun_scores_the_pair_the_run_id_has_accumulated(
     assert roles.challenger != roles.benchmark
 
     scratch = tmp_path / "scratch"
-    run_prefix = f"gs://{BUCKET}/{ENV}/train/{RUN_ID}/"
+    run_root = f"gs://{BUCKET}/{ENV}/train/{RUN_ID}/"
     # What an interrupted backtest leaves behind: that impl deletes its marker
     # first and writes it last, so outputs without one are a half-written sidecar.
     partial = local_train_pipeline._mirror_path(
-        f"{run_prefix}backtest/{roles.challenger}/", scratch
+        f"{run_root}backtest/{roles.challenger}/", scratch
     )
     partial.mkdir(parents=True)
     (partial / "monthly_series.parquet").write_text("half of a sidecar")

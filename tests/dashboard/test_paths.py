@@ -19,7 +19,7 @@ BUCKET = resolve_bucket(Path(CONFIG_DIR), ENV)
 
 
 @pytest.fixture
-def run_prefix() -> str:
+def run_root() -> str:
     """The run root the dashboard's prefixes must descend from, spelled out."""
     return f"gs://{BUCKET}/{ENV}/train/{RUN_ID}/"
 
@@ -40,11 +40,11 @@ def prefixes() -> dict[str, str]:
 
 
 def test_train_slice_root_is_the_immediate_parent_of_a_run_root(
-    run_prefix: str,
+    run_root: str,
 ) -> None:
     """Immediate, not merely above: listing the environment root instead would
     return the three slice names as if they were run ids."""
-    assert run_prefix == f"{paths.train_slice_root(CONFIG_DIR, ENV)}{RUN_ID}/"
+    assert run_root == f"{paths.train_slice_root(CONFIG_DIR, ENV)}{RUN_ID}/"
 
 
 # ================================================
@@ -59,10 +59,10 @@ def test_the_manifest_filename_is_the_one_the_producer_writes() -> None:
 
 
 def test_evaluate_prefix_names_the_directory_the_producer_writes(
-    run_prefix: str,
+    run_root: str,
 ) -> None:
     """Against the step name the producer writes under, from its one owner."""
-    expected = f"{run_prefix}{EVALUATE_DIR}/"
+    expected = f"{run_root}{EVALUATE_DIR}/"
     assert paths.evaluate_prefix(CONFIG_DIR, ENV, RUN_ID) == expected
 
 
@@ -72,10 +72,10 @@ def test_evaluate_prefix_names_the_directory_the_producer_writes(
 
 
 def test_sidecar_prefix_matches_the_uri_the_backtest_step_publishes_to(
-    run_prefix: str,
+    run_root: str,
 ) -> None:
     """Model segment below the step, so a misplaced or missing one fails."""
-    expected = f"{run_prefix}{BACKTEST_DIR}/{MODEL}/"
+    expected = f"{run_root}{BACKTEST_DIR}/{MODEL}/"
     assert paths.sidecar_prefix(CONFIG_DIR, ENV, RUN_ID, MODEL) == expected
 
 
@@ -123,9 +123,9 @@ def test_an_unknown_environment_raises_rather_than_building_a_path() -> None:
 # ================================================
 
 
-def test_run_outputs_uri_names_the_marker_at_the_run_root(run_prefix: str) -> None:
+def test_run_outputs_uri_names_the_marker_at_the_run_root(run_root: str) -> None:
     """Resolved under the wrong slice, every run badges "not registered"."""
-    expected = f"{run_prefix}{RUN_OUTPUT_FILENAME}"
+    expected = f"{run_root}{RUN_OUTPUT_FILENAME}"
     assert paths.run_outputs_uri(CONFIG_DIR, ENV, RUN_ID) == expected
 
 

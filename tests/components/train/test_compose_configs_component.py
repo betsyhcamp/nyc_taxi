@@ -44,7 +44,7 @@ assert len(DECLARED_MODEL_NAMES) >= 2
 BUCKET = cast(
     EnvironmentConfig, compose_config(CONFIG_DIR, environment_bindings(ENV)).config
 ).storage.bucket_name
-EXPECTED_RUN_PREFIX = f"gs://{BUCKET}/{ENV}/train/{TRAIN_RUN_ID}/"
+EXPECTED_RUN_ROOT = f"gs://{BUCKET}/{ENV}/train/{TRAIN_RUN_ID}/"
 
 # Distinct, so pairing assertions also prove no two inputs were swapped.
 PANEL_URI = "gs://sentinel-bucket/feature/f-sentinel/panel.parquet"
@@ -119,10 +119,10 @@ def test_wrapper_wires_inputs_outputs_and_metadata(
         composed_configs=composed_configs,
     )
 
-    expected_uri = f"{EXPECTED_RUN_PREFIX}compose_configs/"
+    expected_uri = f"{EXPECTED_RUN_ROOT}compose_configs/"
 
     # Indexed, not attribute: the wrapper returns a bare tuple KFP maps positionally.
-    assert result[0] == EXPECTED_RUN_PREFIX
+    assert result[0] == EXPECTED_RUN_ROOT
     assert composed_configs.uri == expected_uri
 
     kwargs = mock_impl.call_args.kwargs
@@ -204,7 +204,7 @@ def test_impl_failure_propagates_and_leaves_metadata_unstamped(
     assert composed_configs.metadata == {}
     # Not "untouched": .uri is assigned before the impl call, so asserting a pristine
     # artifact would assert the ordering bug back in.
-    assert composed_configs.uri == f"{EXPECTED_RUN_PREFIX}compose_configs/"
+    assert composed_configs.uri == f"{EXPECTED_RUN_ROOT}compose_configs/"
 
 
 @pytest.mark.parametrize(
@@ -243,12 +243,12 @@ def test_a_template_from_another_tree_is_refused_naming_both_sides(
 
 def test_the_generated_container_module_defines_the_named_output() -> None:
     """Test that the generated container code resolves its annotation, output named
-    run_prefix as downstream tasks consume it."""
-    # run_prefix, not KFP's default "Output": a bare `-> str` compiles, runs, and
+    run_root as downstream tasks consume it."""
+    # run_root, not KFP's default "Output": a bare `-> str` compiles, runs, and
     # renames what downstream wrappers ask for.
     outputs = COMPONENT.component_spec.outputs
     assert outputs is not None
-    assert "run_prefix" in outputs
+    assert "run_root" in outputs
 
     # Asserted, not cast: narrows for a checker and says which part of the IR moved
     # if a kfp upgrade reshapes it.

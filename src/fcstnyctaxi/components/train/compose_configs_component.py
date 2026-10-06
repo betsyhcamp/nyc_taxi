@@ -26,10 +26,10 @@ def compose_configs(
     calendar: Input[Dataset],
     additional_exog: Input[Dataset],
     composed_configs: Output[Artifact],
-) -> NamedTuple("Outputs", [("run_prefix", str)]):  # type: ignore[valid-type]
+) -> NamedTuple("Outputs", [("run_root", str)]):  # type: ignore[valid-type]
     """Compose and emit every Training destination for one run.
 
-    Resolves run_prefix itself, before the impl runs, because Artifact.path
+    Resolves run_root itself, before the impl runs, because Artifact.path
     recomputes from .uri and the impl cannot supply it. Acts as a wrapper for impl func
     which composes configs.
 
@@ -46,7 +46,7 @@ def compose_configs(
         composed_configs (Output[Artifact]): The step directory this run writes.
 
     Returns:
-        Outputs: run_prefix, the run root each Training step appends its name to.
+        Outputs: run_root, the run root each Training step appends its name to.
 
     Raises:
         RuntimeError: If the image carries no FCST_GIT_HASH.
@@ -85,10 +85,10 @@ def compose_configs(
         )
 
     bucket = resolve_bucket(CONFIG_DIR, env)
-    run_prefix = build_run_root(bucket, env, "train", train_run_id)
+    run_root = build_run_root(bucket, env, "train", train_run_id)
     # Artifact.path recomputes from self.uri on every access, so this MUST precede
     # the .path read below. Reversed, the run succeeds at KFP's own prefix.
-    composed_configs.uri = build_prefix_uri(run_prefix, COMPOSE_CONFIGS_DIR)
+    composed_configs.uri = build_prefix_uri(run_root, COMPOSE_CONFIGS_DIR)
 
     summary = compose_configs_impl(
         config_dir=CONFIG_DIR,
@@ -113,4 +113,4 @@ def compose_configs(
         }
     )
     # KFP maps bare tuple positionally onto annotation's fields so no class is needed.
-    return (run_prefix,)
+    return (run_root,)

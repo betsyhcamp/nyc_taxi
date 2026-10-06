@@ -20,7 +20,7 @@ from fcstnyctaxi.core.train.evaluate_impl import EvaluateSummary
 # dsl.component has no return annotation, so a checker reads .execute() as unknown.
 COMPONENT = cast(PythonComponent, evaluate)
 
-RUN_PREFIX = "gs://sentinel-bucket/dev/train/t-sentinel/"
+RUN_ROOT = "gs://sentinel-bucket/dev/train/t-sentinel/"
 GIT_HASH = "abc1234-dirty"
 
 BENCHMARK_MODEL = "model_a"
@@ -28,12 +28,12 @@ CHALLENGER_MODEL = "model_b"
 
 # Distinct, so a transposed pair fails the pairing assertions; equal URIs would be
 # blind to it by construction.
-COMPOSED_CONFIGS_URI = f"{RUN_PREFIX}compose_configs/"
-CHALLENGER_SIDECAR_URI = f"{RUN_PREFIX}backtest/{CHALLENGER_MODEL}/"
-BENCHMARK_SIDECAR_URI = f"{RUN_PREFIX}backtest/{BENCHMARK_MODEL}/"
+COMPOSED_CONFIGS_URI = f"{RUN_ROOT}compose_configs/"
+CHALLENGER_SIDECAR_URI = f"{RUN_ROOT}backtest/{CHALLENGER_MODEL}/"
+BENCHMARK_SIDECAR_URI = f"{RUN_ROOT}backtest/{BENCHMARK_MODEL}/"
 
 # Derived, never a literal: a literal would restate the convention, not check it.
-SCORES_URI = f"{RUN_PREFIX}evaluate/"
+SCORES_URI = f"{RUN_ROOT}evaluate/"
 
 # Real, not a Mock: a MagicMock unpacks to {}, so the metadata loop checks nothing.
 # The model names reach the wrapper only on this summary.
@@ -91,7 +91,7 @@ def test_wrapper_places_its_scores_pairs_every_input_and_stamps_it(
     assert scores.path == ""  # baseline: demonstrably wrong until assigned
 
     COMPONENT.execute(
-        run_prefix=RUN_PREFIX,
+        run_root=RUN_ROOT,
         composed_configs=composed_configs,
         challenger_sidecar=challenger,
         benchmark_sidecar=benchmark,
@@ -129,7 +129,7 @@ def test_missing_git_hash_raises_naming_the_variable(
 
     with pytest.raises(RuntimeError, match="FCST_GIT_HASH"):
         COMPONENT.execute(
-            run_prefix=RUN_PREFIX,
+            run_root=RUN_ROOT,
             composed_configs=composed_configs,
             challenger_sidecar=challenger,
             benchmark_sidecar=benchmark,
@@ -148,7 +148,7 @@ def test_impl_failure_propagates_and_leaves_metadata_unstamped(
 
     with pytest.raises(ValueError, match="must be named"):
         COMPONENT.execute(
-            run_prefix=RUN_PREFIX,
+            run_root=RUN_ROOT,
             composed_configs=composed_configs,
             challenger_sidecar=challenger,
             benchmark_sidecar=benchmark,
