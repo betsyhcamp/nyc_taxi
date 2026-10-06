@@ -12,6 +12,7 @@ from fcstnyctaxi.lib.config.bindings import (
     inference_bindings,
     model_names_from_roles,
     require_known_environment,
+    resolve_bucket,
     resolve_model_names,
     resolve_model_roles,
     train_backtest_bindings,
@@ -79,6 +80,19 @@ def duplicated_roles_tree(tmp_path: Path) -> Path:
     return config_dir
 
 
+@pytest.fixture
+def two_bucket_tree(tmp_path: Path) -> Path:
+    """Two copies of the shipped dev.yaml, `a` and `b`, differing only in bucket."""
+    document = yaml.safe_load((CONFIG_DIR / "environments" / "dev.yaml").read_text())
+    config_dir = tmp_path / "config"
+    (config_dir / "environments").mkdir(parents=True)
+    for env in ("a", "b"):
+        document["storage"]["bucket_name"] = f"bucket-{env}"
+        EnvironmentConfig.model_validate(document)
+        (config_dir / "environments" / f"{env}.yaml").write_text(yaml.dump(document))
+    return config_dir
+
+
 # ================================================
 # The environment selector
 # ================================================
@@ -135,6 +149,20 @@ def test_require_known_environment_names_the_directory_when_none_are_defined(
     """
     with pytest.raises(ValueError, match="No environments are defined under"):
         require_known_environment(tmp_path, "dev")
+
+
+def test_resolve_bucket_reads_the_selected_environments_bucket(
+    two_bucket_tree: Path,
+) -> None:
+    """Test that each env resolves its own bucket, so ignoring the selector fails."""
+    assert resolve_bucket(two_bucket_tree, "a") == "bucket-a"
+    assert resolve_bucket(two_bucket_tree, "b") == "bucket-b"
+
+
+def test_resolve_bucket_refuses_an_unknown_env_by_name() -> None:
+    """Test that an unknown env is a named ValueError, not a FileNotFoundError."""
+    with pytest.raises(ValueError, match="Unknown env 'bogus'"):
+        resolve_bucket(CONFIG_DIR, "bogus")
 
 
 # ================================================

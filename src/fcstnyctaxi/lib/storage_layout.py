@@ -5,15 +5,10 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast, get_args
+from typing import get_args
 
-from fcstnyctaxi.lib.config.bindings import (
-    environment_bindings,
-    require_known_environment,
-)
-from fcstnyctaxi.lib.config.composition import compose_config
+from fcstnyctaxi.lib.config.bindings import resolve_bucket
 from fcstnyctaxi.schemas.config.common import SliceName
-from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.storage.common import (
     LATEST_POINTER_FILENAME,
     RUN_OUTPUT_FILENAME,
@@ -264,9 +259,5 @@ def _build_environment_root(bucket: str, env: str) -> str:
 
 
 def _composed_bucket(config_dir: Path, env: str) -> str:
-    """The bucket `EnvironmentConfig` declares for `env`, guarding the env first."""
-    require_known_environment(config_dir, env)
-    environment = cast(
-        EnvironmentConfig, compose_config(config_dir, environment_bindings(env)).config
-    )
-    return environment.storage.bucket_name
+    """Delegates to `resolve_bucket` until the resolvers calling this are deleted."""
+    return resolve_bucket(config_dir, env)
