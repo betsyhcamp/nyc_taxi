@@ -9,10 +9,7 @@ from typing import get_args
 
 from fcstnyctaxi.lib.config.bindings import resolve_bucket
 from fcstnyctaxi.schemas.config.common import SliceName
-from fcstnyctaxi.schemas.storage.common import (
-    LATEST_POINTER_FILENAME,
-    RUN_OUTPUT_FILENAME,
-)
+from fcstnyctaxi.schemas.storage.common import LATEST_POINTER_FILENAME
 
 GCS_SCHEME = "gs://"
 
@@ -167,18 +164,6 @@ def resolve_run_prefix(
             the fragment fails to compose.
     """
     return _build_run_prefix(_composed_bucket(config_dir, env), env, slice_name, run_id)
-
-
-def resolve_run_outputs_uri(
-    config_dir: Path, env: str, slice_name: SliceName, run_id: str
-) -> str:
-    """Where one run's outputs manifest lives: its run root, plus one filename.
-
-    No step segment: a consumer must not need the producer's internal step names.
-    Slice-generic, so a later `read_train_run_outputs` reuses it.
-    """
-    prefix = resolve_run_prefix(config_dir, env, slice_name, run_id)
-    return f"{prefix}{RUN_OUTPUT_FILENAME}"
 
 
 def resolve_environment_root(config_dir: Path, env: str) -> str:

@@ -1,16 +1,14 @@
 """Read an upstream slice's run-root outputs manifest, and resolve its artifacts.
 
-Not `lib/io.py`: building the manifest's path needs `resolve_run_prefix`, and
-`lib/config/composition.py` already imports `io`, so a reader there would close the
-cycle io -> storage_layout -> composition -> io.
+Not `lib/io.py`, which is transport only: this knows the run layout and the schema.
 """
 
 import logging
-from pathlib import Path
 
 from fcstnyctaxi.lib.io import read_text_from_gcs
-from fcstnyctaxi.lib.storage_layout import resolve_run_outputs_uri
+from fcstnyctaxi.lib.storage_layout import build_object_uri, build_run_root
 from fcstnyctaxi.schemas.run_outputs import FeatureArtifacts, FeatureRunOutputs
+from fcstnyctaxi.schemas.storage.common import RUN_OUTPUT_FILENAME
 
 _log = logging.getLogger(__name__)
 
@@ -20,7 +18,7 @@ _EXPECTED_SCHEMA_VERSION = "0.1.0"
 
 
 def read_feature_run_outputs(
-    *, config_dir: Path, env: str, feature_run_id: str
+    *, bucket: str, env: str, feature_run_id: str
 ) -> FeatureRunOutputs:
     """One Feature run's manifest, checked against the id and env it was asked for.
 
@@ -32,7 +30,8 @@ def read_feature_run_outputs(
             or its `feature_run_id` or `env` disagrees with the caller's.
         ValidationError: a load-bearing key is missing or malformed.
     """
-    uri = resolve_run_outputs_uri(config_dir, env, "feature", feature_run_id)
+    run_root = build_run_root(bucket, env, "feature", feature_run_id)
+    uri = build_object_uri(run_root, RUN_OUTPUT_FILENAME)
     try:
         text = read_text_from_gcs(uri)
     # Presence is the completion signal, so absence is a domain fact about the run,
@@ -70,7 +69,7 @@ def read_feature_run_outputs(
 
 def resolve_feature_artifacts(
     *,
-    config_dir: Path,
+    bucket: str,
     env: str,
     feature_run_id: str,
     panel_uri: str | None,
@@ -98,7 +97,7 @@ def resolve_feature_artifacts(
         )
     if panel_uri is None:
         artifacts = read_feature_run_outputs(
-            config_dir=config_dir, env=env, feature_run_id=feature_run_id
+            bucket=bucket, env=env, feature_run_id=feature_run_id
         ).published
         source = "resolved"
     else:

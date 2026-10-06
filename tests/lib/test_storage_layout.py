@@ -15,7 +15,6 @@ from fcstnyctaxi.lib.storage_layout import (
     latest_pointer_path,
     resolve_environment_root,
     resolve_latest_pointer_uri,
-    resolve_run_outputs_uri,
     resolve_run_prefix,
 )
 from fcstnyctaxi.lib.utils import get_project_root_dir
@@ -200,21 +199,6 @@ def test_resolve_run_prefix_takes_a_config_dir_no_caller_has_to_compose(
     """
     with pytest.raises(ValueError, match="No environments are defined"):
         resolve_run_prefix(tmp_path, ENV, "train", RUN_ID)
-
-
-# ================================================
-# resolve_run_outputs_uri tests
-# ================================================
-
-
-@pytest.mark.parametrize("slice_name", ["feature", "train", "inference"])
-def test_resolve_run_outputs_uri_names_the_run_root_not_a_step(
-    slice_name: SliceName, composed_bucket: str
-) -> None:
-    """A step segment here would need the step name this file exists to supply."""
-    uri = resolve_run_outputs_uri(CONFIG_DIR, ENV, slice_name, RUN_ID)
-
-    assert uri == f"gs://{composed_bucket}/{ENV}/{slice_name}/{RUN_ID}/run_output.json"
 
 
 # ================================================

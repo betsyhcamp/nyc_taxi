@@ -4,7 +4,7 @@ The Training pipeline needs a panel carrying `feature_run_id`, a fiscal calendar
 and an exogenous features file, at run-scoped paths, and the Feature pipeline that
 will write them does not exist yet. This reads the three artifacts
 `notebooks/data_prep.py` already wrote, adds the column to the panel as Feature
-does, writes them under `resolve_run_prefix`'s convention, and prints the
+does, writes them under the run-root convention, and prints the
 `--feature-run-id` both training callers resolve from.
 
 Disposable by construction: delete it the day the Feature pipeline publishes
@@ -17,8 +17,9 @@ from datetime import UTC, datetime
 import pandas as pd
 from tsbricks.blocks.metadata import get_git_hash
 
+from fcstnyctaxi.lib.config.bindings import resolve_bucket
 from fcstnyctaxi.lib.io import delete_from_gcs, write_text_to_gcs
-from fcstnyctaxi.lib.storage_layout import resolve_run_outputs_uri, resolve_run_prefix
+from fcstnyctaxi.lib.storage_layout import build_object_uri, build_run_root
 from fcstnyctaxi.lib.utils import (
     generate_run_id,
     get_project_root_dir,
@@ -26,6 +27,7 @@ from fcstnyctaxi.lib.utils import (
 )
 from fcstnyctaxi.schemas.run_identity import LINEAGE_COLUMN
 from fcstnyctaxi.schemas.run_outputs import FeatureArtifacts, FeatureRunOutputs
+from fcstnyctaxi.schemas.storage.common import RUN_OUTPUT_FILENAME
 
 # Hardcoded because they are the pre-convention locations this script migrates
 # away from, and they exist only under dev whatever --env says.
@@ -37,7 +39,8 @@ _SOURCE_EXOG_URI = (
     "gs://nyc-taxi-ehc--modeling/dev/backtests/data/exogenous_features.parquet"
 )
 
-# Hardcoded values; Step named for the notebook it imitates, not for any Feature step.
+# Hardcoded values; Step named for the notebook it imitates, not for any Feature step,
+# which is also why it is not in `schemas/storage/`.
 _STEP = "data_prep"
 _PANEL_FILENAME = "time_series.parquet"
 _CALENDAR_FILENAME = "fiscal_calendar.parquet"
@@ -94,14 +97,12 @@ def main() -> None:
     )
     require_path_safe_run_id(feature_run_id, "--feature-run-id")
 
-    config_dir = get_project_root_dir() / "config"
-    run_prefix = resolve_run_prefix(config_dir, args.env, "feature", feature_run_id)
-    panel_uri = f"{run_prefix}{_STEP}/{_PANEL_FILENAME}"
-    calendar_uri = f"{run_prefix}{_STEP}/{_CALENDAR_FILENAME}"
-    exog_uri = f"{run_prefix}{_STEP}/{_EXOG_FILENAME}"
-    outputs_uri = resolve_run_outputs_uri(
-        config_dir, args.env, "feature", feature_run_id
-    )
+    bucket = resolve_bucket(get_project_root_dir() / "config", args.env)
+    run_prefix = build_run_root(bucket, args.env, "feature", feature_run_id)
+    panel_uri = build_object_uri(run_prefix, _STEP, _PANEL_FILENAME)
+    calendar_uri = build_object_uri(run_prefix, _STEP, _CALENDAR_FILENAME)
+    exog_uri = build_object_uri(run_prefix, _STEP, _EXOG_FILENAME)
+    outputs_uri = build_object_uri(run_prefix, RUN_OUTPUT_FILENAME)
 
     panel_df = _with_lineage_column(pd.read_parquet(_SOURCE_PANEL_URI), feature_run_id)
     # No lineage column on these two: Feature stamps the panel alone.

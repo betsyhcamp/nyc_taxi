@@ -45,6 +45,7 @@ from fcstnyctaxi.lib.utils import (
     require_label_safe_run_id,
     require_path_safe_run_id,
 )
+from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.storage.common import (
     RUN_IDENTITY_FILENAME,
@@ -226,11 +227,12 @@ def main() -> None:
 
     # Above the rmtree and the resolve, so a bad config raises as itself. Roles
     # from here, not evaluate_impl's modeling.yaml, so its role check has two sides.
-    _, _, modeling = compose_train_static_configs(config_dir, args.env)
+    environment, _, modeling = compose_train_static_configs(config_dir, args.env)
+    bucket = cast(EnvironmentConfig, environment.config).storage.bucket_name
     roles = cast(TrainModelingConfig, modeling.config).model_roles
 
     artifacts = resolve_feature_artifacts(
-        config_dir=config_dir,
+        bucket=bucket,
         env=args.env,
         feature_run_id=args.feature_run_id,
         panel_uri=args.panel_uri,

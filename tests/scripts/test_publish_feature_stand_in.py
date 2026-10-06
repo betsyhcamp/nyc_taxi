@@ -149,7 +149,7 @@ def test_what_the_stand_in_writes_reads_back_with_no_version_warning(
     )
     with caplog.at_level(logging.WARNING):
         outputs = read_feature_run_outputs(
-            config_dir=CONFIG_DIR, env=ENV, feature_run_id=FEATURE_RUN_ID
+            bucket=BUCKET, env=ENV, feature_run_id=FEATURE_RUN_ID
         )
 
     assert outputs.published.panel_uri.endswith("time_series.parquet")

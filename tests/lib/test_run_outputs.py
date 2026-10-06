@@ -11,9 +11,8 @@ from fcstnyctaxi.lib.run_outputs import (
     read_feature_run_outputs,
     resolve_feature_artifacts,
 )
-from fcstnyctaxi.lib.utils import get_project_root_dir
 
-CONFIG_DIR = get_project_root_dir() / "config"
+BUCKET = "BUCKET"
 ENV = "dev"
 FEATURE_RUN_ID = "f-20260914T000000000000Z"
 PANEL_URI = f"gs://BUCKET/{ENV}/feature/{FEATURE_RUN_ID}/step/time_series.parquet"
@@ -47,9 +46,20 @@ def test_a_missing_manifest_names_a_completion_failure(mocker: MockerFixture) ->
     )
 
     with pytest.raises(ValueError, match="did not complete"):
-        read_feature_run_outputs(
-            config_dir=CONFIG_DIR, env=ENV, feature_run_id=FEATURE_RUN_ID
-        )
+        read_feature_run_outputs(bucket=BUCKET, env=ENV, feature_run_id=FEATURE_RUN_ID)
+
+
+def test_the_manifest_is_read_at_the_feature_run_root(mocker: MockerFixture) -> None:
+    """The singular name at the run root, spelled out: no step segment, no plural."""
+    read = mocker.patch.object(
+        run_outputs, "read_text_from_gcs", return_value=_manifest()
+    )
+
+    read_feature_run_outputs(bucket="b", env=ENV, feature_run_id=FEATURE_RUN_ID)
+
+    read.assert_called_once_with(
+        f"gs://b/{ENV}/feature/{FEATURE_RUN_ID}/run_output.json"
+    )
 
 
 def test_a_declared_id_mismatch_is_refused(mocker: MockerFixture) -> None:
@@ -61,9 +71,7 @@ def test_a_declared_id_mismatch_is_refused(mocker: MockerFixture) -> None:
     )
 
     with pytest.raises(ValueError, match="copied between runs"):
-        read_feature_run_outputs(
-            config_dir=CONFIG_DIR, env=ENV, feature_run_id=FEATURE_RUN_ID
-        )
+        read_feature_run_outputs(bucket=BUCKET, env=ENV, feature_run_id=FEATURE_RUN_ID)
 
 
 def test_an_env_mismatch_is_refused_but_an_absent_env_is_not(
@@ -75,14 +83,12 @@ def test_an_env_mismatch_is_refused_but_an_absent_env_is_not(
     )
 
     with pytest.raises(ValueError, match="declares env"):
-        read_feature_run_outputs(
-            config_dir=CONFIG_DIR, env=ENV, feature_run_id=FEATURE_RUN_ID
-        )
+        read_feature_run_outputs(bucket=BUCKET, env=ENV, feature_run_id=FEATURE_RUN_ID)
 
     transport.return_value = _manifest(env=None)
     assert (
         read_feature_run_outputs(
-            config_dir=CONFIG_DIR, env=ENV, feature_run_id=FEATURE_RUN_ID
+            bucket=BUCKET, env=ENV, feature_run_id=FEATURE_RUN_ID
         ).env
         is None
     )
@@ -120,7 +126,7 @@ def test_a_partial_set_of_uri_flags_is_refused(
 
     with pytest.raises(ValueError, match="must be given together"):
         resolve_feature_artifacts(
-            config_dir=CONFIG_DIR, env=ENV, feature_run_id=FEATURE_RUN_ID, **uris
+            bucket=BUCKET, env=ENV, feature_run_id=FEATURE_RUN_ID, **uris
         )
 
 
@@ -128,7 +134,7 @@ def test_a_non_gcs_override_uri_is_refused() -> None:
     """Nothing else checks a hand-typed override until download_from_gcs receives it."""
     with pytest.raises(ValidationError):
         resolve_feature_artifacts(
-            config_dir=CONFIG_DIR,
+            bucket=BUCKET,
             env=ENV,
             feature_run_id=FEATURE_RUN_ID,
             panel_uri="/tmp/scratch/panel.parquet",
@@ -141,7 +147,7 @@ def test_the_override_path_reports_its_source(caplog: pytest.LogCaptureFixture) 
     """The log line is the evidence the override flags are to be retired on."""
     with caplog.at_level(logging.INFO):
         artifacts = resolve_feature_artifacts(
-            config_dir=CONFIG_DIR,
+            bucket=BUCKET,
             env=ENV,
             feature_run_id=FEATURE_RUN_ID,
             **_OVERRIDE_URIS,
@@ -161,7 +167,7 @@ def test_the_manifest_path_returns_and_logs_the_third_uri(
 
     with caplog.at_level(logging.INFO):
         artifacts = resolve_feature_artifacts(
-            config_dir=CONFIG_DIR,
+            bucket=BUCKET,
             env=ENV,
             feature_run_id=FEATURE_RUN_ID,
             panel_uri=None,
@@ -183,7 +189,7 @@ def test_a_two_uri_manifest_is_refused(mocker: MockerFixture) -> None:
 
     with pytest.raises(ValidationError, match="exogenous_uri"):
         resolve_feature_artifacts(
-            config_dir=CONFIG_DIR,
+            bucket=BUCKET,
             env=ENV,
             feature_run_id=FEATURE_RUN_ID,
             panel_uri=None,

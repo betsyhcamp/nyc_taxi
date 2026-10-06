@@ -177,7 +177,7 @@ def main() -> None:
 
     # Below the template read, so a missing manifest cannot mask a missing template.
     artifacts = resolve_feature_artifacts(
-        config_dir=config_dir,
+        bucket=environment.storage.bucket_name,
         env=args.env,
         feature_run_id=args.feature_run_id,
         panel_uri=args.panel_uri,
