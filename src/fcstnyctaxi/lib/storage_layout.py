@@ -14,14 +14,12 @@ from fcstnyctaxi.lib.config.bindings import (
 from fcstnyctaxi.lib.config.composition import compose_config
 from fcstnyctaxi.schemas.config.common import SliceName
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
+from fcstnyctaxi.schemas.storage.common import (
+    LATEST_POINTER_FILENAME,
+    RUN_OUTPUT_FILENAME,
+)
 
 GCS_SCHEME = "gs://"
-
-# One place for the name a producer writes and a consumer reads.
-RUN_OUTPUTS_FILENAME = "run_output.json"
-
-LATEST_POINTER_FILENAME = "_latest.json"
-"""The environment-root pointer every slice rewrites its own key in."""
 
 
 def composed_config_filename(model_name: str) -> str:
@@ -30,10 +28,6 @@ def composed_config_filename(model_name: str) -> str:
     A function, not a format string per call site: a computed name can desynchronize.
     """
     return f"composed_config_{model_name}.yaml"
-
-
-BUNDLE_MODEL_DIR_NAME = "model"
-"""The bundle's subdirectory the save callable owns, apart from the impl's files."""
 
 
 @dataclass(frozen=True)
@@ -189,7 +183,7 @@ def resolve_run_outputs_uri(
     Slice-generic, so a later `read_train_run_outputs` reuses it.
     """
     prefix = resolve_run_prefix(config_dir, env, slice_name, run_id)
-    return f"{prefix}{RUN_OUTPUTS_FILENAME}"
+    return f"{prefix}{RUN_OUTPUT_FILENAME}"
 
 
 def resolve_environment_root(config_dir: Path, env: str) -> str:

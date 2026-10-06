@@ -30,9 +30,6 @@ from fcstnyctaxi.lib.config.bindings import (
 )
 from fcstnyctaxi.lib.config.composition import compose_config
 from fcstnyctaxi.lib.storage_layout import (
-    BUNDLE_MODEL_DIR_NAME,
-    LATEST_POINTER_FILENAME,
-    RUN_OUTPUTS_FILENAME,
     SourcedPath,
     latest_pointer_path,
     resolve_environment_root,
@@ -44,6 +41,11 @@ from fcstnyctaxi.pipelines import local_train_pipeline
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.run_outputs import FeatureArtifacts, FeatureRunOutputs
+from fcstnyctaxi.schemas.storage.common import (
+    BUNDLE_MODEL_DIR,
+    LATEST_POINTER_FILENAME,
+    RUN_OUTPUT_FILENAME,
+)
 
 ENV = "dev"
 RUN_ID = "t-20260913t000000000000z"
@@ -154,15 +156,15 @@ def _evaluate_outputs(*, out_dir: Path, **_: object) -> EvaluateSummary:
 def _final_fit_outputs(*, out_dir: Path, **_: object) -> FinalFitSummary:
     """The same, for the bundle, whose model directory is the only subdirectory any
     step publishes."""
-    (out_dir / BUNDLE_MODEL_DIR_NAME).mkdir(parents=True, exist_ok=True)
-    (out_dir / BUNDLE_MODEL_DIR_NAME / "weights.bin").write_bytes(b"fitted")
+    (out_dir / BUNDLE_MODEL_DIR).mkdir(parents=True, exist_ok=True)
+    (out_dir / BUNDLE_MODEL_DIR / "weights.bin").write_bytes(b"fitted")
     (out_dir / "final_fit_manifest.json").write_text("{}")
     return FINAL_FIT_SUMMARY
 
 
 def _register_outputs(*, run_dir: Path, **_: object) -> RegisterModelSummary:
     """The same, for both files the impl writes: the run record and the pointer."""
-    (run_dir / RUN_OUTPUTS_FILENAME).write_text("{}")
+    (run_dir / RUN_OUTPUT_FILENAME).write_text("{}")
     latest_pointer_path(run_dir).write_text("{}\n")
     return REGISTER_SUMMARY
 
@@ -391,7 +393,7 @@ def test_each_backtest_is_published_before_the_next_one_runs(
         *registered,
     ]
     assert publishes.mock_calls[0].args[1] == run_prefix
-    delete.assert_called_once_with(f"{run_prefix}{RUN_OUTPUTS_FILENAME}")
+    delete.assert_called_once_with(f"{run_prefix}{RUN_OUTPUT_FILENAME}")
     assert [call.kwargs["completion_marker"] for call in sync.call_args_list] == [
         "manifest.json",
         "backtest_manifest.json",
@@ -420,7 +422,7 @@ def test_each_backtest_is_published_before_the_next_one_runs(
         assert kwargs["run_dir"] == kwargs["compose_configs_dir"].parent
         assert kwargs["serving_container_image_uri"] == SERVING_IMAGE
         assert publishes.mock_calls[-2].args == (
-            kwargs["run_dir"] / RUN_OUTPUTS_FILENAME,
+            kwargs["run_dir"] / RUN_OUTPUT_FILENAME,
             run_prefix,
         )
         # Last, and to the environment root: the run prefix would hide it per run.
@@ -499,7 +501,7 @@ def test_the_published_destinations_are_ones_the_transport_accepts(
     # The bundle nests its model directory, which no other step publishes.
     bundle = published / "final_fit" / _challenger(root)
     assert (bundle / "final_fit_manifest.json").is_file()
-    assert (bundle / BUNDLE_MODEL_DIR_NAME / "weights.bin").is_file()
+    assert (bundle / BUNDLE_MODEL_DIR / "weights.bin").is_file()
     # A file to the run prefix, like run_identity.json, but last of the run.
     assert (published / "run_output.json").is_file()
 

@@ -32,7 +32,6 @@ from fcstnyctaxi.lib.io import (
 )
 from fcstnyctaxi.lib.run_outputs import resolve_feature_artifacts
 from fcstnyctaxi.lib.storage_layout import (
-    RUN_OUTPUTS_FILENAME,
     SourcedPath,
     latest_pointer_path,
     resolve_environment_root,
@@ -47,6 +46,7 @@ from fcstnyctaxi.lib.utils import (
     require_path_safe_run_id,
 )
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
+from fcstnyctaxi.schemas.storage.common import RUN_OUTPUT_FILENAME
 
 logger = logging.getLogger(__name__)
 
@@ -422,7 +422,7 @@ def main() -> None:
     # What the impl's unlink does through the mount on Vertex, at the same point: a
     # rerun that registers nothing, or fails to, must not leave the earlier run's
     # published record pointing at a version whose bundle was just replaced.
-    delete_from_gcs(f"{run_prefix}{RUN_OUTPUTS_FILENAME}")
+    delete_from_gcs(f"{run_prefix}{RUN_OUTPUT_FILENAME}")
 
     # Opt-in: every local run holds live credentials, and each registration is a
     # version in the shared registry.
@@ -430,7 +430,7 @@ def main() -> None:
         logger.info(
             "register_model skipped: no --serving-image, so nothing was registered "
             "and no %s is published under %s.",
-            RUN_OUTPUTS_FILENAME,
+            RUN_OUTPUT_FILENAME,
             run_prefix,
         )
         return
@@ -450,7 +450,7 @@ def main() -> None:
     )
     # The last publish under the run root, so its presence there means the run
     # finished.
-    upload_to_gcs(compose_dir.parent / RUN_OUTPUTS_FILENAME, run_prefix)
+    upload_to_gcs(compose_dir.parent / RUN_OUTPUT_FILENAME, run_prefix)
     # After the marker, so the pointer never names a run that has none.
     upload_to_gcs(pointer_path, resolve_environment_root(config_dir, args.env))
 
@@ -458,7 +458,7 @@ def main() -> None:
         "register_model published: model_tag=%s uploaded=%s uri=%s pointer=%s",
         register_summary.model_tag,
         register_summary.uploaded,
-        f"{run_prefix}{RUN_OUTPUTS_FILENAME}",
+        f"{run_prefix}{RUN_OUTPUT_FILENAME}",
         pointer_uri,
     )
 

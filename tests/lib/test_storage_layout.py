@@ -7,8 +7,6 @@ import pytest
 from fcstnyctaxi.lib.config.bindings import available_environments, environment_bindings
 from fcstnyctaxi.lib.config.composition import compose_config
 from fcstnyctaxi.lib.storage_layout import (
-    BUNDLE_MODEL_DIR_NAME,
-    LATEST_POINTER_FILENAME,
     _build_run_prefix,
     build_environment_root,
     build_object_uri,
@@ -23,6 +21,7 @@ from fcstnyctaxi.lib.storage_layout import (
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.common import SliceName
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
+from fcstnyctaxi.schemas.storage.common import LATEST_POINTER_FILENAME
 
 CONFIG_DIR = get_project_root_dir() / "config"
 ENV = "dev"
@@ -283,14 +282,3 @@ def test_a_run_dir_with_no_environment_segment_raises(run_dir: Path) -> None:
     """Both pass the slice check and would put the pointer at the filesystem root."""
     with pytest.raises(ValueError, match="no environment segment"):
         latest_pointer_path(run_dir)
-
-
-# ================================================
-# BUNDLE_MODEL_DIR_NAME tests
-# ================================================
-
-
-def test_the_bundle_model_dir_is_one_segment_below_the_bundle() -> None:
-    """A separator or a dot segment would put model-owned files outside the bundle."""
-    assert Path(BUNDLE_MODEL_DIR_NAME).name == BUNDLE_MODEL_DIR_NAME
-    assert BUNDLE_MODEL_DIR_NAME not in ("", ".", "..")

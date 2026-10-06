@@ -4,9 +4,10 @@ import pytest
 
 from dashboard.shared import paths
 from fcstnyctaxi.core.train import evaluate_impl
-from fcstnyctaxi.lib.storage_layout import RUN_OUTPUTS_FILENAME, resolve_run_prefix
+from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.pipelines import local_train_pipeline
+from fcstnyctaxi.schemas.storage.common import RUN_OUTPUT_FILENAME
 
 CONFIG_DIR = str(get_project_root_dir() / "config")
 ENV = "dev"
@@ -107,7 +108,7 @@ def test_an_unknown_environment_raises_rather_than_building_a_path() -> None:
 
 def test_run_outputs_uri_names_the_marker_at_the_run_root(run_prefix: str) -> None:
     """Resolved under the wrong slice, every run badges "not registered"."""
-    expected = f"{run_prefix}{RUN_OUTPUTS_FILENAME}"
+    expected = f"{run_prefix}{RUN_OUTPUT_FILENAME}"
     assert paths.run_outputs_uri(CONFIG_DIR, ENV, RUN_ID) == expected
 
 

@@ -15,10 +15,7 @@ from fcstnyctaxi.lib.column_checks import (
     trim_to_allowlist,
 )
 from fcstnyctaxi.lib.exog import build_exog_frame
-from fcstnyctaxi.lib.storage_layout import (
-    BUNDLE_MODEL_DIR_NAME,
-    composed_config_filename,
-)
+from fcstnyctaxi.lib.storage_layout import composed_config_filename
 from fcstnyctaxi.schemas.config.train import ModelSettings, TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 from fcstnyctaxi.schemas.run_outputs import (
@@ -27,6 +24,7 @@ from fcstnyctaxi.schemas.run_outputs import (
     CALENDAR_REQUIRED_COLUMNS,
     PANEL_REQUIRED_COLUMNS,
 )
+from fcstnyctaxi.schemas.storage.common import BUNDLE_MODEL_DIR
 
 _log = logging.getLogger(__name__)
 
@@ -222,7 +220,7 @@ def final_fit_impl(
 
     # Recreated rather than reused: a rerun's files would pass the write check for a
     # save that wrote nothing. Created here, not by the save, for the same reason.
-    model_dir = out_dir / BUNDLE_MODEL_DIR_NAME
+    model_dir = out_dir / BUNDLE_MODEL_DIR
     if model_dir.exists():
         shutil.rmtree(model_dir)
     model_dir.mkdir(parents=True)
