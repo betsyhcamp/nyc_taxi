@@ -12,10 +12,14 @@ import yaml
 from dotenv import load_dotenv
 from google.cloud import aiplatform
 
-from fcstnyctaxi.lib.config.bindings import environment_bindings, train_infra_bindings
+from fcstnyctaxi.lib.config.bindings import (
+    environment_bindings,
+    resolve_bucket,
+    train_infra_bindings,
+)
 from fcstnyctaxi.lib.config.composition import compose_config
 from fcstnyctaxi.lib.run_outputs import resolve_feature_artifacts
-from fcstnyctaxi.lib.storage_layout import resolve_run_prefix
+from fcstnyctaxi.lib.storage_layout import build_run_root
 from fcstnyctaxi.lib.utils import (
     generate_run_id,
     get_project_root_dir,
@@ -40,7 +44,7 @@ def _parse_args() -> argparse.Namespace:
     """The template to submit, plus the domain flags the local runner also takes.
 
     `--env` carries no `choices`: `require_known_environment`, via
-    `resolve_run_prefix`, is the whole guard.
+    `resolve_bucket`, is the whole guard.
     """
     parser = argparse.ArgumentParser(
         description="Submit a compiled Training template to Vertex AI Pipelines."
@@ -160,7 +164,8 @@ def main() -> None:
 
     config_dir = get_project_root_dir() / "config"
     # First, for the --env guard: an unknown selector names the available ones.
-    run_prefix = resolve_run_prefix(config_dir, args.env, "train", run_id)
+    bucket = resolve_bucket(config_dir, args.env)
+    run_prefix = build_run_root(bucket, args.env, "train", run_id)
     environment = cast(
         EnvironmentConfig,
         compose_config(config_dir, environment_bindings(args.env)).config,
@@ -177,7 +182,7 @@ def main() -> None:
 
     # Below the template read, so a missing manifest cannot mask a missing template.
     artifacts = resolve_feature_artifacts(
-        bucket=environment.storage.bucket_name,
+        bucket=bucket,
         env=args.env,
         feature_run_id=args.feature_run_id,
         panel_uri=args.panel_uri,

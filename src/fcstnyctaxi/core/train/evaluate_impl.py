@@ -21,6 +21,7 @@ from fcstnyctaxi.lib.period_utils import ORIGIN_TIME_UNIT, derive_horizon_label
 from fcstnyctaxi.schemas.config.train import ModelRoles, TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 from fcstnyctaxi.schemas.storage.common import RUN_IDENTITY_FILENAME
+from fcstnyctaxi.schemas.storage.train import EVALUATE_DIR
 
 _log = logging.getLogger(__name__)
 
@@ -109,7 +110,6 @@ _OUTPUT_FILENAMES = {
     "summary_metrics": "summary_metrics.parquet",
 }
 _MANIFEST_FILENAME = "evaluate_manifest.json"
-_STEP_DIR_NAME = "evaluate"
 
 # The three sidecar files evaluate opens. Not metrics.parquet and nothing at
 # weekly grain: a dashboard wanting weekly plots reads the sidecar itself.
@@ -754,9 +754,9 @@ def evaluate_impl(
     Returns:
         EvaluateSummary: The run's headline result, for a wrapper or the runner.
     """
-    if out_dir.name != _STEP_DIR_NAME:
+    if out_dir.name != EVALUATE_DIR:
         raise ValueError(
-            f"out_dir {out_dir} must be named {_STEP_DIR_NAME!r}: a sibling step "
+            f"out_dir {out_dir} must be named {EVALUATE_DIR!r}: a sibling step "
             "directory satisfies the run-root check and fails only this one."
         )
 

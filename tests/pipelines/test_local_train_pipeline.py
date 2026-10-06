@@ -32,9 +32,6 @@ from fcstnyctaxi.lib.config.composition import compose_config
 from fcstnyctaxi.lib.storage_layout import (
     SourcedPath,
     latest_pointer_path,
-    resolve_environment_root,
-    resolve_latest_pointer_uri,
-    resolve_run_prefix,
 )
 from fcstnyctaxi.lib.utils import get_project_root_dir, require_path_safe_run_id
 from fcstnyctaxi.pipelines import local_train_pipeline
@@ -232,7 +229,7 @@ def test_a_malformed_train_config_raises_before_the_resolve_and_the_clear(
     rmtree = mocker.spy(local_train_pipeline.shutil, "rmtree")
 
     scratch = tmp_path / "scratch"
-    run_prefix = resolve_run_prefix(broken_config_root / "config", ENV, "train", RUN_ID)
+    run_prefix = f"gs://{BUCKET}/{ENV}/train/{RUN_ID}/"
     out_dir = local_train_pipeline._mirror_path(
         f"{run_prefix}compose_configs/", scratch
     )
@@ -374,7 +371,7 @@ def test_each_backtest_is_published_before_the_next_one_runs(
 
     local_train_pipeline.main()
 
-    run_prefix = resolve_run_prefix(root / "config", ENV, "train", RUN_ID)
+    run_prefix = f"gs://{BUCKET}/{ENV}/train/{RUN_ID}/"
     # Without the flag the run stops after the fit: no registry write, no record.
     # Two uploads after registering: the run's record, then the shared pointer.
     registered = [] if serving_image is None else ["register", "upload", "upload"]
@@ -428,7 +425,7 @@ def test_each_backtest_is_published_before_the_next_one_runs(
         # Last, and to the environment root: the run prefix would hide it per run.
         assert publishes.mock_calls[-1].args == (
             latest_pointer_path(kwargs["run_dir"]),
-            resolve_environment_root(root / "config", ENV),
+            f"gs://{BUCKET}/{ENV}/",
         )
 
 
@@ -655,11 +652,11 @@ def test_a_narrowed_rerun_scores_the_pair_the_run_id_has_accumulated(
     assert roles.challenger != roles.benchmark
 
     scratch = tmp_path / "scratch"
-    run_prefix = resolve_run_prefix(root / "config", ENV, "train", RUN_ID)
+    run_prefix = f"gs://{BUCKET}/{ENV}/train/{RUN_ID}/"
     # What an interrupted backtest leaves behind: that impl deletes its marker
     # first and writes it last, so outputs without one are a half-written sidecar.
     partial = local_train_pipeline._mirror_path(
-        local_train_pipeline._backtest_uri(run_prefix, roles.challenger), scratch
+        f"{run_prefix}backtest/{roles.challenger}/", scratch
     )
     partial.mkdir(parents=True)
     (partial / "monthly_series.parquet").write_text("half of a sidecar")
@@ -978,7 +975,7 @@ def test_the_staged_pointer_is_the_path_the_impl_reads(
 
     local_train_pipeline.main()
 
-    pointer_uri = resolve_latest_pointer_uri(root / "config", ENV)
+    pointer_uri = f"gs://{BUCKET}/{ENV}/_latest.json"
     [staged] = [
         call for call in downloads.call_args_list if call.args[0] == pointer_uri
     ]

@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import get_args
 
-from fcstnyctaxi.lib.config.bindings import resolve_bucket
 from fcstnyctaxi.schemas.config.common import SliceName
 from fcstnyctaxi.schemas.storage.common import LATEST_POINTER_FILENAME
 
@@ -143,54 +142,6 @@ def build_run_root(bucket: str, env: str, slice_name: SliceName, run_id: str) ->
     return build_prefix_uri(build_environment_root(bucket, env), slice_name, run_id)
 
 
-def resolve_run_prefix(
-    config_dir: Path, env: str, slice_name: SliceName, run_id: str
-) -> str:
-    """Where one run of one slice writes, ending in "/". The layout's one resolver.
-
-    Takes `config_dir`, not a bucket: the bucket lives in `EnvironmentConfig`, so a
-    bucket parameter pushes composition into every caller and those copies drift.
-    `require_known_environment` turns an unknown env into a domain error rather
-    than a `FileNotFoundError`.
-
-    Args:
-        config_dir: Root of the config tree.
-        env: Deployment environment; needs an `environments/<env>.yaml`.
-        slice_name: The pipeline this run belongs to.
-        run_id: Per-run identifier, giving each run its own directory.
-
-    Raises:
-        ValueError: `env` has no config file, `slice_name` is not a SliceName, or
-            the fragment fails to compose.
-    """
-    return _build_run_prefix(_composed_bucket(config_dir, env), env, slice_name, run_id)
-
-
-def resolve_environment_root(config_dir: Path, env: str) -> str:
-    """Where one environment's shared files live, ending in "/".
-
-    Above every slice, because what sits here is written by one pipeline and read
-    by the others, so it cannot be run-scoped.
-
-    Args:
-        config_dir: Root of the config tree.
-        env: Deployment environment; needs an `environments/<env>.yaml`.
-
-    Raises:
-        ValueError: `env` has no config file, or the fragment fails to compose.
-    """
-    return _build_environment_root(_composed_bucket(config_dir, env), env)
-
-
-def resolve_latest_pointer_uri(config_dir: Path, env: str) -> str:
-    """The run pointer's object URI: the environment root, plus one filename.
-
-    No slice segment: one file carries a key per slice, so a slice token here
-    would strand the other two.
-    """
-    return f"{resolve_environment_root(config_dir, env)}{LATEST_POINTER_FILENAME}"
-
-
 def latest_pointer_path(run_dir: Path) -> Path:
     """The pointer beside one run's root, the layout read backwards.
 
@@ -216,33 +167,3 @@ def latest_pointer_path(run_dir: Path) -> Path:
             f"{run_dir.parent.name!r}, so it names no environment root."
         )
     return run_dir.parents[1] / LATEST_POINTER_FILENAME
-
-
-def _build_run_prefix(bucket: str, env: str, slice_name: SliceName, run_id: str) -> str:
-    """Construct the run root gs://<bucket>/<env>/<slice_name>/<run_id>/.
-
-    The convention itself, plus the slice guard. Private, since every caller
-    reaches `resolve_run_prefix`, which guards `env` before calling in. Ends in
-    "/" because each step appends its own name. The typed slice puts the
-    notebooks' dev/experiments/<run_id>/ out of reach: the convention's guarantor
-    should not also mint scratch namespaces.
-
-    Raises:
-        ValueError: slice_name is not a defined SliceName.
-    """
-    known_slices = get_args(SliceName)
-    if slice_name not in known_slices:
-        raise ValueError(
-            f"slice_name must be one of {known_slices}, got {slice_name!r}."
-        )
-    return f"{_build_environment_root(bucket, env)}{slice_name}/{run_id}/"
-
-
-def _build_environment_root(bucket: str, env: str) -> str:
-    """Construct gs://<bucket>/<env>/, the prefix every slice sits under."""
-    return f"gs://{bucket}/{env}/"
-
-
-def _composed_bucket(config_dir: Path, env: str) -> str:
-    """Delegates to `resolve_bucket` until the resolvers calling this are deleted."""
-    return resolve_bucket(config_dir, env)

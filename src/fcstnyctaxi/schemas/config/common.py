@@ -24,7 +24,7 @@ The same three tokens name every place a slice appears:
     <slice>_run_id                         the run-id prefix
     artifact_registry.images.<slice>       image references
 
-``lib/storage_layout._build_run_prefix`` is the first consumer: it types the slice
+``lib/storage_layout.build_run_root`` is the first consumer: it types the slice
 segment and checks membership with ``get_args``, since no type checker runs in CI.
 
 Elsewhere the type is deliberately not a key. ``SliceImages`` declares three fields
