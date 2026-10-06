@@ -33,6 +33,11 @@ from fcstnyctaxi.lib.fold_metrics import (
     compute_signed_bias_per_series,
 )
 from fcstnyctaxi.lib.period_utils import derive_horizon_label
+from fcstnyctaxi.schemas.storage.train import (
+    BACKTEST_DIR,
+    COMPOSE_CONFIGS_DIR,
+    EVALUATE_DIR,
+)
 
 pd.options.display.max_columns = 40
 pd.options.display.max_rows = 100
@@ -60,9 +65,9 @@ run_root = (
 if not run_root.is_dir():
     fsspec.filesystem("gs").get(PINNED_RUN_URI, f"{run_root}/", recursive=True)
 
-compose_configs_dir = run_root / "compose_configs"
-challenger_dir = run_root / "backtest" / CHALLENGER_MODEL
-benchmark_dir = run_root / "backtest" / BENCHMARK_MODEL
+compose_configs_dir = run_root / COMPOSE_CONFIGS_DIR
+challenger_dir = run_root / BACKTEST_DIR / CHALLENGER_MODEL
+benchmark_dir = run_root / BACKTEST_DIR / BENCHMARK_MODEL
 print(f"staged at {run_root}")
 
 # %%
@@ -359,18 +364,18 @@ per_series_df.shape
 # The gate proper. Everything above this line is leaderboard.py.
 # Every check below prints PASS; anything else is a failure.
 # ================================================
-shutil.rmtree(run_root / "evaluate", ignore_errors=True)
+shutil.rmtree(run_root / EVALUATE_DIR, ignore_errors=True)
 impl_summary_result = evaluate_impl(
     challenger_dir=challenger_dir,
     benchmark_dir=benchmark_dir,
     compose_configs_dir=compose_configs_dir,
-    out_dir=run_root / "evaluate",
+    out_dir=run_root / EVALUATE_DIR,
 )
 # Read off disk rather than kept in memory, so the write path is in scope.
-impl_per_series = pd.read_parquet(run_root / "evaluate" / "per_series_comparison.parquet")
-impl_fold = pd.read_parquet(run_root / "evaluate" / "fold_metrics.parquet")
-impl_period = pd.read_parquet(run_root / "evaluate" / "period_metrics.parquet")
-impl_summary = pd.read_parquet(run_root / "evaluate" / "summary_metrics.parquet")
+impl_per_series = pd.read_parquet(run_root / EVALUATE_DIR / "per_series_comparison.parquet")
+impl_fold = pd.read_parquet(run_root / EVALUATE_DIR / "fold_metrics.parquet")
+impl_period = pd.read_parquet(run_root / EVALUATE_DIR / "period_metrics.parquet")
+impl_summary = pd.read_parquet(run_root / EVALUATE_DIR / "summary_metrics.parquet")
 
 print(impl_summary_result)
 for name, frame in (
@@ -558,12 +563,12 @@ try:
         challenger_dir=benchmark_dir,
         benchmark_dir=challenger_dir,
         compose_configs_dir=compose_configs_dir,
-        out_dir=run_root / "evaluate",
+        out_dir=run_root / EVALUATE_DIR,
     )
 except ValueError as exc:
     print(f"PASS the swapped pair was refused:\n{exc}")
 else:
     raise AssertionError("the swapped pair was accepted")
 
-assert (run_root / "evaluate" / "evaluate_manifest.json").is_file()
+assert (run_root / EVALUATE_DIR / "evaluate_manifest.json").is_file()
 print("PASS the completion marker survived the refused swap")
