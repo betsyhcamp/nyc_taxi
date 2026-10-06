@@ -212,12 +212,14 @@ The local mode registers only when given `--serving-image`, a digest-pinned imag
 
 **Step 4. Confirm the run and its artifacts:**
 
-The submitter logs the console URL for the run. The artifacts land under the run prefix it also logs:
+The submitter logs the console URL for the run. The artifacts land under the run root it also logs:
 
 ```{bash}
 gsutil ls -r gs://nyc-taxi-ehc--modeling/dev/train/<run_id>/
 ```
 
 `run_identity.json` sits at the run root rather than inside a step directory, because its reader is outside the pipeline and can construct only `<bucket>/<env>/train/<run_id>`. `compose_configs/` holds the five configs plus `manifest.json`, and each model named in `config/train/modeling.yaml`'s `model_roles` gets its own eight-file sidecar under `backtest/<model_name>/`, ending in `backtest_manifest.json`. The Vertex UI names those tasks `backtest-<model_name>`; the compiled template's task keys are positional. `evaluate/` holds the run's four score tables and `evaluate_manifest.json`, scored from the two sidecars `model_roles` names. `final_fit/<model_name>/` holds the challenger's bundle, fitted on the whole panel: `model/`, the `composed_config.yaml` it was fitted under, and `final_fit_manifest.json`. That task runs after `evaluate`, and the Vertex UI names it `final_fit-<model_name>`. The last task, `register_model-<model_name>`, uploads that bundle as a version of the `<model_id_prefix>-<model_name>` model and writes `run_output.json` at the run root. Written last, it marks the run finished, and its `published.model_tag` names the exact version, `projects/<number>/locations/<location>/models/<model_id>@<version>`, which is what Inference loads. Resubmitting a finished `--run-id` on the same commit registers nothing; on a different commit the register task fails, naming both commits.
+
+Every one of these paths is built in one place: `lib/storage_layout.py`'s builders join folder and file names defined once in `schemas/storage/`, so the local and Vertex modes cannot spell a step differently.
 
 `task build-clean` removes compiled templates; `task scratch-clean` removes the local scratch mirror, `.last_run_id` included.

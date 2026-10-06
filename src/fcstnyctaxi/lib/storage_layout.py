@@ -1,6 +1,5 @@
-"""One resolver for `gs://<bucket>/<env>/<slice_name>/<run_id>/<step>/` and the
-`<env>/` root above it, so local vs Vertex execution modes cannot drift. Not
-`lib/io.py`: composing a config is not IO.
+"""Pure string builders for `gs://<bucket>/<env>/<slice>/<run_id>/<step>/`, so the
+local and Vertex modes cannot drift. No config read: the caller supplies the bucket.
 """
 
 from dataclasses import dataclass
