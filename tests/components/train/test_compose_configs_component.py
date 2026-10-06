@@ -16,9 +16,11 @@ from pytest_mock import MockerFixture
 
 from fcstnyctaxi.components.train.compose_configs_component import compose_configs
 from fcstnyctaxi.core.train.compose_configs_impl import ComposeConfigsSummary
-from fcstnyctaxi.lib.config.bindings import resolve_model_names
-from fcstnyctaxi.lib.storage_layout import SourcedPath, resolve_run_prefix
+from fcstnyctaxi.lib.config.bindings import environment_bindings, resolve_model_names
+from fcstnyctaxi.lib.config.composition import compose_config
+from fcstnyctaxi.lib.storage_layout import SourcedPath
 from fcstnyctaxi.lib.utils import get_project_root_dir
+from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 
 # dsl.component has no return annotation, so a checker sees the undecorated function
 # and .execute() reads as unknown. Cast once rather than at each call site.
@@ -36,6 +38,13 @@ GIT_HASH = "abc1234-dirty"
 DECLARED_MODEL_NAMES = list(resolve_model_names(CONFIG_DIR))
 # With one name, the reordered case below would silently become the matching case.
 assert len(DECLARED_MODEL_NAMES) >= 2
+
+# Bucket derived, so a dev.yaml change cannot fail this; the rest literal, so a moved
+# layout does.
+BUCKET = cast(
+    EnvironmentConfig, compose_config(CONFIG_DIR, environment_bindings(ENV)).config
+).storage.bucket_name
+EXPECTED_RUN_PREFIX = f"gs://{BUCKET}/{ENV}/train/{TRAIN_RUN_ID}/"
 
 # Distinct, so pairing assertions also prove no two inputs were swapped.
 PANEL_URI = "gs://sentinel-bucket/feature/f-sentinel/panel.parquet"
@@ -92,12 +101,6 @@ def _artifacts() -> tuple[Dataset, Dataset, Dataset, Artifact]:
     )
 
 
-def _expected_run_prefix() -> str:
-    """Derived, never a literal, so a bucket change in dev.yaml cannot fail this: it
-    pins routing through one function, leaving the convention to test_storage_layout."""
-    return resolve_run_prefix(CONFIG_DIR, ENV, "train", TRAIN_RUN_ID)
-
-
 def test_wrapper_wires_inputs_outputs_and_metadata(
     real_config_dir: Path, mock_impl: Any, baked_git_hash: str
 ) -> None:
@@ -116,11 +119,10 @@ def test_wrapper_wires_inputs_outputs_and_metadata(
         composed_configs=composed_configs,
     )
 
-    expected_prefix = _expected_run_prefix()
-    expected_uri = f"{expected_prefix}compose_configs/"
+    expected_uri = f"{EXPECTED_RUN_PREFIX}compose_configs/"
 
     # Indexed, not attribute: the wrapper returns a bare tuple KFP maps positionally.
-    assert result[0] == expected_prefix
+    assert result[0] == EXPECTED_RUN_PREFIX
     assert composed_configs.uri == expected_uri
 
     kwargs = mock_impl.call_args.kwargs
@@ -202,7 +204,7 @@ def test_impl_failure_propagates_and_leaves_metadata_unstamped(
     assert composed_configs.metadata == {}
     # Not "untouched": .uri is assigned before the impl call, so asserting a pristine
     # artifact would assert the ordering bug back in.
-    assert composed_configs.uri == f"{_expected_run_prefix()}compose_configs/"
+    assert composed_configs.uri == f"{EXPECTED_RUN_PREFIX}compose_configs/"
 
 
 @pytest.mark.parametrize(

@@ -1,7 +1,7 @@
 import logging
 import sys
 from datetime import date
-from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -9,18 +9,24 @@ import pytest
 from pytest_mock import MockerFixture
 
 from fcstnyctaxi.lib import run_outputs
+from fcstnyctaxi.lib.config.bindings import environment_bindings
+from fcstnyctaxi.lib.config.composition import compose_config
 from fcstnyctaxi.lib.run_outputs import read_feature_run_outputs
-from fcstnyctaxi.lib.storage_layout import (
-    resolve_run_outputs_uri,
-    resolve_run_prefix,
-)
 from fcstnyctaxi.lib.utils import get_project_root_dir
+from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.run_outputs import FeatureRunOutputs
 from scripts import publish_feature_stand_in
 
 CONFIG_DIR = get_project_root_dir() / "config"
 ENV = "dev"
 FEATURE_RUN_ID = "f-20260914T000000000000Z"
+
+# Bucket derived, so a dev.yaml change cannot fail this; the rest literal, so a moved
+# layout does.
+BUCKET = cast(
+    EnvironmentConfig, compose_config(CONFIG_DIR, environment_bindings(ENV)).config
+).storage.bucket_name
+RUN_ROOT = f"gs://{BUCKET}/{ENV}/feature/{FEATURE_RUN_ID}/"
 
 
 @pytest.fixture
@@ -81,15 +87,12 @@ def test_the_manifest_lands_at_the_run_root_after_every_parquet_write(
     written = {call.args[0] for call in calls[:manifest_index] if call[0] == "parquet"}
 
     text, uri = calls[manifest_index].args
-    # resolve_run_prefix is not patched, so this is real path construction.
-    assert uri == resolve_run_outputs_uri(CONFIG_DIR, ENV, "feature", FEATURE_RUN_ID)
-    assert f"/{publish_feature_stand_in._STEP}/" not in uri
+    assert uri == f"{RUN_ROOT}run_output.json"
 
     outputs = FeatureRunOutputs.model_validate_json(text)
     assert set(outputs.published.model_dump().values()) <= written
     assert outputs.feature_run_id == FEATURE_RUN_ID
     assert outputs.env == ENV
-    assert Path(uri).parent.name == FEATURE_RUN_ID
 
 
 def test_the_completion_marker_is_deleted_before_any_artifact_is_rewritten(
@@ -117,18 +120,13 @@ def test_the_manifest_names_the_exogenous_artifact_at_its_run_scoped_path(
     the right name."""
     publish_feature_stand_in.main()
 
-    # resolve_run_prefix is not patched, so this is real path construction.
-    run_prefix = resolve_run_prefix(CONFIG_DIR, ENV, "feature", FEATURE_RUN_ID)
     outputs = FeatureRunOutputs.model_validate_json(
         durable_writes.manifest.call_args.args[0]
     )
     assert outputs.published.exogenous_uri == (
-        f"{run_prefix}{publish_feature_stand_in._STEP}/"
-        f"{publish_feature_stand_in._EXOG_FILENAME}"
+        f"{RUN_ROOT}data_prep/exogenous_features.parquet"
     )
-    # The assertion above builds its filename from the same constant the code does,
-    # so a constant pointing at another artifact's name would satisfy it. Two roles
-    # sharing a URI means one artifact was published over the other.
+    # Two roles sharing a URI means one artifact was published over the other.
     published = outputs.published.model_dump()
     assert len(set(published.values())) == len(published)
 

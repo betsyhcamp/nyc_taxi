@@ -23,7 +23,12 @@ from fcstnyctaxi.core.train.evaluate_impl import EvaluateSummary
 from fcstnyctaxi.core.train.final_fit_impl import FinalFitSummary
 from fcstnyctaxi.core.train.register_model_impl import RegisterModelSummary
 from fcstnyctaxi.lib import run_outputs
-from fcstnyctaxi.lib.config.bindings import model_names_from_roles, resolve_model_roles
+from fcstnyctaxi.lib.config.bindings import (
+    environment_bindings,
+    model_names_from_roles,
+    resolve_model_roles,
+)
+from fcstnyctaxi.lib.config.composition import compose_config
 from fcstnyctaxi.lib.storage_layout import (
     BUNDLE_MODEL_DIR_NAME,
     LATEST_POINTER_FILENAME,
@@ -36,6 +41,7 @@ from fcstnyctaxi.lib.storage_layout import (
 )
 from fcstnyctaxi.lib.utils import get_project_root_dir, require_path_safe_run_id
 from fcstnyctaxi.pipelines import local_train_pipeline
+from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.run_outputs import FeatureArtifacts, FeatureRunOutputs
 
@@ -43,6 +49,12 @@ ENV = "dev"
 RUN_ID = "t-20260913t000000000000z"
 FEATURE_RUN_ID = "f-20260913T000000000000Z"
 PREVIOUS_OUTPUT = "the previous attempt's output"
+# Bucket derived, so a dev.yaml change cannot fail these; the rest literal, so a moved
+# layout does.
+BUCKET = cast(
+    EnvironmentConfig,
+    compose_config(get_project_root_dir() / "config", environment_bindings(ENV)).config,
+).storage.bucket_name
 # A step segment Training never constructs, so an assertion on these proves the
 # URIs came from the manifest rather than from a path this runner guessed.
 RESOLVED_PANEL_URI = f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/step/panel.parquet"
@@ -475,8 +487,7 @@ def test_the_published_destinations_are_ones_the_transport_accepts(
 
     local_train_pipeline.main()
 
-    run_prefix = resolve_run_prefix(root / "config", ENV, "train", RUN_ID)
-    published = fake_gcs / run_prefix.removeprefix("gs://")
+    published = fake_gcs / BUCKET / ENV / "train" / RUN_ID
     assert (published / "run_identity.json").is_file()
     assert (published / "compose_configs" / "manifest.json").is_file()
     # The backtest prefix carries a second segment, which no patched test exercises.
@@ -490,7 +501,7 @@ def test_the_published_destinations_are_ones_the_transport_accepts(
     assert (bundle / "final_fit_manifest.json").is_file()
     assert (bundle / BUNDLE_MODEL_DIR_NAME / "weights.bin").is_file()
     # A file to the run prefix, like run_identity.json, but last of the run.
-    assert (published / RUN_OUTPUTS_FILENAME).is_file()
+    assert (published / "run_output.json").is_file()
 
 
 @pytest.mark.parametrize(
@@ -534,9 +545,8 @@ def test_a_rerun_leaves_no_earlier_record_published(
     mocker.patch.object(
         run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
     )
-    run_prefix = resolve_run_prefix(root / "config", ENV, "train", RUN_ID)
     # What an earlier, registered run of this id left at the run root.
-    earlier_record = fake_gcs / run_prefix.removeprefix("gs://") / RUN_OUTPUTS_FILENAME
+    earlier_record = fake_gcs / BUCKET / ENV / "train" / RUN_ID / "run_output.json"
     earlier_record.parent.mkdir(parents=True)
     earlier_record.write_text('{"earlier": true}')
 
