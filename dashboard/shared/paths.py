@@ -1,24 +1,37 @@
 from pathlib import Path
 
+import streamlit as st
+
+from fcstnyctaxi.lib.config.bindings import resolve_bucket
 from fcstnyctaxi.lib.storage_layout import (
-    resolve_environment_root,
-    resolve_latest_pointer_uri,
-    resolve_run_outputs_uri,
-    resolve_run_prefix,
+    build_environment_root,
+    build_object_uri,
+    build_prefix_uri,
+    build_run_root,
 )
 from fcstnyctaxi.schemas.config.common import SliceName
+from fcstnyctaxi.schemas.storage.common import (
+    LATEST_POINTER_FILENAME,
+    RUN_OUTPUT_FILENAME,
+)
+from fcstnyctaxi.schemas.storage.train import BACKTEST_DIR, EVALUATE_DIR
 
 # Typed, so a token outside SliceName is a type error rather than a 404. Also
 # the key `runs.py` reads `_latest.json` by, which holds one record per slice.
 TRAIN_SLICE: SliceName = "train"
-_EVALUATE_STEP = "evaluate"
-_BACKTEST_STEP = "backtest"
 
 # Objects in the evaluate directory. Pinned to the producer's own names by test,
 # since this is the fourth place they are written down.
 EVALUATE_MANIFEST = "evaluate_manifest.json"
 SUMMARY_METRICS = "summary_metrics.parquet"
 FOLD_METRICS = "fold_metrics.parquet"
+
+
+@st.cache_data(show_spinner=False)
+def _bucket(config_dir: str, env: str) -> str:
+    """The one config read, so every path function below is pure string work.
+    `str`, not `Path`, throughout: every `Path` conversion lives in this module."""
+    return resolve_bucket(Path(config_dir), env)
 
 
 def train_slice_root(config_dir: str, env: str) -> str:
@@ -34,7 +47,8 @@ def train_slice_root(config_dir: str, env: str) -> str:
     Returns:
         str: `gs://<bucket>/<env>/train/`.
     """
-    return f"{resolve_environment_root(Path(config_dir), env)}{TRAIN_SLICE}/"
+    environment_root = build_environment_root(_bucket(config_dir, env), env)
+    return build_prefix_uri(environment_root, TRAIN_SLICE)
 
 
 def evaluate_prefix(config_dir: str, env: str, run_id: str) -> str:
@@ -51,8 +65,8 @@ def evaluate_prefix(config_dir: str, env: str, run_id: str) -> str:
     Returns:
         str: `gs://<bucket>/<env>/train/<run_id>/evaluate/`.
     """
-    run_prefix = resolve_run_prefix(Path(config_dir), env, TRAIN_SLICE, run_id)
-    return f"{run_prefix}{_EVALUATE_STEP}/"
+    run_root = build_run_root(_bucket(config_dir, env), env, TRAIN_SLICE, run_id)
+    return build_prefix_uri(run_root, EVALUATE_DIR)
 
 
 def sidecar_prefix(config_dir: str, env: str, run_id: str, model_name: str) -> str:
@@ -70,8 +84,8 @@ def sidecar_prefix(config_dir: str, env: str, run_id: str, model_name: str) -> s
     Returns:
         str: `gs://<bucket>/<env>/train/<run_id>/backtest/<model_name>/`.
     """
-    run_prefix = resolve_run_prefix(Path(config_dir), env, TRAIN_SLICE, run_id)
-    return f"{run_prefix}{_BACKTEST_STEP}/{model_name}/"
+    run_root = build_run_root(_bucket(config_dir, env), env, TRAIN_SLICE, run_id)
+    return build_prefix_uri(run_root, BACKTEST_DIR, model_name)
 
 
 def evaluate_manifest_pattern(slice_root: str) -> str:
@@ -84,14 +98,13 @@ def evaluate_manifest_pattern(slice_root: str) -> str:
     Returns:
         str: `<slice_root>*/evaluate/evaluate_manifest.json`.
     """
-    return f"{slice_root}*/{_EVALUATE_STEP}/{EVALUATE_MANIFEST}"
+    # Not build_object_uri: a glob is not an object, and "*" passes the segment
+    # checks only because they ignore wildcards.
+    return f"{slice_root}*/{EVALUATE_DIR}/{EVALUATE_MANIFEST}"
 
 
 def pointer_uri(config_dir: str, env: str) -> str:
     """`_latest.json` at the environment root, which carries a key per slice.
-
-    A passthrough, so that every path shape and every `Path` conversion lives in
-    this module and `load.py` only caches.
 
     Args:
         config_dir: Root of the config tree.
@@ -100,7 +113,8 @@ def pointer_uri(config_dir: str, env: str) -> str:
     Returns:
         str: `gs://<bucket>/<env>/_latest.json`.
     """
-    return resolve_latest_pointer_uri(Path(config_dir), env)
+    environment_root = build_environment_root(_bucket(config_dir, env), env)
+    return build_object_uri(environment_root, LATEST_POINTER_FILENAME)
 
 
 def run_outputs_uri(config_dir: str, env: str, run_id: str) -> str:
@@ -114,4 +128,5 @@ def run_outputs_uri(config_dir: str, env: str, run_id: str) -> str:
     Returns:
         str: `gs://<bucket>/<env>/train/<run_id>/run_output.json`.
     """
-    return resolve_run_outputs_uri(Path(config_dir), env, TRAIN_SLICE, run_id)
+    run_root = build_run_root(_bucket(config_dir, env), env, TRAIN_SLICE, run_id)
+    return build_object_uri(run_root, RUN_OUTPUT_FILENAME)
