@@ -131,10 +131,11 @@ class LatestRunPointer(BaseModel):
     """At the environment root, ``_latest.json``: each slice's newest run record.
 
     A key holds that slice's run record, the fields of its ``run_output.json``;
-    Train's omits ``feature_run_id``, which ``feature`` already names. No value is
-    validated: a sibling's record is not Train's to reject, and checking ``train``
-    would let the record being replaced block its replacement. The one check left
-    is pydantic's own, that the document is an object.
+    Train's omits ``feature_run_id``, which would name the Feature run it trained on
+    rather than the newest one ``feature`` holds. No value is validated: a sibling's
+    record is not Train's to reject, and checking ``train`` would let the record
+    being replaced block its replacement. The one check left is pydantic's own, that
+    the document is an object.
     """
 
     model_config = ConfigDict(frozen=True)
