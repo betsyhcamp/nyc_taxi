@@ -410,6 +410,36 @@ def test_the_submitter_resolves_all_three_uris_from_the_feature_run_id_alone(
     assert "source=resolved" in caplog.text
 
 
+def test_the_feature_manifest_is_read_from_the_configured_bucket(
+    template: Path,
+    vertex: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+) -> None:
+    """From another bucket, a finished Feature run reads as never completed."""
+    read = mocker.patch.object(
+        run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        _argv(
+            template,
+            {
+                "--panel-uri": None,
+                "--calendar-uri": None,
+                "--additional-exog-uri": None,
+            },
+        ),
+    )
+
+    submit_train_pipeline.main()
+
+    bucket = _expected_control_plane()[0].storage.bucket_name
+    read.assert_called_once_with(
+        f"gs://{bucket}/{ENV}/feature/{FEATURE_RUN_ID}/run_output.json"
+    )
+
+
 def test_a_missing_template_beats_a_manifest_read_failure(
     vertex: MagicMock,
     tmp_path: Path,
