@@ -14,7 +14,7 @@ from google.cloud import aiplatform
 
 from fcstnyctaxi.lib.config.bindings import (
     environment_bindings,
-    resolve_bucket,
+    require_known_environment,
     train_infra_bindings,
 )
 from fcstnyctaxi.lib.config.composition import compose_config
@@ -43,8 +43,7 @@ _LAST_RUN_ID_PATH = Path(tempfile.gettempdir()) / "fcstnyctaxi" / ".last_run_id"
 def _parse_args() -> argparse.Namespace:
     """The template to submit, plus the domain flags the local runner also takes.
 
-    `--env` carries no `choices`: `require_known_environment`, via
-    `resolve_bucket`, is the whole guard.
+    `--env` carries no `choices`: `require_known_environment` is the whole guard.
     """
     parser = argparse.ArgumentParser(
         description="Submit a compiled Training template to Vertex AI Pipelines."
@@ -164,12 +163,13 @@ def main() -> None:
 
     config_dir = get_project_root_dir() / "config"
     # First, for the --env guard: an unknown selector names the available ones.
-    bucket = resolve_bucket(config_dir, args.env)
-    run_root = build_run_root(bucket, args.env, "train", run_id)
+    require_known_environment(config_dir, args.env)
     environment = cast(
         EnvironmentConfig,
         compose_config(config_dir, environment_bindings(args.env)).config,
     )
+    bucket = environment.storage.bucket_name
+    run_root = build_run_root(bucket, args.env, "train", run_id)
     infra = cast(
         TrainInfraConfig, compose_config(config_dir, train_infra_bindings()).config
     )
