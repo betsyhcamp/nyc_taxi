@@ -32,12 +32,12 @@ from fcstnyctaxi.lib.io import (
 )
 from fcstnyctaxi.lib.run_outputs import resolve_feature_artifacts
 from fcstnyctaxi.lib.storage_layout import (
-    RUN_OUTPUTS_FILENAME,
     SourcedPath,
+    build_environment_root,
+    build_object_uri,
+    build_prefix_uri,
+    build_run_root,
     latest_pointer_path,
-    resolve_environment_root,
-    resolve_latest_pointer_uri,
-    resolve_run_prefix,
 )
 from fcstnyctaxi.lib.utils import (
     generate_run_id,
@@ -46,17 +46,21 @@ from fcstnyctaxi.lib.utils import (
     require_label_safe_run_id,
     require_path_safe_run_id,
 )
+from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
+from fcstnyctaxi.schemas.storage.common import (
+    LATEST_POINTER_FILENAME,
+    RUN_IDENTITY_FILENAME,
+    RUN_OUTPUT_FILENAME,
+)
+from fcstnyctaxi.schemas.storage.train import (
+    BACKTEST_DIR,
+    COMPOSE_CONFIGS_DIR,
+    EVALUATE_DIR,
+    FINAL_FIT_DIR,
+)
 
 logger = logging.getLogger(__name__)
-
-# Each step names its own directory under the run root. No step accepts a full
-# output path, so these are not parameters. Backtest and final_fit append the model
-# name too.
-_COMPOSE_STEP = "compose_configs"
-_BACKTEST_STEP = "backtest"
-_EVALUATE_STEP = "evaluate"
-_FINAL_FIT_STEP = "final_fit"
 
 # Shared with the readiness check below, which would otherwise skip every run.
 _BACKTEST_MARKER = "backtest_manifest.json"
@@ -151,12 +155,6 @@ def _mirror_path(gcs_uri: str, root: Path) -> Path:
     return root / key
 
 
-def _backtest_uri(run_prefix: str, model_name: str) -> str:
-    """One model's sidecar prefix, built here alone because the scoring step
-    resolves two of them by role, outside the loop that publishes them."""
-    return f"{run_prefix}{_BACKTEST_STEP}/{model_name}/"
-
-
 def _select_models(model_names: list[str], selected: str | None) -> list[str]:
     """The models to back, narrowed to `selected` when one was asked for.
 
@@ -213,21 +211,22 @@ def main() -> None:
     config_dir = project_root / "config"
     git_hash = require_git_hash(project_root)
 
+    # Above the rmtree and the resolve, so a bad config raises as itself. Roles
+    # from here, not evaluate_impl's modeling.yaml, so its role check has two sides.
+    environment, _, modeling = compose_train_static_configs(config_dir, args.env)
+    bucket = cast(EnvironmentConfig, environment.config).storage.bucket_name
+    roles = cast(TrainModelingConfig, modeling.config).model_roles
+
     # Held as a value rather than folded into step_uri: backtest, evaluate, and
     # final_fit each append their own step name to this same prefix.
-    run_prefix = resolve_run_prefix(config_dir, args.env, "train", run_id)
-    compose_uri = f"{run_prefix}{_COMPOSE_STEP}/"
+    run_root = build_run_root(bucket, args.env, "train", run_id)
+    compose_uri = build_prefix_uri(run_root, COMPOSE_CONFIGS_DIR)
 
     mirror_root = args.scratch_dir
     compose_dir = _mirror_path(compose_uri, mirror_root)
 
-    # Above the rmtree and the resolve, so a bad config raises as itself. Roles
-    # from here, not evaluate_impl's modeling.yaml, so its role check has two sides.
-    _, _, modeling = compose_train_static_configs(config_dir, args.env)
-    roles = cast(TrainModelingConfig, modeling.config).model_roles
-
     artifacts = resolve_feature_artifacts(
-        config_dir=config_dir,
+        bucket=bucket,
         env=args.env,
         feature_run_id=args.feature_run_id,
         panel_uri=args.panel_uri,
@@ -279,12 +278,12 @@ def main() -> None:
         git_hash=git_hash,
         out_dir=compose_dir,
     )
-    # Above both publishes, so a rejected --model leaves the run prefix untouched.
+    # Above both publishes, so a rejected --model leaves the run root untouched.
     model_names = _select_models(summary.model_names, args.model)
 
     # First, so a failed step publish still leaves a record of what the run read.
-    # Not sync_to_gcs here: at the run prefix it deletes every sibling step's output.
-    upload_to_gcs(compose_dir.parent / "run_identity.json", run_prefix)
+    # Not sync_to_gcs here: at the run root it deletes every sibling step's output.
+    upload_to_gcs(compose_dir.parent / RUN_IDENTITY_FILENAME, run_root)
 
     # The impl writes manifest.json last, so publishing it alone and last makes its
     # presence at the prefix mean complete rather than started.
@@ -299,7 +298,7 @@ def main() -> None:
         uploaded,
         removed,
         compose_uri,
-        f"{run_prefix}run_identity.json",
+        build_object_uri(run_root, RUN_IDENTITY_FILENAME),
         run_id,
         summary.model_names,
         summary.n_origins,
@@ -311,7 +310,7 @@ def main() -> None:
     )
 
     for model_name in model_names:
-        model_uri = _backtest_uri(run_prefix, model_name)
+        model_uri = build_prefix_uri(run_root, BACKTEST_DIR, model_name)
         # Derived from the URI, like the compose step above, so the published
         # location and the local one cannot disagree.
         model_dir = _mirror_path(model_uri, mirror_root)
@@ -344,10 +343,10 @@ def main() -> None:
     # The run id is the unit of work, not the invocation. backtest_impl deletes its
     # marker first and writes it last, so its presence means a finished sidecar.
     challenger_dir = _mirror_path(
-        _backtest_uri(run_prefix, roles.challenger), mirror_root
+        build_prefix_uri(run_root, BACKTEST_DIR, roles.challenger), mirror_root
     )
     benchmark_dir = _mirror_path(
-        _backtest_uri(run_prefix, roles.benchmark), mirror_root
+        build_prefix_uri(run_root, BACKTEST_DIR, roles.benchmark), mirror_root
     )
     unscored = [
         f"{role} ({name})"
@@ -363,11 +362,11 @@ def main() -> None:
             "Any scores or bundle already in that run predate the sidecars it now "
             "holds; rerun without --model to refresh them.",
             unscored,
-            run_prefix,
+            run_root,
         )
         return
 
-    evaluate_uri = f"{run_prefix}{_EVALUATE_STEP}/"
+    evaluate_uri = build_prefix_uri(run_root, EVALUATE_DIR)
     evaluate_dir = _mirror_path(evaluate_uri, mirror_root)
 
     # No model names passed: the impl reads model_roles itself, which is what makes
@@ -393,7 +392,7 @@ def main() -> None:
 
     # After scoring, as in the DAG: a crashed evaluate must not leave a bundle with no
     # scores. The challenger is the registration target whatever evaluate reported.
-    final_fit_uri = f"{run_prefix}{_FINAL_FIT_STEP}/{roles.challenger}/"
+    final_fit_uri = build_prefix_uri(run_root, FINAL_FIT_DIR, roles.challenger)
     final_fit_dir = _mirror_path(final_fit_uri, mirror_root)
 
     # No rmtree, unlike compose: the impl recreates model/ and fixes its other names.
@@ -422,7 +421,8 @@ def main() -> None:
     # What the impl's unlink does through the mount on Vertex, at the same point: a
     # rerun that registers nothing, or fails to, must not leave the earlier run's
     # published record pointing at a version whose bundle was just replaced.
-    delete_from_gcs(f"{run_prefix}{RUN_OUTPUTS_FILENAME}")
+    run_output_uri = build_object_uri(run_root, RUN_OUTPUT_FILENAME)
+    delete_from_gcs(run_output_uri)
 
     # Opt-in: every local run holds live credentials, and each registration is a
     # version in the shared registry.
@@ -430,15 +430,16 @@ def main() -> None:
         logger.info(
             "register_model skipped: no --serving-image, so nothing was registered "
             "and no %s is published under %s.",
-            RUN_OUTPUTS_FILENAME,
-            run_prefix,
+            RUN_OUTPUT_FILENAME,
+            run_root,
         )
         return
 
     # Staged after the opt-in check, so a run that registers nothing leaves the pointer
     # alone. Two derivations on purpose: disagreement fails loudly in the impl.
+    environment_root = build_environment_root(bucket, args.env)
     pointer_path = latest_pointer_path(compose_dir.parent)
-    pointer_uri = resolve_latest_pointer_uri(config_dir, args.env)
+    pointer_uri = build_object_uri(environment_root, LATEST_POINTER_FILENAME)
     download_from_gcs(pointer_uri, pointer_path.parent)
 
     # The wrapper's arguments: the bundle's mirror paired with the URI it uploads.
@@ -450,15 +451,15 @@ def main() -> None:
     )
     # The last publish under the run root, so its presence there means the run
     # finished.
-    upload_to_gcs(compose_dir.parent / RUN_OUTPUTS_FILENAME, run_prefix)
+    upload_to_gcs(compose_dir.parent / RUN_OUTPUT_FILENAME, run_root)
     # After the marker, so the pointer never names a run that has none.
-    upload_to_gcs(pointer_path, resolve_environment_root(config_dir, args.env))
+    upload_to_gcs(pointer_path, environment_root)
 
     logger.info(
         "register_model published: model_tag=%s uploaded=%s uri=%s pointer=%s",
         register_summary.model_tag,
         register_summary.uploaded,
-        f"{run_prefix}{RUN_OUTPUTS_FILENAME}",
+        run_output_uri,
         pointer_uri,
     )
 

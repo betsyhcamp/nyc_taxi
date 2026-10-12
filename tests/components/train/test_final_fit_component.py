@@ -21,18 +21,18 @@ from fcstnyctaxi.core.train.final_fit_impl import FinalFitSummary
 # For the type checker: dsl.component has no return annotation.
 COMPONENT = cast(PythonComponent, final_fit)
 
-RUN_PREFIX = "gs://sentinel-bucket/dev/train/t-sentinel/"
+RUN_ROOT = "gs://sentinel-bucket/dev/train/t-sentinel/"
 MODEL_NAME = "model_a"
 GIT_HASH = "abc1234-dirty"
 
 # Distinct, so a panel/calendar swap fails the pairing assertions.
-COMPOSED_CONFIGS_URI = f"{RUN_PREFIX}compose_configs/"
+COMPOSED_CONFIGS_URI = f"{RUN_ROOT}compose_configs/"
 PANEL_URI = "gs://sentinel-bucket/dev/feature/f-sentinel/panel.parquet"
 CALENDAR_URI = "gs://sentinel-bucket/dev/feature/f-sentinel/calendar.parquet"
 EXOG_URI = "gs://sentinel-bucket/dev/feature/f-sentinel/exogenous.parquet"
 
 # Derived: a literal would restate the convention, not check it.
-BUNDLE_URI = f"{RUN_PREFIX}final_fit/{MODEL_NAME}/"
+BUNDLE_URI = f"{RUN_ROOT}final_fit/{MODEL_NAME}/"
 
 # Real, not a Mock: a MagicMock unpacks to {}, so the metadata loop checks nothing.
 SUMMARY = FinalFitSummary(
@@ -78,7 +78,7 @@ def test_wrapper_places_its_bundle_pairs_every_input_and_stamps_it(
     assert bundle.path == ""  # baseline: wrong until assigned
 
     COMPONENT.execute(
-        run_prefix=RUN_PREFIX,
+        run_root=RUN_ROOT,
         model_name=MODEL_NAME,
         composed_configs=composed_configs,
         panel=panel,
@@ -121,7 +121,7 @@ def test_missing_git_hash_raises_naming_the_variable(
 
     with pytest.raises(RuntimeError, match="FCST_GIT_HASH"):
         COMPONENT.execute(
-            run_prefix=RUN_PREFIX,
+            run_root=RUN_ROOT,
             model_name=MODEL_NAME,
             composed_configs=composed_configs,
             panel=panel,
@@ -142,7 +142,7 @@ def test_impl_failure_propagates_and_leaves_metadata_unstamped(
 
     with pytest.raises(ValueError, match="not named for model"):
         COMPONENT.execute(
-            run_prefix=RUN_PREFIX,
+            run_root=RUN_ROOT,
             model_name=MODEL_NAME,
             composed_configs=composed_configs,
             panel=panel,

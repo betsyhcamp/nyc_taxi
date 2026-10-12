@@ -27,8 +27,6 @@ from fcstnyctaxi.core.train.register_model_impl import (
 )
 from fcstnyctaxi.lib.registry_ids import compose_display_name, compose_model_id
 from fcstnyctaxi.lib.storage_layout import (
-    LATEST_POINTER_FILENAME,
-    RUN_OUTPUTS_FILENAME,
     SourcedPath,
     latest_pointer_path,
 )
@@ -40,6 +38,10 @@ from fcstnyctaxi.schemas.run_outputs import (
     FeatureRunOutputs,
     LatestRunPointer,
     TrainRunOutputs,
+)
+from fcstnyctaxi.schemas.storage.common import (
+    LATEST_POINTER_FILENAME,
+    RUN_OUTPUT_FILENAME,
 )
 
 CONFIG_DIR = get_project_root_dir() / "config"
@@ -315,7 +317,7 @@ def _register(root: Path, **overrides: Any) -> RegisterModelSummary:
 def _outputs(run_dir: Path) -> TrainRunOutputs:
     """The run record, read back through the schema Inference reads it with."""
     return TrainRunOutputs.model_validate_json(
-        (run_dir / RUN_OUTPUTS_FILENAME).read_text()
+        (run_dir / RUN_OUTPUT_FILENAME).read_text()
     )
 
 
@@ -490,7 +492,7 @@ def test_a_rerun_on_another_commit_raises_and_leaves_no_record(
         _register(run_dir)
 
     assert len(registry.uploads) == 1
-    assert not (run_dir / RUN_OUTPUTS_FILENAME).exists()
+    assert not (run_dir / RUN_OUTPUT_FILENAME).exists()
 
 
 def test_two_versions_under_one_run_id_raise_naming_both(
@@ -506,7 +508,7 @@ def test_two_versions_under_one_run_id_raise_naming_both(
         _register(run_dir)
 
     assert len(registry.uploads) == 2
-    assert not (run_dir / RUN_OUTPUTS_FILENAME).exists()
+    assert not (run_dir / RUN_OUTPUT_FILENAME).exists()
 
 
 # ================================================
@@ -607,13 +609,13 @@ def test_a_missing_pointer_raises_before_the_marker_is_deleted(
 ) -> None:
     """Seeded once per environment, so absence means the wrong root, not a lost file."""
     _register(run_dir)
-    earlier = (run_dir / RUN_OUTPUTS_FILENAME).read_text()
+    earlier = (run_dir / RUN_OUTPUT_FILENAME).read_text()
     latest_pointer_path(run_dir).unlink()
 
     with pytest.raises(ValueError, match=LATEST_POINTER_FILENAME):
         _register(run_dir)
 
-    assert (run_dir / RUN_OUTPUTS_FILENAME).read_text() == earlier
+    assert (run_dir / RUN_OUTPUT_FILENAME).read_text() == earlier
 
 
 def test_a_missing_pointer_never_reaches_the_registry(
@@ -643,7 +645,7 @@ def test_the_pointer_is_written_after_the_completion_marker(
 
     _register(run_dir)
 
-    assert written.index(run_dir / RUN_OUTPUTS_FILENAME) < written.index(
+    assert written.index(run_dir / RUN_OUTPUT_FILENAME) < written.index(
         latest_pointer_path(run_dir)
     )
 
@@ -654,7 +656,7 @@ def test_the_train_block_drops_only_the_cross_reference(
     """`feature` already names the newest Feature run; this names the one trained on."""
     _register(run_dir)
 
-    record = json.loads((run_dir / RUN_OUTPUTS_FILENAME).read_text())
+    record = json.loads((run_dir / RUN_OUTPUT_FILENAME).read_text())
     block = _pointer(run_dir)["train"]
 
     assert "feature_run_id" in record

@@ -11,8 +11,6 @@ from google.cloud import aiplatform
 
 from fcstnyctaxi.lib.registry_ids import compose_display_name, compose_model_id
 from fcstnyctaxi.lib.storage_layout import (
-    LATEST_POINTER_FILENAME,
-    RUN_OUTPUTS_FILENAME,
     SourcedPath,
     latest_pointer_path,
 )
@@ -25,6 +23,11 @@ from fcstnyctaxi.schemas.run_outputs import (
     RegisteredModel,
     TrainingData,
     TrainRunOutputs,
+)
+from fcstnyctaxi.schemas.storage.common import (
+    LATEST_POINTER_FILENAME,
+    RUN_IDENTITY_FILENAME,
+    RUN_OUTPUT_FILENAME,
 )
 
 _log = logging.getLogger(__name__)
@@ -114,7 +117,7 @@ def register_model_impl(
         RegisterModelSummary: The registered version, and whether this call uploaded it.
     """
     identity = TrainRunIdentity.model_validate_json(
-        (compose_configs_dir.parent / "run_identity.json").read_text()
+        (compose_configs_dir.parent / RUN_IDENTITY_FILENAME).read_text()
     )
     # Before any label is built: the schema holds the id to min_length=1 alone.
     require_label_safe_run_id(identity.train_run_id, "run_identity.json train_run_id")
@@ -171,7 +174,7 @@ def register_model_impl(
     LatestRunPointer.model_validate(pointer)
 
     # Otherwise a failed rerun leaves the old record claiming the pipeline finished.
-    (run_dir / RUN_OUTPUTS_FILENAME).unlink(missing_ok=True)
+    (run_dir / RUN_OUTPUT_FILENAME).unlink(missing_ok=True)
 
     aiplatform.init(
         project=environment.compute.project_id, location=environment.compute.location
@@ -220,7 +223,7 @@ def register_model_impl(
     )
     # run_output.json written is the pipeline's completion marker. Keep this last
     # before the pointer.
-    (run_dir / RUN_OUTPUTS_FILENAME).write_text(
+    (run_dir / RUN_OUTPUT_FILENAME).write_text(
         outputs.model_dump_json(indent=2, exclude_none=True) + "\n"
     )
 

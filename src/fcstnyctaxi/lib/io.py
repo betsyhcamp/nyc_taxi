@@ -11,6 +11,8 @@ from typing import NamedTuple
 import fsspec
 from tsbricks.blocks.dataio import read_sql, render_sql_template
 
+from fcstnyctaxi.lib.storage_layout import GCS_SCHEME
+
 
 class PreparedSql(NamedTuple):
     sql_text: str
@@ -38,7 +40,7 @@ def build_run_scoped_uri(bucket: str, prefix: str, run_id: str, filename: str) -
     """Build gs://<bucket>/<prefix>/<run_id>/<filename> for one pipeline artifact.
 
     Transitional: serves the ingress pipeline's older prefix-first layout. Delete
-    it when that pipeline adopts storage_layout.resolve_run_prefix.
+    it when that pipeline adopts storage_layout.build_run_root.
 
     Args:
         bucket: GCS bucket name, without the gs:// scheme.
@@ -54,7 +56,7 @@ def require_gcs_uri(gcs_uri: str) -> None:
 
     fsspec is protocol-agnostic, so an unguarded s3:// URI fails much later.
     """
-    if not gcs_uri.startswith("gs://"):
+    if not gcs_uri.startswith(GCS_SCHEME):
         raise ValueError(f"gcs_uri must be a gs://... string, got {gcs_uri!r}.")
 
 

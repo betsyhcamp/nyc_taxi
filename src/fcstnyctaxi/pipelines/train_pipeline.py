@@ -75,7 +75,7 @@ def build_train_pipeline(
         Feature is a separate pipeline, so its three artifacts arrive as URIs rather
         than from an upstream task; dsl.importer types each and registers it in ML
         Metadata.
-        No run_prefix parameter: it needs bucket_name from a destination composed at
+        No run_root parameter: it needs bucket_name from a destination composed at
         runtime, so only the wrapper can resolve it.
         """
         panel = dsl.importer(
@@ -104,7 +104,7 @@ def build_train_pipeline(
         backtest_tasks = {}
         for model_name in model_names:
             backtest_tasks[model_name] = backtest(  # type: ignore[call-arg]
-                run_prefix=compose.outputs["run_prefix"],
+                run_root=compose.outputs["run_root"],
                 model_name=model_name,
                 composed_configs=compose.outputs["composed_configs"],
                 panel=panel.output,
@@ -117,7 +117,7 @@ def build_train_pipeline(
         challenger = backtest_tasks[model_roles.challenger]
         benchmark = backtest_tasks[model_roles.benchmark]
         scoring = evaluate(  # type: ignore[call-arg]
-            run_prefix=compose.outputs["run_prefix"],
+            run_root=compose.outputs["run_root"],
             composed_configs=compose.outputs["composed_configs"],
             challenger_sidecar=challenger.outputs["sidecar"],
             benchmark_sidecar=benchmark.outputs["sidecar"],
@@ -128,7 +128,7 @@ def build_train_pipeline(
         # its output. Labeled though one task: the label names the model fitted.
         fit = (
             final_fit(  # type: ignore[call-arg]
-                run_prefix=compose.outputs["run_prefix"],
+                run_root=compose.outputs["run_root"],
                 model_name=model_roles.challenger,
                 composed_configs=compose.outputs["composed_configs"],
                 panel=panel.output,

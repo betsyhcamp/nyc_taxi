@@ -229,7 +229,7 @@ gs://<bucket>/<env>/_latest.json
 ```
 
 Its keys are the slice names `feature`, `train` and `inference`, and **each holds that
-slice's whole `run_output.json` document**, not an id. Each pipeline rewrites its own key
+slice's run record**, the fields of its `run_output.json`, not an id. Each pipeline rewrites its own key
 and leaves the others equal in value and in order.
 
 Training's `register_model` rewrites `train` after writing its completion marker, so the

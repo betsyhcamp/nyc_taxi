@@ -24,13 +24,13 @@ from fcstnyctaxi.lib.config.bindings import train_modeling_bindings
 from fcstnyctaxi.lib.config.composition import compose_config, save_config
 from fcstnyctaxi.lib.exog import build_exog_frame
 from fcstnyctaxi.lib.storage_layout import (
-    BUNDLE_MODEL_DIR_NAME,
     SourcedPath,
     composed_config_filename,
 )
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.run_outputs import TrainingData
+from fcstnyctaxi.schemas.storage.common import BUNDLE_MODEL_DIR
 
 CONFIG_DIR = get_project_root_dir() / "config"
 FEATURE_RUN_ID = "f-2026-09-21"
@@ -251,7 +251,7 @@ def test_a_configured_transform_is_refused_before_the_fit(
     with pytest.raises(ValueError, match="takes no transforms"):
         final_fit_impl(**staged)
 
-    assert not (staged["out_dir"] / BUNDLE_MODEL_DIR_NAME).exists()
+    assert not (staged["out_dir"] / BUNDLE_MODEL_DIR).exists()
 
 
 def test_a_model_declaring_no_callables_is_refused(
@@ -292,7 +292,7 @@ def test_a_repeated_calendar_date_is_refused_before_the_fit(
     with pytest.raises(ValueError, match="calendar repeats ds"):
         final_fit_impl(**staged)
 
-    assert not (staged["out_dir"] / BUNDLE_MODEL_DIR_NAME).exists()
+    assert not (staged["out_dir"] / BUNDLE_MODEL_DIR).exists()
 
 
 def test_a_panel_week_missing_from_the_calendar_is_refused(
@@ -420,7 +420,7 @@ def test_the_bundle_holds_an_in_process_fit_of_its_config(
     )
 
     in_process = stand_in_fit(panel, exog_df=exog_df, **hyperparameters)
-    loaded = stand_in_load(staged["out_dir"] / BUNDLE_MODEL_DIR_NAME)
+    loaded = stand_in_load(staged["out_dir"] / BUNDLE_MODEL_DIR)
 
     assert_frame_equal(loaded["train_df"], in_process["train_df"])
     assert_frame_equal(loaded["exog_df"], in_process["exog_df"])
@@ -437,7 +437,7 @@ def test_only_the_configured_features_reach_the_model(
     """A fit adopts every column it is handed, so the impl's selection is the model's,
     and the stamps Feature adds must reach it through neither frame."""
     staged, _ = completed_run
-    handed = stand_in_load(staged["out_dir"] / BUNDLE_MODEL_DIR_NAME)
+    handed = stand_in_load(staged["out_dir"] / BUNDLE_MODEL_DIR)
     columns = set(handed["train_df"].columns) | set(handed["exog_df"].columns)
     unselected = set(full_calendar.columns) - set(STAND_IN_EXOG_FEATURES) - {"ds"}
 

@@ -49,6 +49,7 @@ from fcstnyctaxi.schemas.run_outputs import (
     CALENDAR_REQUIRED_COLUMNS,
     PANEL_REQUIRED_COLUMNS,
 )
+from fcstnyctaxi.schemas.storage.common import RUN_IDENTITY_FILENAME
 
 _log = logging.getLogger(__name__)
 
@@ -441,7 +442,7 @@ def backtest_impl(
             "directory name is what tells two models' sidecars apart."
         )
 
-    identity_path = compose_configs_dir.parent / "run_identity.json"
+    identity_path = compose_configs_dir.parent / RUN_IDENTITY_FILENAME
     if not identity_path.is_file():
         raise ValueError(
             f"No run_identity.json at {identity_path}: compose_configs writes it "

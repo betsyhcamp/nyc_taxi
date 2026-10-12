@@ -1,23 +1,27 @@
 from pathlib import Path
 
 import pytest
+from pytest_mock import MockerFixture
 
 from dashboard.shared import paths
 from fcstnyctaxi.core.train import evaluate_impl
-from fcstnyctaxi.lib.storage_layout import RUN_OUTPUTS_FILENAME, resolve_run_prefix
+from fcstnyctaxi.lib.config.bindings import resolve_bucket
 from fcstnyctaxi.lib.utils import get_project_root_dir
-from fcstnyctaxi.pipelines import local_train_pipeline
+from fcstnyctaxi.schemas.storage.common import RUN_OUTPUT_FILENAME
+from fcstnyctaxi.schemas.storage.train import BACKTEST_DIR, EVALUATE_DIR
 
 CONFIG_DIR = str(get_project_root_dir() / "config")
 ENV = "dev"
 RUN_ID = "RUNID"
 MODEL = "MODELNAME"
+# Derived, so a dev.yaml change cannot fail these.
+BUCKET = resolve_bucket(Path(CONFIG_DIR), ENV)
 
 
 @pytest.fixture
-def run_prefix() -> str:
-    """The run root the dashboard's prefixes must descend from."""
-    return resolve_run_prefix(Path(CONFIG_DIR), ENV, "train", RUN_ID)
+def run_root() -> str:
+    """The run root the dashboard's prefixes must descend from, spelled out."""
+    return f"gs://{BUCKET}/{ENV}/train/{RUN_ID}/"
 
 
 @pytest.fixture
@@ -36,11 +40,11 @@ def prefixes() -> dict[str, str]:
 
 
 def test_train_slice_root_is_the_immediate_parent_of_a_run_root(
-    run_prefix: str,
+    run_root: str,
 ) -> None:
     """Immediate, not merely above: listing the environment root instead would
     return the three slice names as if they were run ids."""
-    assert run_prefix == f"{paths.train_slice_root(CONFIG_DIR, ENV)}{RUN_ID}/"
+    assert run_root == f"{paths.train_slice_root(CONFIG_DIR, ENV)}{RUN_ID}/"
 
 
 # ================================================
@@ -55,10 +59,10 @@ def test_the_manifest_filename_is_the_one_the_producer_writes() -> None:
 
 
 def test_evaluate_prefix_names_the_directory_the_producer_writes(
-    run_prefix: str,
+    run_root: str,
 ) -> None:
-    """Against `evaluate_impl`'s own step name, which it raises to enforce."""
-    expected = f"{run_prefix}{evaluate_impl._STEP_DIR_NAME}/"
+    """Against the step name the producer writes under, from its one owner."""
+    expected = f"{run_root}{EVALUATE_DIR}/"
     assert paths.evaluate_prefix(CONFIG_DIR, ENV, RUN_ID) == expected
 
 
@@ -68,10 +72,10 @@ def test_evaluate_prefix_names_the_directory_the_producer_writes(
 
 
 def test_sidecar_prefix_matches_the_uri_the_backtest_step_publishes_to(
-    run_prefix: str,
+    run_root: str,
 ) -> None:
-    """Against the producer's own builder, so a misplaced model segment fails."""
-    expected = local_train_pipeline._backtest_uri(run_prefix, MODEL)
+    """Model segment below the step, so a misplaced or missing one fails."""
+    expected = f"{run_root}{BACKTEST_DIR}/{MODEL}/"
     assert paths.sidecar_prefix(CONFIG_DIR, ENV, RUN_ID, MODEL) == expected
 
 
@@ -90,6 +94,20 @@ def test_every_prefix_is_a_gcs_uri(prefixes: dict[str, str]) -> None:
     assert [n for n, uri in prefixes.items() if not uri.startswith("gs://")] == []
 
 
+def test_switching_runs_composes_the_environment_once(mocker: MockerFixture) -> None:
+    """Every path shares one cached bucket, so selecting a run reads no config."""
+    paths._bucket.clear()
+    resolve = mocker.patch.object(paths, "resolve_bucket", wraps=resolve_bucket)
+
+    for run_id in ("RUN_A", "RUN_B"):
+        paths.evaluate_prefix(CONFIG_DIR, ENV, run_id)
+        paths.run_outputs_uri(CONFIG_DIR, ENV, run_id)
+    paths.train_slice_root(CONFIG_DIR, ENV)
+    paths.pointer_uri(CONFIG_DIR, ENV)
+
+    assert resolve.call_count == 1
+
+
 def test_an_unknown_environment_raises_rather_than_building_a_path() -> None:
     """A typo'd env would otherwise read an empty prefix and show no runs."""
     with pytest.raises(ValueError, match="nonsuch"):
@@ -105,9 +123,9 @@ def test_an_unknown_environment_raises_rather_than_building_a_path() -> None:
 # ================================================
 
 
-def test_run_outputs_uri_names_the_marker_at_the_run_root(run_prefix: str) -> None:
+def test_run_outputs_uri_names_the_marker_at_the_run_root(run_root: str) -> None:
     """Resolved under the wrong slice, every run badges "not registered"."""
-    expected = f"{run_prefix}{RUN_OUTPUTS_FILENAME}"
+    expected = f"{run_root}{RUN_OUTPUT_FILENAME}"
     assert paths.run_outputs_uri(CONFIG_DIR, ENV, RUN_ID) == expected
 
 

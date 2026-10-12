@@ -21,19 +21,19 @@ from fcstnyctaxi.core.train.backtest_impl import BacktestSummary
 # and .execute() reads as unknown. Cast once rather than at each call site.
 COMPONENT = cast(PythonComponent, backtest)
 
-RUN_PREFIX = "gs://sentinel-bucket/dev/train/t-sentinel/"
+RUN_ROOT = "gs://sentinel-bucket/dev/train/t-sentinel/"
 MODEL_NAME = "model_a"
 GIT_HASH = "abc1234-dirty"
 
 # Distinct, so the pairing assertions also prove no two inputs were swapped.
-COMPOSED_CONFIGS_URI = f"{RUN_PREFIX}compose_configs/"
+COMPOSED_CONFIGS_URI = f"{RUN_ROOT}compose_configs/"
 PANEL_URI = "gs://sentinel-bucket/dev/feature/f-sentinel/panel.parquet"
 CALENDAR_URI = "gs://sentinel-bucket/dev/feature/f-sentinel/calendar.parquet"
 EXOG_URI = "gs://sentinel-bucket/dev/feature/f-sentinel/exogenous.parquet"
 
-# Derived from run_prefix, never a literal: the convention is the wrapper's, and a
+# Derived from run_root, never a literal: the convention is the wrapper's, and a
 # hardcoded string here would restate it rather than check it.
-SIDECAR_URI = f"{RUN_PREFIX}backtest/{MODEL_NAME}/"
+SIDECAR_URI = f"{RUN_ROOT}backtest/{MODEL_NAME}/"
 
 # Real, not a Mock: a MagicMock unpacks to {}, so the metadata loop checks nothing.
 SUMMARY = BacktestSummary(
@@ -81,7 +81,7 @@ def test_wrapper_places_its_sidecar_pairs_every_input_and_stamps_it(
     assert sidecar.path == ""  # baseline: demonstrably wrong until assigned
 
     COMPONENT.execute(
-        run_prefix=RUN_PREFIX,
+        run_root=RUN_ROOT,
         model_name=MODEL_NAME,
         composed_configs=composed_configs,
         panel=panel,
@@ -122,7 +122,7 @@ def test_missing_git_hash_raises_naming_the_variable(
 
     with pytest.raises(RuntimeError, match="FCST_GIT_HASH"):
         COMPONENT.execute(
-            run_prefix=RUN_PREFIX,
+            run_root=RUN_ROOT,
             model_name=MODEL_NAME,
             composed_configs=composed_configs,
             panel=panel,
@@ -143,7 +143,7 @@ def test_impl_failure_propagates_and_leaves_metadata_unstamped(
 
     with pytest.raises(ValueError, match="named for its model"):
         COMPONENT.execute(
-            run_prefix=RUN_PREFIX,
+            run_root=RUN_ROOT,
             model_name=MODEL_NAME,
             composed_configs=composed_configs,
             panel=panel,

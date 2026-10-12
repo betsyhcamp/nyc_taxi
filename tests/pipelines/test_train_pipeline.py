@@ -238,18 +238,18 @@ def test_every_artifact_reader_shares_one_importer(tmp_path: Path) -> None:
         assert len(set(producer_of.values())) == 1
 
 
-def test_every_task_taking_a_run_prefix_takes_it_from_compose(tmp_path: Path) -> None:
-    """Test that no task re-derives run_prefix: that would compose the environment
+def test_every_task_taking_a_run_root_takes_it_from_compose(tmp_path: Path) -> None:
+    """Test that no task re-derives run_root: that would compose the environment
     destination a second time, the exception only the compose wrapper was granted."""
     ir = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)
-    takers = _tasks_taking_parameter(ir, "run_prefix")
+    takers = _tasks_taking_parameter(ir, "run_root")
 
     # Non-vacuity, naming every non-backtest reader: a renamed input would drop one.
     assert set(_backtest_tasks(ir)) | {"evaluate", "final-fit"} <= set(takers)
     for task in takers.values():
-        source = task["inputs"]["parameters"]["run_prefix"]["taskOutputParameter"]
+        source = task["inputs"]["parameters"]["run_root"]["taskOutputParameter"]
         assert source["producerTask"] == "compose-configs"
-        assert source["outputParameterKey"] == "run_prefix"
+        assert source["outputParameterKey"] == "run_root"
 
 
 def test_every_task_reading_composed_configs_reads_what_compose_wrote(

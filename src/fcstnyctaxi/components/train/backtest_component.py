@@ -13,7 +13,7 @@ _IMAGE = require_digest_ref(os.environ.get("FCST_TRAIN_IMAGE"), "FCST_TRAIN_IMAG
 
 @dsl.component(base_image=_IMAGE, packages_to_install=[])
 def backtest(
-    run_prefix: str,
+    run_root: str,
     model_name: str,
     composed_configs: Input[Artifact],
     panel: Input[Dataset],
@@ -26,7 +26,7 @@ def backtest(
     One task per model, so `model_name` is a compile-time constant.
 
     Args:
-        run_prefix (str): The run root, from `compose_configs`; this step appends
+        run_root (str): The run root, from `compose_configs`; this step appends
             its own name and the model's.
         model_name (str): Selects the composed config and names the sidecar.
         composed_configs (Input[Artifact]): The compose step's directory, with
@@ -47,6 +47,8 @@ def backtest(
     from pathlib import Path
 
     from fcstnyctaxi.core.train.backtest_impl import backtest_impl
+    from fcstnyctaxi.lib.storage_layout import build_prefix_uri
+    from fcstnyctaxi.schemas.storage.train import BACKTEST_DIR
 
     # Unreachable in the DAG: compose_configs reads the same baked value from the
     # same image and fails first. Kept for a direct call.
@@ -59,7 +61,7 @@ def backtest(
 
     # Artifact.path recomputes from self.uri, so this MUST precede the .path read
     # below. Reversed, the run succeeds at KFP's own prefix.
-    sidecar.uri = f"{run_prefix}backtest/{model_name}/"
+    sidecar.uri = build_prefix_uri(run_root, BACKTEST_DIR, model_name)
 
     summary = backtest_impl(
         panel_path=Path(panel.path),

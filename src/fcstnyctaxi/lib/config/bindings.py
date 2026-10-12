@@ -46,12 +46,13 @@ binding alone, which is what ``config/README.md``'s parity rule asks for — and
 is why a slice with no project-owned destinations never calls ``compose_config``
 with an empty sequence.
 
-``available_environments``, ``require_known_environment``,
+``available_environments``, ``require_known_environment``, ``resolve_bucket``,
 ``resolve_model_roles`` and ``resolve_model_names`` are the only functions here
 that touch the filesystem, and the only ones that take ``config_dir``. The first
-two discover the environment set; the last two compose the destination that
-holds the model set, ``resolve_model_names`` over ``resolve_model_roles``.
-Every other function is a pure declaration.
+two discover the environment set and ``resolve_bucket`` reads one field of it;
+the last two compose the destination that holds the model set,
+``resolve_model_names`` over ``resolve_model_roles``. Every other function is a
+pure declaration.
 """
 
 from pathlib import Path
@@ -134,6 +135,30 @@ def require_known_environment(config_dir: Path, env: str) -> None:
         )
     if env not in available:
         raise ValueError(f"Unknown env {env!r}; available: {', '.join(available)}")
+
+
+def resolve_bucket(config_dir: Path, env: str) -> str:
+    """The bucket ``environments/<env>.yaml`` declares: the one config read paths need.
+
+    Separate from the path builders, which take the bucket as a string, so a caller
+    already holding one never recomposes the environment.
+
+    Args:
+        config_dir (Path): Root of the config tree.
+        env (str): The selector; needs an ``environments/<env>.yaml``.
+
+    Raises:
+        ValueError: If no ``environments/<env>.yaml`` exists, or on any composition
+            failure.
+
+    Returns:
+        str: The bucket name, without the scheme.
+    """
+    require_known_environment(config_dir, env)
+    environment = cast(
+        EnvironmentConfig, compose_config(config_dir, environment_bindings(env)).config
+    )
+    return environment.storage.bucket_name
 
 
 # ================================================
