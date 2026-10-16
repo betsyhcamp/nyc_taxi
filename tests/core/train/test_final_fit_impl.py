@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import yaml
+from finished_run import file_bytes, finish_run
 from pandas.testing import assert_frame_equal
 from stand_in_model import (
     STAND_IN_EXOG_FEATURES,
@@ -538,3 +539,18 @@ def test_summary_as_dict_survives_json_serialization(panel: pd.DataFrame) -> Non
         json.dumps(dataclasses.asdict(summary))
 
     json.dumps(summary.as_dict(), allow_nan=False)
+
+
+def test_a_finished_run_is_refused_and_left_byte_unchanged(
+    staged: dict[str, Any],
+) -> None:
+    """Under a cached compose_configs this step re-executes alone, so it must refuse."""
+    final_fit_impl(**staged)
+    run_dir = staged["compose_configs_dir"].parent
+    finish_run(run_dir)
+    before = file_bytes(run_dir)
+
+    with pytest.raises(ValueError, match="finished"):
+        final_fit_impl(**staged)
+
+    assert file_bytes(run_dir) == before

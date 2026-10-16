@@ -10,6 +10,7 @@ from google.api_core.exceptions import NotFound
 from google.cloud import aiplatform
 
 from fcstnyctaxi.lib.registry_ids import compose_display_name, compose_model_id
+from fcstnyctaxi.lib.run_identity import require_unfinished_run
 from fcstnyctaxi.lib.storage_layout import (
     SourcedPath,
     latest_pointer_path,
@@ -97,9 +98,9 @@ def register_model_impl(
 
     Keyword-only: two `Path` parameters transpose without a type error. Provenance is
     read, never passed, the run pointer included: its path is derived from `run_dir`.
-    `run_output.json` is deleted after the file checks and written second to last,
-    ahead of the pointer. A documented exception to core/'s no-GCP-clients rule; an
-    injected client would put the filter strings beyond the tests.
+    `run_output.json` is written second to last, ahead of the pointer. A documented
+    exception to core/'s no-GCP-clients rule; an injected client would put the filter
+    strings beyond the tests.
 
     Args:
         bundle (SourcedPath): The final fit bundle; path read, URI uploaded.
@@ -109,9 +110,9 @@ def register_model_impl(
         run_dir (Path): The run root, where `run_output.json` is written.
 
     Raises:
-        ValueError: If `run_dir` or the bundle fails its check, a composed name
-            exceeds its cap, this run id is registered at another git_hash, or
-            the environment root holds no run pointer.
+        ValueError: If `run_dir` or the bundle fails its check, the run finished, a
+            composed name exceeds its cap, this run id is registered at another
+            git_hash, or the environment root holds no run pointer.
         RuntimeError: If more than one version carries this run id.
         ValidationError: If a file fails to revalidate on read.
 
@@ -125,6 +126,7 @@ def register_model_impl(
         raise ValueError(
             f"run_dir {run_dir} is not the root of run {identity.train_run_id!r}."
         )
+    require_unfinished_run(run_dir)
 
     manifest_path = bundle.path / "final_fit_manifest.json"
     if not manifest_path.is_file():
@@ -174,9 +176,6 @@ def register_model_impl(
     # Validated, then discarded: pydantic drops keys it does not declare, so the write
     # below edits this raw object instead of round-tripping the model.
     LatestRunPointer.model_validate(pointer)
-
-    # Otherwise a failed rerun leaves the old record claiming the pipeline finished.
-    (run_dir / RUN_OUTPUT_FILENAME).unlink(missing_ok=True)
 
     aiplatform.init(
         project=environment.compute.project_id, location=environment.compute.location
@@ -229,8 +228,8 @@ def register_model_impl(
         outputs.model_dump_json(indent=2, exclude_none=True) + "\n"
     )
 
-    # A rerun of the run the pointer already names leaves it briefly naming a run
-    # whose marker was deleted above. Accepted; logged so it is visible afterward.
+    # Past require_unfinished_run, reached only by a same-id race or a deleted
+    # record. Logged so it is visible afterward.
     prior = pointer.get("train")
     if isinstance(prior, dict) and prior.get("train_run_id") == identity.train_run_id:
         _log.info(

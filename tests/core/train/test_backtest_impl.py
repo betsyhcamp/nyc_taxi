@@ -6,6 +6,7 @@ from typing import Any, cast
 import numpy as np
 import pandas as pd
 import pytest
+from finished_run import file_bytes, finish_run
 from tsbricks.backtesting import generate_folds
 from tsbricks.backtesting.schema import BacktestConfig
 
@@ -891,3 +892,18 @@ def test_the_snapshots_are_trimmed_to_the_contract(completed_run: Path) -> None:
     assert tuple(panel_snapshot.columns) == PANEL_REQUIRED_COLUMNS
     assert tuple(calendar_snapshot.columns) == CALENDAR_ALLOWED_COLUMNS
     assert tuple(exog_snapshot.columns) == ADDITIONAL_EXOG_REQUIRED_COLUMNS
+
+
+def test_a_finished_run_is_refused_and_left_byte_unchanged(
+    staged: dict[str, Any],
+) -> None:
+    """Under a cached compose_configs this step re-executes alone, so it must refuse."""
+    backtest_impl(**staged)
+    run_dir = staged["compose_configs_dir"].parent
+    finish_run(run_dir)
+    before = file_bytes(run_dir)
+
+    with pytest.raises(ValueError, match="finished"):
+        backtest_impl(**staged)
+
+    assert file_bytes(run_dir) == before

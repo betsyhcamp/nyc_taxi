@@ -2,6 +2,7 @@
 
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 
 from fcstnyctaxi.schemas.config.common import SliceName
 from fcstnyctaxi.schemas.run_identity import (
@@ -9,6 +10,7 @@ from fcstnyctaxi.schemas.run_identity import (
     RUN_ID_TIMESTAMP_FORMAT,
     TRAIN_RUN_ID_PATTERN,
 )
+from fcstnyctaxi.schemas.storage.common import RUN_OUTPUT_FILENAME
 
 
 def _format_run_id(slice_name: SliceName, when: datetime, *, local: bool) -> str:
@@ -79,4 +81,25 @@ def require_path_safe_run_id(run_id: str, flag_name: str) -> None:
         raise ValueError(
             f"{flag_name} {run_id!r} must start with a letter or digit and "
             "contain only letters, digits, '.', '_' or '-'."
+        )
+
+
+def require_unfinished_run(run_dir: Path) -> None:
+    """Refuse to write into a run whose completion marker exists.
+
+    Every step that writes under a run root calls it before its first write: a step
+    can re-execute under a cached compose_configs, and each deletes its own marker
+    before rewriting.
+
+    Args:
+        run_dir (Path): The run root, the gcsfuse mount on Vertex or the local mirror.
+
+    Raises:
+        ValueError: `run_output.json` exists under `run_dir`.
+    """
+    marker = run_dir / RUN_OUTPUT_FILENAME
+    if marker.is_file():
+        raise ValueError(
+            f"Run {run_dir.name!r} finished: {marker} exists, and a finished run is "
+            "never rewritten. Mint a new id to run again."
         )

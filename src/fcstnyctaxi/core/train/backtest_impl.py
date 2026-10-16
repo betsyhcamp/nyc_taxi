@@ -40,6 +40,7 @@ from fcstnyctaxi.lib.period_utils import (
     compute_series_weights,
     normalized_origin_horizon_pairs,
 )
+from fcstnyctaxi.lib.run_identity import require_unfinished_run
 from fcstnyctaxi.lib.storage_layout import composed_config_filename
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
@@ -430,7 +431,8 @@ def backtest_impl(
 
     Raises:
         ValueError: If `out_dir` is not this model's directory under that run root, if
-            `run_identity.json` is absent, or on a failed lineage or column check.
+            `run_identity.json` is absent, if the run finished, or on a failed lineage
+            or column check.
         ValidationError: If a config or the identity fails to revalidate on read.
 
     Returns:
@@ -457,6 +459,7 @@ def backtest_impl(
             f"out_dir {out_dir} must sit under the run root "
             f"{identity.train_run_id!r}: the manifest would name a run it is not under."
         )
+    require_unfinished_run(compose_configs_dir.parent)
 
     # Otherwise a failed rerun leaves the old manifest over a mix of two runs' files.
     (out_dir / _MANIFEST_FILENAME).unlink(missing_ok=True)

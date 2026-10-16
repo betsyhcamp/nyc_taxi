@@ -1,4 +1,5 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from pathlib import Path
 
 import pytest
 
@@ -7,8 +8,15 @@ from fcstnyctaxi.lib.run_identity import (
     mint_run_id,
     require_path_safe_run_id,
     require_train_run_id,
+    require_unfinished_run,
 )
 from fcstnyctaxi.schemas.run_identity import RUN_ID_TIMESTAMP_FORMAT
+from fcstnyctaxi.schemas.run_outputs import (
+    RegisteredModel,
+    TrainingData,
+    TrainRunOutputs,
+)
+from fcstnyctaxi.schemas.storage.common import RUN_OUTPUT_FILENAME
 
 # Zero microseconds, the instant isoformat() prints without a fraction.
 PINNED_WHEN = datetime(2026, 10, 9, 8, 32, 29, tzinfo=UTC)
@@ -80,3 +88,45 @@ def test_require_path_safe_run_id_rejects_unsafe_ids(run_id: str) -> None:
 def test_require_path_safe_run_id_accepts_a_minted_feature_id() -> None:
     """A guard rejecting mint_run_id's output would fail every unnamed Feature run."""
     require_path_safe_run_id(mint_run_id("feature"), "--feature-run-id")
+
+
+def _finish(run_dir: Path) -> None:
+    """run_output.json as register_model_impl writes it, read back as a self-check."""
+    outputs = TrainRunOutputs(
+        train_run_id=run_dir.name,
+        published=RegisteredModel(
+            model_tag="projects/1/locations/us-central1/models/m-naive@1",
+            bundle_uri=f"gs://bucket/dev/train/{run_dir.name}/final_fit/naive/",
+        ),
+        feature_run_id="feature-20261009t000000000000z",
+        env="dev",
+        schema_version="0.1.0",
+        git_hash="a" * 40,
+        completed_at=PINNED_WHEN,
+        training_data=TrainingData(
+            train_end_ds=date(2025, 10, 19), n_series=3, n_obs=60
+        ),
+    )
+    run_dir.mkdir(parents=True)
+    record = run_dir / RUN_OUTPUT_FILENAME
+    record.write_text(outputs.model_dump_json(indent=2, exclude_none=True) + "\n")
+    assert TrainRunOutputs.model_validate_json(record.read_text()) == outputs
+
+
+def test_require_unfinished_run_refuses_a_finished_run_naming_it(
+    tmp_path: Path,
+) -> None:
+    """A rerun would delete its marker and rewrite what a registered version names."""
+    run_dir = tmp_path / VALID_ID
+    _finish(run_dir)
+
+    with pytest.raises(ValueError, match=VALID_ID):
+        require_unfinished_run(run_dir)
+
+
+def test_require_unfinished_run_passes_a_run_with_no_record(tmp_path: Path) -> None:
+    """An interrupted run has no record, and resuming one is why ids are reused."""
+    run_dir = tmp_path / VALID_ID
+    run_dir.mkdir()
+
+    require_unfinished_run(run_dir)

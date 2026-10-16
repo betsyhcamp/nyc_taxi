@@ -460,22 +460,50 @@ def test_a_second_run_adds_a_version_to_the_same_resource(
     assert second.model_tag.endswith("@2")
 
 
-def test_a_restart_uploads_nothing_and_writes_the_same_record(
-    run_dir: Path, registry: FakeRegistry
-) -> None:
-    """A filter naming the wrong label finds nothing, so the rerun would upload again.
-    Only the completion time may differ between the two records."""
-    first = _register(run_dir)
-    first_outputs = _outputs(run_dir)
+def _die_writing_the_first_record(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The first record write raises, after the upload: the restart state that remains
+    reachable once a finished run is refused."""
+    original = TrainRunOutputs.model_dump_json
+    attempts: list[dict[str, Any]] = []
 
-    second = _register(run_dir)
+    def _dump_or_die(self: TrainRunOutputs, **kwargs: Any) -> str:
+        attempts.append(kwargs)
+        if len(attempts) == 1:
+            raise OSError("the run died writing its record")
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(TrainRunOutputs, "model_dump_json", _dump_or_die)
+
+
+def test_a_restart_uploads_nothing_and_a_finished_run_is_refused(
+    run_dir: Path, registry: FakeRegistry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A filter naming the wrong label finds nothing, so the restart would upload again;
+    once the record exists, a third call changes nothing."""
+    _die_writing_the_first_record(monkeypatch)
+    with pytest.raises(OSError):
+        _register(run_dir)
+    # Self-check: the version exists and the record does not.
+    assert len(registry.uploads) == 1
+    assert not (run_dir / RUN_OUTPUT_FILENAME).exists()
+
+    restarted = _register(run_dir)
 
     assert len(registry.uploads) == 1
-    assert not second.uploaded
-    assert second.model_tag == first.model_tag
-    assert _outputs(run_dir).model_dump(exclude={"completed_at"}) == (
-        first_outputs.model_dump(exclude={"completed_at"})
-    )
+    assert not restarted.uploaded
+    uploaded_tag = f"{registry.resource_name(_expected_model_id())}@1"
+    assert _outputs(run_dir).published.model_tag == uploaded_tag
+
+    record = (run_dir / RUN_OUTPUT_FILENAME).read_bytes()
+    pointer = latest_pointer_path(run_dir).read_bytes()
+    calls = len(_sdk(registry).mock_calls)
+
+    with pytest.raises(ValueError, match="finished"):
+        _register(run_dir)
+
+    assert (run_dir / RUN_OUTPUT_FILENAME).read_bytes() == record
+    assert latest_pointer_path(run_dir).read_bytes() == pointer
+    assert len(_sdk(registry).mock_calls) == calls
 
 
 def test_a_rerun_on_another_commit_raises_and_leaves_no_record(
@@ -483,10 +511,13 @@ def test_a_rerun_on_another_commit_raises_and_leaves_no_record(
     run_dir: Path,
     registry: FakeRegistry,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Skipping would leave a version whose git_hash label names a commit that did not
     produce the bytes now at its URI; the message names both."""
-    _register(run_dir)
+    _die_writing_the_first_record(monkeypatch)
+    with pytest.raises(OSError):
+        _register(run_dir)
     _stage(inputs, tmp_path, git_hash=OTHER_GIT_HASH)
 
     with pytest.raises(ValueError, match=f"{GIT_HASH}.*{OTHER_GIT_HASH}"):
@@ -625,20 +656,6 @@ def test_the_seeded_pointer_is_where_the_impl_reads_it(
 ) -> None:
     """The fixture places it by the layout; the impl derives it from run_dir alone."""
     assert latest_pointer_path(run_dir) == tmp_path / ENV / LATEST_POINTER_FILENAME
-
-
-def test_a_missing_pointer_raises_before_the_marker_is_deleted(
-    run_dir: Path, registry: FakeRegistry
-) -> None:
-    """Seeded once per environment, so absence means the wrong root, not a lost file."""
-    _register(run_dir)
-    earlier = (run_dir / RUN_OUTPUT_FILENAME).read_text()
-    latest_pointer_path(run_dir).unlink()
-
-    with pytest.raises(ValueError, match=LATEST_POINTER_FILENAME):
-        _register(run_dir)
-
-    assert (run_dir / RUN_OUTPUT_FILENAME).read_text() == earlier
 
 
 def test_a_missing_pointer_never_reaches_the_registry(

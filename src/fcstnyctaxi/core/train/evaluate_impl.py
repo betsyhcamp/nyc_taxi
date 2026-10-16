@@ -18,6 +18,7 @@ from fcstnyctaxi.lib.fold_metrics import (
     compute_wrmae_pooled,
 )
 from fcstnyctaxi.lib.period_utils import ORIGIN_TIME_UNIT, derive_horizon_label
+from fcstnyctaxi.lib.run_identity import require_unfinished_run
 from fcstnyctaxi.schemas.config.train import ModelRoles, TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 from fcstnyctaxi.schemas.storage.common import RUN_IDENTITY_FILENAME
@@ -747,8 +748,8 @@ def evaluate_impl(
 
     Raises:
         ValueError: If `out_dir` is not this run's evaluate directory, if
-            `run_identity.json` is absent, or on a failed role, lineage, config,
-            calendar or base-frame check.
+            `run_identity.json` is absent, if the run finished, or on a failed role,
+            lineage, config, calendar or base-frame check.
         ValidationError: If the identity or `modeling.yaml` fails to revalidate.
 
     Returns:
@@ -776,6 +777,7 @@ def evaluate_impl(
             f"{identity.train_run_id!r}: every row of four tables would otherwise "
             "state a run the tables are not filed under."
         )
+    require_unfinished_run(compose_configs_dir.parent)
 
     modeling = TrainModelingConfig.model_validate(
         yaml.safe_load((compose_configs_dir / "modeling.yaml").read_text())

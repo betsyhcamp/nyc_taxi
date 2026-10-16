@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import yaml
+from finished_run import file_bytes, finish_run
 
 from fcstnyctaxi.core.train.evaluate_impl import (
     _FOLD_KEYS,
@@ -1800,3 +1801,18 @@ def test_a_failed_rerun_leaves_no_completion_marker(
         evaluate_impl(**staged_run)
 
     assert not marker.exists()
+
+
+def test_a_finished_run_is_refused_and_left_byte_unchanged(
+    staged_run: dict[str, Path],
+) -> None:
+    """Under a cached compose_configs this step re-executes alone, so it must refuse."""
+    evaluate_impl(**staged_run)
+    run_dir = staged_run["compose_configs_dir"].parent
+    finish_run(run_dir)
+    before = file_bytes(run_dir)
+
+    with pytest.raises(ValueError, match="finished"):
+        evaluate_impl(**staged_run)
+
+    assert file_bytes(run_dir) == before
