@@ -1,6 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
+from fcstnyctaxi.lib.run_identity import mint_run_id
 from fcstnyctaxi.schemas.run_identity import FeatureRunIdentity, TrainRunIdentity
 
 _VALID_SHA256 = "deadbeef" * 8  # 64 lowercase hex, the shape hexdigest() returns
@@ -18,7 +19,7 @@ def valid_train_identity() -> dict:
     return {
         "git_hash": "a1b2c3d",
         "feature_run_id": "UTC20260905T120000000000Z",
-        "train_run_id": "UTC20260905T130000000000Z",
+        "train_run_id": "train-20260905t130000000000z",
         "panel_uri": "gs://b/panel.parquet",
         "calendar_uri": "gs://b/calendar.parquet",
         "additional_exog_uri": "gs://b/exogenous.parquet",
@@ -31,6 +32,35 @@ def test_valid_dict_constructs_train_run_identity(valid_train_identity: dict) ->
 
     assert identity.feature_run_id == "UTC20260905T120000000000Z"
     assert identity.panel_uri.startswith("gs://")
+
+
+@pytest.mark.parametrize("local", [False, True], ids=["vertex", "local"])
+def test_train_run_identity_accepts_both_minted_forms(
+    valid_train_identity: dict, local: bool
+) -> None:
+    """Every step reads the identity, so a local run's id must parse as well."""
+    valid_train_identity["train_run_id"] = mint_run_id("train", local=local)
+
+    TrainRunIdentity(**valid_train_identity)
+
+
+@pytest.mark.parametrize(
+    "train_run_id",
+    [
+        pytest.param("20260905t130000000000z", id="bare_old_format"),
+        pytest.param("feature-20260905t130000000000z", id="another_slice"),
+        pytest.param("train-20260905T130000000000Z", id="uppercase"),
+        pytest.param("train-2026090\u0665t130000000000z", id="non_ascii_digit"),
+    ],
+)
+def test_a_malformed_train_run_id_raises(
+    valid_train_identity: dict, train_run_id: str
+) -> None:
+    """The format check every impl inherits when it reads the identity."""
+    valid_train_identity["train_run_id"] = train_run_id
+
+    with pytest.raises(ValidationError, match="train_run_id"):
+        TrainRunIdentity(**valid_train_identity)
 
 
 def test_null_git_hash_raises(valid_train_identity: dict) -> None:

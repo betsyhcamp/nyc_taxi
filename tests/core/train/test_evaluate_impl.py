@@ -36,7 +36,7 @@ from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 
 CONFIG_DIR = get_project_root_dir() / "config"
 FEATURE_RUN_ID = "f-2026-09-18"
-TRAIN_RUN_ID = "t-2026-09-18"
+TRAIN_RUN_ID = "train-20260918t000000000000z"
 
 # ================================================
 # The fixture: two synthetic backtest sidecars and the run root above them

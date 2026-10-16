@@ -47,7 +47,7 @@ from fcstnyctaxi.schemas.run_outputs import (
 
 CONFIG_DIR = get_project_root_dir() / "config"
 FEATURE_RUN_ID = "f-2026-09-17"
-TRAIN_RUN_ID = "t-2026-09-17"
+TRAIN_RUN_ID = "train-20260917t000000000000z"
 MODEL_NAME = "naive"
 
 # ================================================

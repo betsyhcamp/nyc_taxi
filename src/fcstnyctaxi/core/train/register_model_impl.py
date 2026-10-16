@@ -14,7 +14,6 @@ from fcstnyctaxi.lib.storage_layout import (
     SourcedPath,
     latest_pointer_path,
 )
-from fcstnyctaxi.lib.utils import require_label_safe_run_id
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import TrainInfraConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
@@ -107,8 +106,8 @@ def register_model_impl(
         run_dir (Path): The run root, where `run_output.json` is written.
 
     Raises:
-        ValueError: If the run id, `run_dir` or the bundle fails its check, a composed
-            name exceeds its cap, this run id is registered at another git_hash, or
+        ValueError: If `run_dir` or the bundle fails its check, a composed name
+            exceeds its cap, this run id is registered at another git_hash, or
             the environment root holds no run pointer.
         RuntimeError: If more than one version carries this run id.
         ValidationError: If a file fails to revalidate on read.
@@ -119,8 +118,6 @@ def register_model_impl(
     identity = TrainRunIdentity.model_validate_json(
         (compose_configs_dir.parent / RUN_IDENTITY_FILENAME).read_text()
     )
-    # Before any label is built: the schema holds the id to min_length=1 alone.
-    require_label_safe_run_id(identity.train_run_id, "run_identity.json train_run_id")
     if run_dir.name != identity.train_run_id:
         raise ValueError(
             f"run_dir {run_dir} is not the root of run {identity.train_run_id!r}."

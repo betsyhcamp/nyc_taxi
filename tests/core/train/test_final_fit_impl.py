@@ -34,7 +34,7 @@ from fcstnyctaxi.schemas.storage.common import BUNDLE_MODEL_DIR
 
 CONFIG_DIR = get_project_root_dir() / "config"
 FEATURE_RUN_ID = "f-2026-09-21"
-TRAIN_RUN_ID = "t-2026-09-21"
+TRAIN_RUN_ID = "train-20260921t000000000000z"
 MODEL_NAME = STAND_IN_MODEL_NAME
 _MARKER = "final_fit_manifest.json"
 

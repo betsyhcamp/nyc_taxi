@@ -12,7 +12,7 @@ from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 
-RUN_ID = "20260929t045735959418z"
+RUN_ID = "train-20260929t045735959418z"
 FEATURE_RUN_ID = "20260923t011300349443z"
 MODEL_TAG = "projects/1/locations/us-central1/models/model-a@11"
 

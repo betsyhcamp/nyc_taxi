@@ -86,7 +86,7 @@ class TrainRunIdentity(BaseModel):
 
     git_hash: str = Field(min_length=1)
     feature_run_id: str = Field(min_length=1)
-    train_run_id: str = Field(min_length=1)
+    train_run_id: str = Field(pattern=TRAIN_RUN_ID_PATTERN)
     panel_uri: str = Field(pattern=r"^gs://")
     calendar_uri: str = Field(pattern=r"^gs://")
     additional_exog_uri: str = Field(pattern=r"^gs://")

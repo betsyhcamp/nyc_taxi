@@ -27,8 +27,8 @@ from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 
 APP = str(get_project_root_dir() / "dashboard" / "app.py")
-SELECTED = "20260929t045735959418z"
-OTHER = "20260929t045146753815z"
+SELECTED = "train-20260929t045735959418z"
+OTHER = "train-20260929t045146753815z"
 FEATURE_RUN_ID = "20260923t011300349443z"
 ORIGIN = pd.Timestamp("2025-03-23")
 PREDICTED_MONTH = {"horizon_1": 202504, "horizon_2": 202505}

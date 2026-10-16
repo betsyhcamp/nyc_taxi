@@ -1,5 +1,4 @@
 import os
-import re
 import subprocess
 from pathlib import Path
 
@@ -61,29 +60,6 @@ def get_project_root_dir(start_path: Path | None = None) -> Path:
     if env_root:
         return Path(env_root).resolve()
     return find_root_project_dir(start_path=start_path)
-
-
-def require_label_safe_run_id(run_id: str, flag_name: str) -> None:
-    """Reject a Training run id that is not a legal GCP label value for its model.
-
-    Stricter than `require_path_safe_run_id`, which it replaces. Not for a Feature
-    run id, whose format is not this repo's.
-
-    Args:
-        run_id (str): The identifier to check.
-        flag_name (str): The CLI flag it arrived on, named in the error.
-
-    Raises:
-        ValueError: run_id does not match `[a-z0-9][a-z0-9_-]*` or exceeds 64
-            characters.
-    """
-    # The SDK does not enforce this; the service does, at the pipeline's last task.
-    # Lowercasing there instead would collide ids differing only in case.
-    if len(run_id) > 64 or not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", run_id):
-        raise ValueError(
-            f"{flag_name} {run_id!r} must match [a-z0-9][a-z0-9_-]*, at most 64 "
-            "characters."
-        )
 
 
 def require_git_hash(repo_dir: Path) -> str:

@@ -24,7 +24,7 @@ from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 CONFIG_DIR = get_project_root_dir() / "config"
 
 FEATURE_RUN_ID = "f-2026-09-08"
-TRAIN_RUN_ID = "t-2026-09-08"
+TRAIN_RUN_ID = "train-20260908t000000000000z"
 GIT_HASH = "abc1234"
 
 _WEEKS_PER_MONTH = 4
@@ -492,3 +492,27 @@ def test_one_artifact_passed_in_two_slots_raises(
         )
 
     assert not _run_dir(tmp_path).exists()
+
+
+def test_an_off_format_train_run_id_raises_before_any_write(tmp_path: Path) -> None:
+    """The identity is built before the first write, so step 1 refuses the format."""
+    # The old minter's form, under a root named by it, so only the format refuses it.
+    bare_id = TRAIN_RUN_ID.removeprefix("train-")
+    panel, calendar, additional_exog = _write_inputs(
+        tmp_path, _panel_frame(), _calendar_frame()
+    )
+
+    with pytest.raises(ValidationError, match="train_run_id"):
+        compose_configs_impl(
+            config_dir=CONFIG_DIR,
+            env="dev",
+            panel=panel,
+            calendar=calendar,
+            additional_exog=additional_exog,
+            expected_feature_run_id=FEATURE_RUN_ID,
+            train_run_id=bare_id,
+            git_hash=GIT_HASH,
+            out_dir=tmp_path / bare_id / "compose_configs",
+        )
+
+    assert not (tmp_path / bare_id).exists()

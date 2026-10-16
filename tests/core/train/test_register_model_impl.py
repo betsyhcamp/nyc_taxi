@@ -12,6 +12,7 @@ import pytest
 import yaml
 from google.api_core.exceptions import AlreadyExists, NotFound
 from google.cloud.aiplatform.models import VersionInfo
+from pydantic import ValidationError
 from pytest_mock import MockerFixture
 from stand_in_model import STAND_IN_MODEL_NAME, stand_in_config_dir
 
@@ -46,8 +47,8 @@ from fcstnyctaxi.schemas.storage.common import (
 
 CONFIG_DIR = get_project_root_dir() / "config"
 ENV = "dev"
-TRAIN_RUN_ID = "t-20260921t000000000000z"
-OTHER_RUN_ID = "t-20260922t000000000000z"
+TRAIN_RUN_ID = "train-20260921t000000000000z"
+OTHER_RUN_ID = "train-20260922t000000000000z"
 # Feature's format is not ours, so its uppercase stays legal throughout.
 FEATURE_RUN_ID = "f-20260920T000000000000Z"
 GIT_HASH = "a" * 40
@@ -531,15 +532,21 @@ def test_a_run_dir_that_is_not_this_runs_root_is_refused(
     assert _sdk(registry).mock_calls == []
 
 
-def test_a_train_run_id_that_is_not_label_safe_is_refused(
-    inputs: tuple[SourcedPath, SourcedPath, SourcedPath],
-    registry: FakeRegistry,
-    tmp_path: Path,
+def test_a_run_minted_before_the_slice_prefix_is_refused(
+    run_dir: Path, registry: FakeRegistry
 ) -> None:
-    """A run minted before ids were lowercased; the service would refuse its label."""
-    legacy_run_dir = _stage(inputs, tmp_path, run_id="t-20260913T000000000000Z")
+    """Its identity no longer parses, so it is refused before any registry call."""
+    # As the old compose left it: the root and the record both name the bare id.
+    bare_id = TRAIN_RUN_ID.removeprefix("train-")
+    legacy_run_dir = run_dir.rename(run_dir.with_name(bare_id))
+    identity_path = legacy_run_dir / "run_identity.json"
+    staged = json.loads(identity_path.read_text())
+    legacy = TrainRunIdentity.model_construct(**{**staged, "train_run_id": bare_id})
+    identity_path.write_text(legacy.model_dump_json(indent=2) + "\n")
+    # Self-check: the record differs from the staged one in the id alone.
+    assert json.loads(identity_path.read_text()) == {**staged, "train_run_id": bare_id}
 
-    with pytest.raises(ValueError, match="train_run_id"):
+    with pytest.raises(ValidationError, match="train_run_id"):
         _register(legacy_run_dir)
 
     assert _sdk(registry).mock_calls == []
