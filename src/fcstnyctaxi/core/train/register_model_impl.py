@@ -37,6 +37,7 @@ _log = logging.getLogger(__name__)
 
 _RUN_ID_LABEL = "train_run_id"
 _GIT_HASH_LABEL = "git_hash"
+_ENV_LABEL = "env"
 _SCHEMA_VERSION = "0.1.0"
 
 
@@ -57,10 +58,10 @@ class RegisterModelSummary:
         return asdict(self)
 
 
-def _this_runs_version(model: Any, identity: TrainRunIdentity) -> Any | None:
+def _this_runs_version(model: Any, identity: TrainRunIdentity, env: str) -> Any | None:
     """The version this run registered earlier, or None if there is none.
 
-    One label filtered, the other read back: the RPC documents no `AND`, and
+    One label filtered, the others read back: the RPC documents no `AND`, and
     `VersionInfo` drops the labels the response carried.
     """
     registry = aiplatform.ModelRegistry(model)
@@ -83,6 +84,14 @@ def _this_runs_version(model: Any, identity: TrainRunIdentity) -> Any | None:
             f"version {hits[0].version_id} of {model.resource_name} was registered "
             f"for train_run_id {identity.train_run_id!r} at git_hash {stored!r}, "
             f"but this run is at {identity.git_hash!r}."
+        )
+    stored_env = version.labels.get(_ENV_LABEL)
+    # dev and gate share one registry, and no claim check sees across run roots.
+    if stored_env != env:
+        raise ValueError(
+            f"version {hits[0].version_id} of {model.resource_name} was registered "
+            f"for train_run_id {identity.train_run_id!r} in env {stored_env!r}, but "
+            f"this run is in {env!r}. Mint a new id."
         )
     return version
 
@@ -112,7 +121,7 @@ def register_model_impl(
     Raises:
         ValueError: If `run_dir` or the bundle fails its check, the run finished, a
             composed name exceeds its cap, this run id is registered at another
-            git_hash, or the environment root holds no run pointer.
+            git_hash or in another env, or the environment root holds no run pointer.
         RuntimeError: If more than one version carries this run id.
         ValidationError: If a file fails to revalidate on read.
 
@@ -184,7 +193,7 @@ def register_model_impl(
         model = aiplatform.Model(model_name=model_id)
     except NotFound:
         model = None
-    version = None if model is None else _this_runs_version(model, identity)
+    version = None if model is None else _this_runs_version(model, identity, env)
 
     uploaded = version is None
     if version is None:
@@ -198,6 +207,7 @@ def register_model_impl(
             labels={
                 _RUN_ID_LABEL: identity.train_run_id,
                 _GIT_HASH_LABEL: identity.git_hash,
+                _ENV_LABEL: env,
             },
             version_description=(
                 f"feature_run_id={identity.feature_run_id} "

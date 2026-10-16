@@ -51,6 +51,7 @@ TRAIN_RUN_ID = "train-20260921t000000000000z"
 OTHER_RUN_ID = "train-20260922t000000000000z"
 # Feature's format is not ours, so its uppercase stays legal throughout.
 FEATURE_RUN_ID = "f-20260920T000000000000Z"
+OTHER_FEATURE_RUN_ID = "f-20260921T000000000000Z"
 GIT_HASH = "a" * 40
 OTHER_GIT_HASH = "b" * 40
 SERVING_IMAGE = "us-central1-docker.pkg.dev/p/r/train@sha256:" + "c" * 64
@@ -231,6 +232,7 @@ def _compose(
     *,
     config_dir: Path | None = None,
     env: str = ENV,
+    feature_run_id: str = FEATURE_RUN_ID,
 ) -> Path:
     """Run compose_configs for one run, in the layout the resolvers really produce.
 
@@ -245,7 +247,7 @@ def _compose(
         panel=panel,
         calendar=calendar,
         additional_exog=additional_exog,
-        expected_feature_run_id=FEATURE_RUN_ID,
+        expected_feature_run_id=feature_run_id,
         train_run_id=run_id,
         git_hash=git_hash,
         out_dir=run_dir / "compose_configs",
@@ -295,11 +297,11 @@ def run_dir(
     return run_dir
 
 
-def _bundle(run_dir: Path) -> SourcedPath:
+def _bundle(run_dir: Path, env: str = ENV) -> SourcedPath:
     """The bundle as its wrapper hands it over: a mount path and a gs:// URI."""
     return SourcedPath(
         path=run_dir / "final_fit" / MODEL_NAME,
-        uri=f"gs://bucket/{ENV}/train/{run_dir.name}/final_fit/{MODEL_NAME}/",
+        uri=f"gs://bucket/{env}/train/{run_dir.name}/final_fit/{MODEL_NAME}/",
     )
 
 
@@ -375,6 +377,7 @@ def test_the_upload_is_located_labeled_and_pointed_from_the_runs_own_record(
     assert upload["labels"] == {
         "train_run_id": identity.train_run_id,
         "git_hash": identity.git_hash,
+        "env": ENV,
     }
     assert upload["artifact_uri"] == _bundle(run_dir).uri
     assert upload["serving_container_image_uri"] == SERVING_IMAGE
@@ -518,13 +521,45 @@ def test_a_rerun_on_another_commit_raises_and_leaves_no_record(
     # The same id in gate, whose run root no claim check in dev sees; one registry.
     gate_run_dir = _compose(inputs, tmp_path, TRAIN_RUN_ID, OTHER_GIT_HASH, env="gate")
     _fit(inputs, gate_run_dir)
-    gate_bundle = SourcedPath(
-        path=gate_run_dir / "final_fit" / MODEL_NAME,
-        uri=f"gs://bucket/gate/train/{TRAIN_RUN_ID}/final_fit/{MODEL_NAME}/",
-    )
 
     with pytest.raises(ValueError, match=f"{GIT_HASH}.*{OTHER_GIT_HASH}"):
-        _register(gate_run_dir, bundle=gate_bundle)
+        _register(gate_run_dir, bundle=_bundle(gate_run_dir, env="gate"))
+
+    assert len(registry.uploads) == 1
+    assert not (gate_run_dir / RUN_OUTPUT_FILENAME).exists()
+
+
+def test_a_run_id_reused_in_another_environment_raises_and_leaves_no_record(
+    inputs: tuple[SourcedPath, SourcedPath, SourcedPath],
+    run_dir: Path,
+    registry: FakeRegistry,
+    tmp_path: Path,
+) -> None:
+    """One registry serves dev and gate, so a gate run would otherwise record dev's
+    version against its own bundle and another Feature run."""
+    _register(run_dir)
+    panel, calendar, additional_exog = inputs
+    other_panel = SourcedPath(
+        path=tmp_path / "other_inputs" / "time_series.parquet",
+        uri="gs://bucket/other/time_series.parquet",
+    )
+    other_panel.path.parent.mkdir()
+    pd.read_parquet(panel.path).assign(feature_run_id=OTHER_FEATURE_RUN_ID).to_parquet(
+        other_panel.path
+    )
+    other_inputs = (other_panel, calendar, additional_exog)
+    gate_run_dir = _compose(
+        other_inputs,
+        tmp_path,
+        TRAIN_RUN_ID,
+        GIT_HASH,
+        env="gate",
+        feature_run_id=OTHER_FEATURE_RUN_ID,
+    )
+    _fit(other_inputs, gate_run_dir)
+
+    with pytest.raises(ValueError, match="'dev'.*'gate'"):
+        _register(gate_run_dir, bundle=_bundle(gate_run_dir, env="gate"))
 
     assert len(registry.uploads) == 1
     assert not (gate_run_dir / RUN_OUTPUT_FILENAME).exists()

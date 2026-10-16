@@ -29,11 +29,13 @@ commit 11 (landed in GCS).
 
 import ast
 import importlib.util
+import re
 from pathlib import Path
 
 from tsbricks.backtesting.schema import BacktestConfig
 
 from fcstnyctaxi.lib.config.bindings import (
+    available_environments,
     model_names_from_roles,
     require_known_environment,
     resolve_bucket,
@@ -276,3 +278,10 @@ def test_model_freq_matches_base_data_freq() -> None:
     # Required, not only checked: naive_weekly has no default for freq.
     assert declared["naive"] == data_freq
     assert set(declared.values()) <= {data_freq, None}, declared
+
+
+def test_every_environment_name_is_a_legal_registry_label() -> None:
+    """Each env becomes a registry label, so an illegal name fails registration."""
+    # The SDK's Model label rule (aiplatform/models.py), restricted to ASCII.
+    for env in available_environments(CONFIG_DIR):
+        assert re.fullmatch(r"[a-z0-9_-]{1,64}", env), env
