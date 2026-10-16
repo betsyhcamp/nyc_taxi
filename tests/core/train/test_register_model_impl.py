@@ -511,20 +511,23 @@ def test_a_rerun_on_another_commit_raises_and_leaves_no_record(
     run_dir: Path,
     registry: FakeRegistry,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Skipping would leave a version whose git_hash label names a commit that did not
-    produce the bytes now at its URI; the message names both."""
-    _die_writing_the_first_record(monkeypatch)
-    with pytest.raises(OSError):
-        _register(run_dir)
-    _stage(inputs, tmp_path, git_hash=OTHER_GIT_HASH)
+    produce the bytes at the new URI; the message names both."""
+    _register(run_dir)
+    # The same id in gate, whose run root no claim check in dev sees; one registry.
+    gate_run_dir = _compose(inputs, tmp_path, TRAIN_RUN_ID, OTHER_GIT_HASH, env="gate")
+    _fit(inputs, gate_run_dir)
+    gate_bundle = SourcedPath(
+        path=gate_run_dir / "final_fit" / MODEL_NAME,
+        uri=f"gs://bucket/gate/train/{TRAIN_RUN_ID}/final_fit/{MODEL_NAME}/",
+    )
 
     with pytest.raises(ValueError, match=f"{GIT_HASH}.*{OTHER_GIT_HASH}"):
-        _register(run_dir)
+        _register(gate_run_dir, bundle=gate_bundle)
 
     assert len(registry.uploads) == 1
-    assert not (run_dir / RUN_OUTPUT_FILENAME).exists()
+    assert not (gate_run_dir / RUN_OUTPUT_FILENAME).exists()
 
 
 def test_two_versions_under_one_run_id_raise_naming_both(
@@ -619,12 +622,12 @@ def test_a_bundle_fitted_under_another_identity_is_refused(
     registry: FakeRegistry,
     tmp_path: Path,
 ) -> None:
-    """A rerun whose compose_configs finished and final_fit did not: labeling the old
-    bytes with the new identity is the one outcome registration must never leave."""
-    _compose(inputs, tmp_path, TRAIN_RUN_ID, OTHER_GIT_HASH)
+    """Another run's bundle wired to this run: labeling its bytes with this identity is
+    the one outcome registration must never leave."""
+    other_run_dir = _stage(inputs, tmp_path, run_id=OTHER_RUN_ID)
 
     with pytest.raises(ValueError, match="fitted under"):
-        _register(run_dir)
+        _register(run_dir, bundle=_bundle(other_run_dir))
 
     assert _sdk(registry).mock_calls == []
 

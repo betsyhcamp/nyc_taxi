@@ -35,13 +35,17 @@ from fcstnyctaxi.lib.period_utils import (
     last_complete_actual_month,
 )
 from fcstnyctaxi.lib.registry_ids import compose_display_name, compose_model_id
+from fcstnyctaxi.lib.run_identity import require_unfinished_run
 from fcstnyctaxi.lib.storage_layout import SourcedPath, composed_config_filename
 from fcstnyctaxi.schemas.config.train import (
     EvaluationPeriods,
     TrainInfraConfig,
     TrainModelingConfig,
 )
-from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
+from fcstnyctaxi.schemas.run_identity import (
+    TRAIN_IDENTITY_RECORD_FIELDS,
+    TrainRunIdentity,
+)
 from fcstnyctaxi.schemas.storage.common import RUN_IDENTITY_FILENAME
 
 
@@ -161,6 +165,34 @@ def _build_manifest(
     }
 
 
+def _require_claim_or_match(run_dir: Path, identity: TrainRunIdentity) -> None:
+    """Refuse a reused run id whose recorded identity differs from this run's. Moves
+    to lib/run_identity.py once Inference's first step also claims an id."""
+    require_unfinished_run(run_dir)
+    identity_path = run_dir / RUN_IDENTITY_FILENAME
+    if not identity_path.is_file():
+        return
+    stored = TrainRunIdentity.model_validate_json(identity_path.read_text())
+    if stored.git_hash.endswith("-dirty"):
+        raise ValueError(
+            f"Run {identity.train_run_id!r} recorded git_hash {stored.git_hash!r} in "
+            f"{identity_path}, and no rerun can match a modified tree. Commit, or mint "
+            "a new id."
+        )
+    recorded = stored.model_dump(exclude=TRAIN_IDENTITY_RECORD_FIELDS)
+    attempted = identity.model_dump(exclude=TRAIN_IDENTITY_RECORD_FIELDS)
+    differences = [
+        f"{name} recorded {recorded[name]!r}, now {value!r}"
+        for name, value in attempted.items()
+        if value != recorded[name]
+    ]
+    if differences:
+        raise ValueError(
+            f"Run {identity.train_run_id!r} recorded another identity in "
+            f"{identity_path}: {'; '.join(differences)}. Mint a new id."
+        )
+
+
 def compose_configs_impl(
     *,
     config_dir: Path,
@@ -195,8 +227,9 @@ def compose_configs_impl(
 
     Raises:
         ValueError: If two of the three inputs name one file, `out_dir` is not a
-            step directory under `train_run_id`, a lineage check fails, a
-            registrable model's registry name exceeds its cap, or composition fails.
+            step directory under `train_run_id`, this run id finished or recorded
+            another identity, a lineage check fails, a registrable model's registry
+            name exceeds its cap, or composition fails.
         ValidationError: If an identity field is malformed.
 
     Returns:
@@ -267,6 +300,7 @@ def compose_configs_impl(
             f"out_dir {out_dir} must be a step directory under the run root "
             f"{train_run_id!r}, since run_identity.json is written beside it."
         )
+    _require_claim_or_match(run_dir, identity)
 
     # Otherwise a failed rerun leaves the old manifest over a mix of two runs' files.
     (out_dir / "manifest.json").unlink(missing_ok=True)

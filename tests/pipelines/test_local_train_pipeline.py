@@ -8,6 +8,7 @@ to assert is which local steps run, and in what order.
 import logging
 import shutil
 import sys
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import cast
 
@@ -29,7 +30,7 @@ from fcstnyctaxi.lib.config.bindings import (
     resolve_model_roles,
 )
 from fcstnyctaxi.lib.config.composition import compose_config
-from fcstnyctaxi.lib.run_identity import require_train_run_id
+from fcstnyctaxi.lib.run_identity import require_train_run_id, require_unfinished_run
 from fcstnyctaxi.lib.storage_layout import (
     SourcedPath,
     latest_pointer_path,
@@ -38,7 +39,13 @@ from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.pipelines import local_train_pipeline
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
-from fcstnyctaxi.schemas.run_outputs import FeatureArtifacts, FeatureRunOutputs
+from fcstnyctaxi.schemas.run_outputs import (
+    FeatureArtifacts,
+    FeatureRunOutputs,
+    RegisteredModel,
+    TrainingData,
+    TrainRunOutputs,
+)
 from fcstnyctaxi.schemas.storage.common import (
     BUNDLE_MODEL_DIR,
     LATEST_POINTER_FILENAME,
@@ -114,6 +121,20 @@ FINAL_FIT_SUMMARY = FinalFitSummary(
     feature_run_id=FEATURE_RUN_ID,
 )
 SERVING_IMAGE = "us-central1-docker.pkg.dev/p/r/train@sha256:" + "c" * 64
+# A registered run's record, written through the model register_model_impl uses.
+FINISHED_RECORD = TrainRunOutputs(
+    train_run_id=RUN_ID,
+    published=RegisteredModel(
+        model_tag="projects/123456789/locations/us-central1/models/fcst-a-naive@1",
+        bundle_uri=f"gs://{BUCKET}/{ENV}/train/{RUN_ID}/final_fit/naive/",
+    ),
+    feature_run_id=FEATURE_RUN_ID,
+    env=ENV,
+    schema_version="0.1.0",
+    git_hash="abc1234",
+    completed_at=datetime(2026, 9, 13, tzinfo=UTC),
+    training_data=TrainingData(train_end_ds=date(2025, 5, 18), n_series=3, n_obs=60),
+).model_dump_json(indent=2, exclude_none=True)
 # The challenger's, since only a run of the shipped roles could produce this summary.
 # The prefix stays fake: nothing reads it, and composing the real one would tie a
 # fully patched test to infra.yaml.
@@ -365,8 +386,7 @@ def test_each_backtest_is_published_before_the_next_one_runs(
         local_train_pipeline, "final_fit_impl", side_effect=_final_fit_outputs
     )
     publishes.attach_mock(final_fit, "final_fit")
-    delete = mocker.patch.object(local_train_pipeline, "delete_from_gcs")
-    publishes.attach_mock(delete, "delete")
+    mocker.patch.object(local_train_pipeline, "mirror_from_gcs", return_value=None)
     register = mocker.patch.object(
         local_train_pipeline, "register_model_impl", side_effect=_register_outputs
     )
@@ -413,11 +433,9 @@ def test_each_backtest_is_published_before_the_next_one_runs(
         "sync",
         "final_fit",
         "sync",
-        "delete",
         *registered,
     ]
     assert publishes.mock_calls[0].args[1] == run_root
-    delete.assert_called_once_with(f"{run_root}{RUN_OUTPUT_FILENAME}")
     assert [call.kwargs["completion_marker"] for call in sync.call_args_list] == [
         "manifest.json",
         "backtest_manifest.json",
@@ -530,19 +548,10 @@ def test_the_published_destinations_are_ones_the_transport_accepts(
     assert (published / "run_output.json").is_file()
 
 
-@pytest.mark.parametrize(
-    "registering", [False, True], ids=["unregistered", "failed_registration"]
-)
-def test_a_rerun_leaves_no_earlier_record_published(
-    fake_gcs: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    mocker: MockerFixture,
-    registering: bool,
+def _patch_the_steps_around_compose(
+    root: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
 ) -> None:
-    """The rerun replaced the bundle, so an earlier record left standing would point
-    Inference at a version whose bytes are gone; Vertex's impl deletes it too."""
-    root = tmp_path / "project"
+    """Everything but compose and the mirror, which runs against fake_gcs."""
     shutil.copytree(get_project_root_dir() / "config", root / "config")
     monkeypatch.setenv("PROJECT_ROOT", str(root))
     mocker.patch.object(
@@ -550,9 +559,6 @@ def test_a_rerun_leaves_no_earlier_record_published(
     )
     mocker.patch.object(
         local_train_pipeline, "download_from_gcs", side_effect=lambda uri, d: d / "f"
-    )
-    mocker.patch.object(
-        local_train_pipeline, "compose_configs_impl", side_effect=_compose_outputs
     )
     mocker.patch.object(
         local_train_pipeline, "backtest_impl", side_effect=_backtest_outputs
@@ -564,42 +570,77 @@ def test_a_rerun_leaves_no_earlier_record_published(
         local_train_pipeline, "final_fit_impl", side_effect=_final_fit_outputs
     )
     mocker.patch.object(
-        local_train_pipeline,
-        "register_model_impl",
-        side_effect=ValueError("registered at another git_hash"),
-    )
-    mocker.patch.object(
         run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
     )
-    # What an earlier, registered run of this id left at the run root.
-    earlier_record = fake_gcs / BUCKET / ENV / "train" / RUN_ID / "run_output.json"
-    earlier_record.parent.mkdir(parents=True)
-    earlier_record.write_text('{"earlier": true}')
 
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "local_train_pipeline",
-            "--env",
-            ENV,
-            "--feature-run-id",
-            FEATURE_RUN_ID,
-            "--run-id",
-            RUN_ID,
-            *(["--serving-image", SERVING_IMAGE] if registering else []),
-            "--scratch-dir",
-            str(tmp_path / "scratch"),
-        ],
+
+def test_a_stale_scratch_identity_with_no_gcs_copy_is_gone_before_compose(
+    fake_gcs: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+) -> None:
+    """Left by an attempt that published nothing, it would refuse a run GCS lacks."""
+    _patch_the_steps_around_compose(tmp_path / "project", monkeypatch, mocker)
+    scratch = tmp_path / "scratch"
+    stale = scratch / BUCKET / ENV / "train" / RUN_ID / "run_identity.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text('{"an": "earlier attempt"}')
+    seen_at_compose: list[bool] = []
+
+    def _compose_seeing_the_scratch(
+        *, out_dir: Path, **_: object
+    ) -> ComposeConfigsSummary:
+        seen_at_compose.append((out_dir.parent / "run_identity.json").exists())
+        return _compose_outputs(out_dir=out_dir)
+
+    mocker.patch.object(
+        local_train_pipeline,
+        "compose_configs_impl",
+        side_effect=_compose_seeing_the_scratch,
     )
+    monkeypatch.setattr(sys, "argv", _argv_without_serving_image(tmp_path))
 
-    if registering:
-        with pytest.raises(ValueError, match="another git_hash"):
-            local_train_pipeline.main()
-    else:
+    local_train_pipeline.main()
+
+    assert seen_at_compose == [False]
+
+
+def test_a_finished_run_in_gcs_is_refused_before_anything_is_published(
+    fake_gcs: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+) -> None:
+    """Only the mirror shows compose a record that another machine published."""
+    _patch_the_steps_around_compose(tmp_path / "project", monkeypatch, mocker)
+    record = fake_gcs / BUCKET / ENV / "train" / RUN_ID / RUN_OUTPUT_FILENAME
+    record.parent.mkdir(parents=True)
+    record.write_text(FINISHED_RECORD)
+    # Self-check: the record is one Inference could read.
+    TrainRunOutputs.model_validate_json(record.read_text())
+
+    def _compose_checking_for_a_finished_run(
+        *, out_dir: Path, **_: object
+    ) -> ComposeConfigsSummary:
+        require_unfinished_run(out_dir.parent)
+        return _compose_outputs(out_dir=out_dir)
+
+    mocker.patch.object(
+        local_train_pipeline,
+        "compose_configs_impl",
+        side_effect=_compose_checking_for_a_finished_run,
+    )
+    upload = mocker.patch.object(local_train_pipeline, "upload_to_gcs")
+    sync = mocker.patch.object(local_train_pipeline, "sync_to_gcs")
+    monkeypatch.setattr(sys, "argv", _argv_without_serving_image(tmp_path))
+
+    with pytest.raises(ValueError, match="finished"):
         local_train_pipeline.main()
 
-    assert not earlier_record.exists()
+    upload.assert_not_called()
+    sync.assert_not_called()
+    assert record.read_text() == FINISHED_RECORD
 
 
 def test_a_serving_image_that_is_not_digest_pinned_is_refused_before_any_work(
@@ -660,7 +701,7 @@ def test_a_narrowed_rerun_scores_the_pair_the_run_id_has_accumulated(
     )
     mocker.patch.object(local_train_pipeline, "upload_to_gcs")
     mocker.patch.object(local_train_pipeline, "sync_to_gcs", return_value=(7, 0))
-    mocker.patch.object(local_train_pipeline, "delete_from_gcs")
+    mocker.patch.object(local_train_pipeline, "mirror_from_gcs", return_value=None)
     mocker.patch.object(
         run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
     )
@@ -757,6 +798,7 @@ def test_compose_is_handed_each_path_paired_with_the_uri_it_was_built_from(
     )
     mocker.patch.object(local_train_pipeline, "upload_to_gcs")
     mocker.patch.object(local_train_pipeline, "sync_to_gcs", return_value=(7, 0))
+    mocker.patch.object(local_train_pipeline, "mirror_from_gcs", return_value=None)
     mocker.patch.object(
         run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
     )
@@ -824,7 +866,7 @@ def test_both_impls_are_handed_the_staged_paths_compose_recorded(
     )
     mocker.patch.object(local_train_pipeline, "upload_to_gcs")
     mocker.patch.object(local_train_pipeline, "sync_to_gcs", return_value=(7, 0))
-    mocker.patch.object(local_train_pipeline, "delete_from_gcs")
+    mocker.patch.object(local_train_pipeline, "mirror_from_gcs", return_value=None)
     mocker.patch.object(
         run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
     )
@@ -890,6 +932,7 @@ def test_the_local_runner_resolves_all_three_uris_from_the_feature_run_id_alone(
     )
     mocker.patch.object(local_train_pipeline, "upload_to_gcs")
     mocker.patch.object(local_train_pipeline, "sync_to_gcs", return_value=(7, 0))
+    mocker.patch.object(local_train_pipeline, "mirror_from_gcs", return_value=None)
     # Patched on the importing module, which imports at module scope. Picked wrong,
     # the failure is a credentials error in CI rather than an assertion failure.
     mocker.patch.object(
@@ -958,7 +1001,7 @@ def _patch_a_whole_run(mocker: MockerFixture) -> None:
     mocker.patch.object(
         local_train_pipeline, "final_fit_impl", side_effect=_final_fit_outputs
     )
-    mocker.patch.object(local_train_pipeline, "delete_from_gcs")
+    mocker.patch.object(local_train_pipeline, "mirror_from_gcs", return_value=None)
     mocker.patch.object(
         run_outputs, "read_text_from_gcs", return_value=RESOLVED_MANIFEST
     )

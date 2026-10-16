@@ -24,8 +24,8 @@ from fcstnyctaxi.core.train.final_fit_impl import final_fit_impl
 from fcstnyctaxi.core.train.register_model_impl import register_model_impl
 from fcstnyctaxi.lib.container_images import require_digest_ref
 from fcstnyctaxi.lib.io import (
-    delete_from_gcs,
     download_from_gcs,
+    mirror_from_gcs,
     require_gcs_uri,
     sync_to_gcs,
     upload_to_gcs,
@@ -267,6 +267,10 @@ def main() -> None:
         uri=artifacts.exogenous_uri,
     )
 
+    # Before compose, so its claim check sees what GCS holds rather than a stale copy.
+    for filename in (RUN_IDENTITY_FILENAME, RUN_OUTPUT_FILENAME):
+        mirror_from_gcs(build_object_uri(run_root, filename), compose_dir.parent)
+
     summary = compose_configs_impl(
         config_dir=config_dir,
         env=args.env,
@@ -418,12 +422,6 @@ def main() -> None:
         final_fit_uri,
     )
 
-    # What the impl's unlink does through the mount on Vertex, at the same point: a
-    # rerun that registers nothing, or fails to, must not leave the earlier run's
-    # published record pointing at a version whose bundle was just replaced.
-    run_output_uri = build_object_uri(run_root, RUN_OUTPUT_FILENAME)
-    delete_from_gcs(run_output_uri)
-
     # Opt-in: every local run holds live credentials, and each registration is a
     # version in the shared registry.
     if args.serving_image is None:
@@ -440,6 +438,7 @@ def main() -> None:
     environment_root = build_environment_root(bucket, args.env)
     pointer_path = latest_pointer_path(compose_dir.parent)
     pointer_uri = build_object_uri(environment_root, LATEST_POINTER_FILENAME)
+    run_output_uri = build_object_uri(run_root, RUN_OUTPUT_FILENAME)
     download_from_gcs(pointer_uri, pointer_path.parent)
 
     # The wrapper's arguments: the bundle's mirror paired with the URI it uploads.
