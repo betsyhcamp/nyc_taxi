@@ -158,6 +158,32 @@ def download_from_gcs(gcs_uri: str, destination_dir: Path) -> Path:
     return dest_file
 
 
+def mirror_from_gcs(gcs_uri: str, destination_dir: Path) -> Path | None:
+    """Make destination_dir's copy of one GCS object match GCS.
+
+    Downloads the object when present and removes the local copy when absent, so a
+    check reading the copy sees what GCS holds, never an earlier run's file.
+
+    Args:
+        gcs_uri: Object URI, e.g. "gs://bucket/dev/train/<run_id>/run_identity.json".
+        destination_dir: Local directory holding the copy, created only to download.
+
+    Returns:
+        destination_dir / the URI's final segment when the object exists, else None.
+
+    Raises:
+        ValueError: gcs_uri is not a gs:// URI, or names a prefix rather than an
+            object.
+    """
+    require_gcs_uri(gcs_uri)
+    fs, path = fsspec.url_to_fs(gcs_uri)
+    # exists() is also true of a prefix, which download_from_gcs refuses.
+    if fs.exists(path):
+        return download_from_gcs(gcs_uri, destination_dir)
+    (destination_dir / gcs_uri.rsplit("/", 1)[-1]).unlink(missing_ok=True)
+    return None
+
+
 def upload_to_gcs(local_path: Path, gcs_uri: str) -> int:
     """Upload a file or directory to a GCS prefix, returning the objects written.
 
