@@ -5,6 +5,7 @@ Derived origins injected as runtime override. Artifacts & lineage in `run_identi
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
@@ -255,6 +256,7 @@ def compose_configs_impl(
         panel_uri=panel.uri,
         calendar_uri=calendar.uri,
         additional_exog_uri=additional_exog.uri,
+        executed_at=datetime.now(UTC),
     )
 
     # run_identity.json describes the run, not this step. Derived, not passed:

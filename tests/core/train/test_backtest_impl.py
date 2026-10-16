@@ -38,7 +38,10 @@ from fcstnyctaxi.lib.period_utils import (
 from fcstnyctaxi.lib.storage_layout import composed_config_filename
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
-from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
+from fcstnyctaxi.schemas.run_identity import (
+    TRAIN_IDENTITY_RECORD_FIELDS,
+    TrainRunIdentity,
+)
 from fcstnyctaxi.schemas.run_outputs import (
     ADDITIONAL_EXOG_REQUIRED_COLUMNS,
     CALENDAR_ALLOWED_COLUMNS,
@@ -490,9 +493,11 @@ def test_the_manifest_records_the_effective_settings_not_the_defaults() -> None:
     manifest = _build_manifest(MODEL_NAME, _summary(), _identity(), tuned)
 
     assert manifest["config"]["tiering"]["trailing_weeks"] == 13
-    # Whole-object, as register_model compares the bundle's block: every field of
-    # the identity is echoed, so a slot left out of the block is a silent drift.
-    assert manifest["lineage"] == _identity().model_dump()
+    # Every definition field, as register_model compares the bundle's block: a slot
+    # left out of the block is a silent drift.
+    assert manifest["lineage"] == _identity().model_dump(
+        exclude=TRAIN_IDENTITY_RECORD_FIELDS
+    )
 
 
 def test_the_manifest_survives_json_serialisation() -> None:

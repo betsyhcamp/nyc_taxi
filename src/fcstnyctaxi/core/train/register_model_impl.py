@@ -16,7 +16,10 @@ from fcstnyctaxi.lib.storage_layout import (
 )
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import TrainInfraConfig
-from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
+from fcstnyctaxi.schemas.run_identity import (
+    TRAIN_IDENTITY_RECORD_FIELDS,
+    TrainRunIdentity,
+)
 from fcstnyctaxi.schemas.run_outputs import (
     LatestRunPointer,
     RegisteredModel,
@@ -138,7 +141,9 @@ def register_model_impl(
         )
     # The labels come from identity, so they must describe the bytes being uploaded.
     lineage = TrainRunIdentity.model_validate(manifest["lineage"])
-    if lineage != identity:
+    if lineage.model_dump(exclude=TRAIN_IDENTITY_RECORD_FIELDS) != identity.model_dump(
+        exclude=TRAIN_IDENTITY_RECORD_FIELDS
+    ):
         raise ValueError(
             f"bundle {bundle.uri} was fitted under {lineage}, not {identity}."
         )

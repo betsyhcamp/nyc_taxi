@@ -541,7 +541,9 @@ def test_a_run_minted_before_the_slice_prefix_is_refused(
     legacy_run_dir = run_dir.rename(run_dir.with_name(bare_id))
     identity_path = legacy_run_dir / "run_identity.json"
     staged = json.loads(identity_path.read_text())
-    legacy = TrainRunIdentity.model_construct(**{**staged, "train_run_id": bare_id})
+    legacy = TrainRunIdentity.model_validate(staged).model_copy(
+        update={"train_run_id": bare_id}
+    )
     identity_path.write_text(legacy.model_dump_json(indent=2) + "\n")
     # Self-check: the record differs from the staged one in the id alone.
     assert json.loads(identity_path.read_text()) == {**staged, "train_run_id": bare_id}
@@ -564,6 +566,20 @@ def test_a_bundle_uri_naming_another_model_is_refused(
         _register(run_dir, bundle=bundle)
 
     assert _sdk(registry).mock_calls == []
+
+
+def test_a_lineage_block_without_executed_at_matches_its_identity(
+    run_dir: Path, registry: FakeRegistry
+) -> None:
+    """final_fit stamps definition fields alone, so record fields go uncompared."""
+    lineage = json.loads(
+        (_bundle(run_dir).path / "final_fit_manifest.json").read_text()
+    )["lineage"]
+    # Self-check: the state compose and final_fit leave every run in.
+    assert _identity(run_dir).executed_at is not None
+    assert "executed_at" not in lineage
+
+    assert _register(run_dir).uploaded
 
 
 def test_a_bundle_fitted_under_another_identity_is_refused(

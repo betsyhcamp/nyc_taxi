@@ -29,6 +29,7 @@ from fcstnyctaxi.lib.storage_layout import (
 )
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
+from fcstnyctaxi.schemas.run_identity import TRAIN_IDENTITY_RECORD_FIELDS
 from fcstnyctaxi.schemas.run_outputs import TrainingData
 from fcstnyctaxi.schemas.storage.common import BUNDLE_MODEL_DIR
 
@@ -492,9 +493,13 @@ def test_the_manifest_names_what_a_reader_needs_to_load_and_predict(
     assert manifest["model_name"] == MODEL_NAME
     assert manifest["config"]["save_callable"] == settings.save_callable
     assert manifest["config"]["exog_features"] == settings.exog_features
-    # Whole-object: register_model revalidates this block as a TrainRunIdentity and
-    # compares it to the identity, so a missing slot fails every registration.
-    assert manifest["lineage"] == identity
+    # register_model revalidates this block as a TrainRunIdentity and compares its
+    # definition fields with the identity's, so a missing slot fails every registration.
+    assert manifest["lineage"] == {
+        key: value
+        for key, value in identity.items()
+        if key not in TRAIN_IDENTITY_RECORD_FIELDS
+    }
 
 
 def test_the_summary_carries_the_run_ids_it_discovered(

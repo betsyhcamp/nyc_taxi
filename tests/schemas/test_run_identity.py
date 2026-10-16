@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import pytest
 from pydantic import ValidationError
 
@@ -5,6 +7,7 @@ from fcstnyctaxi.lib.run_identity import mint_run_id
 from fcstnyctaxi.schemas.run_identity import FeatureRunIdentity, TrainRunIdentity
 
 _VALID_SHA256 = "deadbeef" * 8  # 64 lowercase hex, the shape hexdigest() returns
+_EXECUTED_AT = datetime(2026, 9, 5, 12, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -120,6 +123,35 @@ def test_train_run_identity_is_frozen(valid_train_identity: dict) -> None:
         identity.git_hash = "deadbee"  # type: ignore[misc]
 
 
+def test_a_naive_executed_at_raises(valid_train_identity: dict) -> None:
+    """A naive time reads differently on the laptop and in the container."""
+    valid_train_identity["executed_at"] = datetime(2026, 9, 5, 13)
+
+    with pytest.raises(ValidationError, match="executed_at"):
+        TrainRunIdentity(**valid_train_identity)
+
+
+def test_a_feature_identity_without_executed_at_raises() -> None:
+    """Part of Feature's identity, so required, unlike Training's record of it."""
+    with pytest.raises(ValidationError, match="executed_at"):
+        FeatureRunIdentity(
+            git_hash="a1b2c3d",
+            feature_run_id="UTC20260905T120000000000Z",
+            sql_sha256=_VALID_SHA256,
+        )
+
+
+def test_a_naive_feature_executed_at_raises() -> None:
+    """Required and compared, so it must name one instant wherever it was written."""
+    with pytest.raises(ValidationError, match="executed_at"):
+        FeatureRunIdentity(
+            git_hash="a1b2c3d",
+            feature_run_id="UTC20260905T120000000000Z",
+            sql_sha256=_VALID_SHA256,
+            executed_at=datetime(2026, 9, 5, 12),
+        )
+
+
 def test_feature_run_identity_carries_no_uris() -> None:
     """Feature produces the artifacts, so it cannot carry pointers to them.
 
@@ -129,13 +161,12 @@ def test_feature_run_identity_carries_no_uris() -> None:
         git_hash="a1b2c3d",
         feature_run_id="UTC20260905T120000000000Z",
         sql_sha256=_VALID_SHA256,
+        executed_at=_EXECUTED_AT,
     )
 
-    assert set(FeatureRunIdentity.model_fields) == {
-        "git_hash",
-        "feature_run_id",
-        "sql_sha256",
-    }
+    assert not [
+        name for name in FeatureRunIdentity.model_fields if name.endswith("_uri")
+    ]
     assert identity.feature_run_id == "UTC20260905T120000000000Z"
 
 
@@ -151,6 +182,7 @@ def test_sql_text_as_sql_sha256_raises() -> None:
             git_hash="a1b2c3d",
             feature_run_id="UTC20260905T120000000000Z",
             sql_sha256="SELECT ds, unique_id, y FROM `test-project.curated.fact`",
+            executed_at=_EXECUTED_AT,
         )
 
 
@@ -177,4 +209,5 @@ def test_malformed_sql_sha256_raises(bad_digest: str) -> None:
             git_hash="a1b2c3d",
             feature_run_id="UTC20260905T120000000000Z",
             sql_sha256=bad_digest,
+            executed_at=_EXECUTED_AT,
         )

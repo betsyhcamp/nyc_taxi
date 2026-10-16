@@ -225,6 +225,8 @@ def test_run_identity_reloads_and_stamps_what_was_read(
     assert identity.panel_uri.endswith("time_series.parquet")
     assert identity.calendar_uri.endswith("fiscal_calendar.parquet")
     assert identity.additional_exog_uri.endswith("exogenous_features.parquet")
+    assert identity.executed_at is not None
+    assert identity.executed_at.utcoffset() is not None
 
 
 def test_run_identity_lands_at_the_run_root_not_in_the_step_directory(
