@@ -38,7 +38,8 @@ from fcstnyctaxi.lib.period_utils import (
 )
 
 from fcstnyctaxi.lib.io import write_text_to_gcs
-from fcstnyctaxi.lib.utils import get_project_root_dir, generate_run_id
+from fcstnyctaxi.lib.run_identity import mint_run_id
+from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.lib.config.composition import save_config
 
 # %%
@@ -54,7 +55,7 @@ model_cfg_path = project_root / cal_cfg["model"]
 model_cfg_dict = yaml.safe_load(model_cfg_path.read_text())["model"]
 model_cfg = ModelConfig(**model_cfg_dict)
 
-sidecar_dir = generate_run_id()
+sidecar_dir = mint_run_id("train")
 sidecar_uri = (
     f"{run_cfg['project']['gcs_bucket']}/dev/backtests/calibrate_n_estimators/{sidecar_dir}/"
 )

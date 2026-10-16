@@ -18,14 +18,14 @@ from fcstnyctaxi.lib.config.bindings import (
     train_infra_bindings,
 )
 from fcstnyctaxi.lib.config.composition import compose_config
+from fcstnyctaxi.lib.run_identity import (
+    mint_run_id,
+    require_path_safe_run_id,
+    require_train_run_id,
+)
 from fcstnyctaxi.lib.run_outputs import resolve_feature_artifacts
 from fcstnyctaxi.lib.storage_layout import build_run_root
-from fcstnyctaxi.lib.utils import (
-    generate_run_id,
-    get_project_root_dir,
-    require_label_safe_run_id,
-    require_path_safe_run_id,
-)
+from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import TrainInfraConfig
 
@@ -87,8 +87,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--run-id",
         default=None,
-        help="Reuse an existing id, overwriting that run's artifacts; one is "
-        "generated when absent.",
+        help="Resume an unfinished run under its existing id; refused if that run "
+        "finished or recorded different inputs. Minted when absent.",
     )
     parser.add_argument(
         "--wait",
@@ -129,10 +129,10 @@ def main() -> None:
 
     Raises:
         RuntimeError: If FCST_TRAIN_SERVICE_ACCOUNT is unset or blank.
-        ValueError: If `--feature-run-id` is not path-safe or `--run-id` not
-            label-safe, if `--env` has no `environments/<env>.yaml`, if one or
-            two URI overrides were given, if the Feature run published no
-            manifest, or on any composition failure.
+        ValueError: If `--feature-run-id` is not path-safe, if `--run-id` is off
+            the Training format or ends in `-local`, if `--env` has no
+            `environments/<env>.yaml`, if one or two URI overrides were given, if
+            the Feature run published no manifest, or on any composition failure.
         FileNotFoundError: If `--template-path` names no file.
         ValidationError: If an override URI is malformed, or a load-bearing key in
             the Feature run's manifest is missing or malformed.
@@ -157,9 +157,9 @@ def main() -> None:
 
     # Only --run-id becomes a path and a registry label. The other is Feature's, so
     # it is held to the path vocabulary alone.
-    run_id = generate_run_id() if args.run_id is None else args.run_id
+    run_id = mint_run_id("train") if args.run_id is None else args.run_id
     require_path_safe_run_id(args.feature_run_id, "--feature-run-id")
-    require_label_safe_run_id(run_id, "--run-id")
+    require_train_run_id(run_id, "--run-id", local=False)
 
     config_dir = get_project_root_dir() / "config"
     # First, for the --env guard: an unknown selector names the available ones.

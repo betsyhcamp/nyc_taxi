@@ -50,15 +50,17 @@ def compose_configs(
 
     Raises:
         RuntimeError: If the image carries no FCST_GIT_HASH.
-        ValueError: If declared_model_names disagrees with the image's baked set,
-            if env has no config file, on a failed lineage check, or on any
-            composition failure.
+        ValueError: If train_run_id is off the Training format or ends in `-local`,
+            if declared_model_names disagrees with the image's baked set, if env has
+            no config file, on a failed lineage check, or on any composition
+            failure.
     """
     import os
     from pathlib import Path
 
     from fcstnyctaxi.core.train.compose_configs_impl import compose_configs_impl
     from fcstnyctaxi.lib.config.bindings import resolve_bucket, resolve_model_names
+    from fcstnyctaxi.lib.run_identity import require_train_run_id
     from fcstnyctaxi.lib.storage_layout import (
         SourcedPath,
         build_prefix_uri,
@@ -84,6 +86,9 @@ def compose_configs(
             f"{baked_model_names}: different trees. Rebuild and recompile."
         )
 
+    # Console and SDK clones bypass the submit script, so Vertex's entry refuses a
+    # `-local` id itself.
+    require_train_run_id(train_run_id, "train_run_id", local=False)
     bucket = resolve_bucket(CONFIG_DIR, env)
     run_root = build_run_root(bucket, env, "train", train_run_id)
     # Artifact.path recomputes from self.uri on every access, so this MUST precede

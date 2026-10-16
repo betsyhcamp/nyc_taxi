@@ -21,7 +21,8 @@ The same three tokens name every place a slice appears:
     core/<slice>/, components/<slice>/     code layout
     schemas/config/<slice>.py              destination schemas
     <env>/<slice>/<run_id>/<step>/         the storage convention
-    <slice>_run_id                         the run-id prefix
+    <slice>_run_id                         the run-id field name
+    <slice>-<timestamp>[-local]            the run-id value
     artifact_registry.images.<slice>       image references
 
 ``lib/storage_layout.build_run_root`` is the first consumer: it types the slice

@@ -56,3 +56,27 @@ def require_train_run_id(run_id: str, flag_name: str, *, local: bool) -> None:
             f"{flag_name} {run_id!r} {rule} end in {LOCAL_RUN_ID_SUFFIX!r} for "
             f"{entry_point}; mint a new id rather than mixing runners in one run."
         )
+
+
+def require_path_safe_run_id(run_id: str, flag_name: str) -> None:
+    """Reject a run id that would build a malformed path or an unpasteable line.
+
+    Every slice's run id becomes a GCS path segment and a local directory name.
+    Call it as soon as the id is resolved, before anything builds or prints it.
+
+    Args:
+        run_id (str): The identifier to check.
+        flag_name (str): The CLI flag it arrived on, named in the error so a caller
+            holding two ids says which one to fix.
+
+    Raises:
+        ValueError: run_id does not match `[A-Za-z0-9][A-Za-z0-9._-]*`.
+    """
+    # The first character is anchored separately because [A-Za-z0-9._-]+ accepts
+    # "..", ".hidden" and "-x"; fullmatch rather than match, whose "$" also
+    # matches before the trailing newline that $(cat run_id.txt) supplies.
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", run_id):
+        raise ValueError(
+            f"{flag_name} {run_id!r} must start with a letter or digit and "
+            "contain only letters, digits, '.', '_' or '-'."
+        )

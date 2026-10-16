@@ -30,6 +30,11 @@ from fcstnyctaxi.lib.io import (
     sync_to_gcs,
     upload_to_gcs,
 )
+from fcstnyctaxi.lib.run_identity import (
+    mint_run_id,
+    require_path_safe_run_id,
+    require_train_run_id,
+)
 from fcstnyctaxi.lib.run_outputs import resolve_feature_artifacts
 from fcstnyctaxi.lib.storage_layout import (
     SourcedPath,
@@ -39,13 +44,7 @@ from fcstnyctaxi.lib.storage_layout import (
     build_run_root,
     latest_pointer_path,
 )
-from fcstnyctaxi.lib.utils import (
-    generate_run_id,
-    get_project_root_dir,
-    require_git_hash,
-    require_label_safe_run_id,
-    require_path_safe_run_id,
-)
+from fcstnyctaxi.lib.utils import get_project_root_dir, require_git_hash
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.storage.common import (
@@ -109,8 +108,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--run-id",
         default=None,
-        help="Reuse an existing id, overwriting that run's artifacts; one is "
-        "generated when absent.",
+        help="Resume an unfinished run under its existing id; refused if that run "
+        "finished or recorded different inputs. Minted when absent. Must end in "
+        "-local.",
     )
     parser.add_argument(
         "--model",
@@ -200,9 +200,9 @@ def main() -> None:
 
     # Only --run-id becomes a path and a registry label. The other is Feature's, so
     # it is held to the path vocabulary alone.
-    run_id = generate_run_id() if args.run_id is None else args.run_id
+    run_id = mint_run_id("train", local=True) if args.run_id is None else args.run_id
     require_path_safe_run_id(args.feature_run_id, "--feature-run-id")
-    require_label_safe_run_id(run_id, "--run-id")
+    require_train_run_id(run_id, "--run-id", local=True)
     # Here, so a tag rather than a digest is refused before any step spends a thing.
     if args.serving_image is not None:
         require_digest_ref(args.serving_image, "--serving-image")

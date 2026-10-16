@@ -29,7 +29,11 @@ from fcstnyctaxi.lib.config.bindings import (
     train_infra_bindings,
 )
 from fcstnyctaxi.lib.config.composition import compose_config
-from fcstnyctaxi.lib.utils import get_project_root_dir, require_path_safe_run_id
+from fcstnyctaxi.lib.run_identity import (
+    require_path_safe_run_id,
+    require_train_run_id,
+)
+from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.pipelines import local_train_pipeline
 from fcstnyctaxi.pipelines.train_pipeline import build_train_pipeline
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
@@ -38,7 +42,7 @@ from fcstnyctaxi.schemas.run_outputs import FeatureArtifacts, FeatureRunOutputs
 from scripts import submit_train_pipeline
 
 ENV = "dev"
-RUN_ID = "t-20260913t000000000000z"
+RUN_ID = "train-20260913t000000000000z"
 FEATURE_RUN_ID = "f-20260913T000000000000Z"
 PANEL_URI = f"gs://bucket/{ENV}/feature/{FEATURE_RUN_ID}/data_prep/time_series.parquet"
 CALENDAR_URI = (
@@ -340,14 +344,14 @@ def test_a_malformed_feature_run_id_names_the_flag_it_arrived_on(
         submit_train_pipeline.main()
 
 
-def test_a_run_id_safe_as_a_path_but_not_as_a_label_is_refused_before_the_sdk(
+def test_a_path_safe_run_id_off_the_training_format_is_refused_before_the_sdk(
     template: Path,
     vertex: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test the label charset is refused at submit, not by Vertex at the last task."""
+    """Test the Training format is refused at submit, not by a step on Vertex."""
     run_id = RUN_ID.upper()
-    # Self-check: only the stricter guard can refuse it.
+    # Self-check: only the Training format can refuse it.
     require_path_safe_run_id(run_id, "--run-id")
     monkeypatch.setattr("sys.argv", _argv(template, {"--run-id": run_id}))
 
@@ -355,6 +359,37 @@ def test_a_run_id_safe_as_a_path_but_not_as_a_label_is_refused_before_the_sdk(
         submit_train_pipeline.main()
 
     assert vertex.mock_calls == []
+
+
+def test_a_local_runners_id_is_refused_before_the_sdk(
+    template: Path,
+    vertex: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that a Vertex run cannot write into a local run's root."""
+    run_id = f"{RUN_ID}-local"
+    # Self-check: well formed, so only the tag can refuse it.
+    require_train_run_id(run_id, "--run-id", local=True)
+    monkeypatch.setattr("sys.argv", _argv(template, {"--run-id": run_id}))
+
+    with pytest.raises(ValueError, match="--run-id"):
+        submit_train_pipeline.main()
+
+    assert vertex.mock_calls == []
+
+
+def test_an_unnamed_run_is_submitted_under_an_id_its_own_check_accepts(
+    template: Path,
+    vertex: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that minting and the tag check agree, or every unnamed submit fails."""
+    monkeypatch.setattr("sys.argv", _argv(template, {"--run-id": None}))
+
+    submit_train_pipeline.main()
+
+    run_id = vertex.PipelineJob.call_args.kwargs["parameter_values"]["train_run_id"]
+    require_train_run_id(run_id, "--run-id", local=False)
 
 
 def test_a_template_pinning_no_container_executors_warns_and_still_submits(

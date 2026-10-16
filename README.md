@@ -123,7 +123,7 @@ Component completed.
     }
 ```
 
-`<run_id>` is a sortable UTC microsecond timestamp (e.g. `20260519t053021093666z`).
+`<run_id>` is the slice token and a sortable UTC microsecond timestamp (e.g. `feature-20260519t053021093666z`).
 
 **Step 5 — Confirm GCS artifacts:**
 
@@ -206,7 +206,7 @@ task submit-train -- --template-path build/fcst-train-pipeline.yaml --env dev ..
 uv run python -m fcstnyctaxi.pipelines.local_train_pipeline --help
 ```
 
-The local mode registers only when given `--serving-image`, a digest-pinned image recorded as the runtime that reads the bundle. Without it, a local run stops after the fit and writes no `run_output.json`, so routine local runs never add versions to the shared registry.
+The local mode registers only when given `--serving-image`, a digest-pinned image recorded as the runtime that reads the bundle. Without it, a local run stops after the fit and writes no `run_output.json`, so routine local runs never add versions to the shared registry. Local run ids end in `-local` to tell a laptop run from a Vertex run.
 
 `--run-id` is optional and generated when absent. Caching is on by default, so resubmitting under the same `--run-id` reuses completed tasks; pass `--no-caching` to re-execute everything. The submitter is fire and forget unless given `--wait`, and it writes the id it submitted to `<tmpdir>/fcstnyctaxi/.last_run_id`.
 

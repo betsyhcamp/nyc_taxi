@@ -29,11 +29,12 @@ from fcstnyctaxi.lib.config.bindings import (
     resolve_model_roles,
 )
 from fcstnyctaxi.lib.config.composition import compose_config
+from fcstnyctaxi.lib.run_identity import require_train_run_id
 from fcstnyctaxi.lib.storage_layout import (
     SourcedPath,
     latest_pointer_path,
 )
-from fcstnyctaxi.lib.utils import get_project_root_dir, require_path_safe_run_id
+from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.pipelines import local_train_pipeline
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
@@ -45,7 +46,7 @@ from fcstnyctaxi.schemas.storage.common import (
 )
 
 ENV = "dev"
-RUN_ID = "t-20260913t000000000000z"
+RUN_ID = "train-20260913t000000000000z-local"
 FEATURE_RUN_ID = "f-20260913T000000000000Z"
 PREVIOUS_OUTPUT = "the previous attempt's output"
 # Bucket derived, so a dev.yaml change cannot fail these; the rest literal, so a moved
@@ -257,15 +258,15 @@ def test_a_malformed_train_config_raises_before_the_resolve_and_the_clear(
     assert (out_dir / "run_identity.json").read_text() == PREVIOUS_OUTPUT
 
 
-def test_a_run_id_safe_as_a_path_but_not_as_a_label_is_refused(
+def test_a_vertex_runs_id_is_refused(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     mocker: MockerFixture,
 ) -> None:
-    """Test the label charset is refused here, not by Vertex at the last task."""
-    run_id = RUN_ID.upper()
-    # Self-check: only the stricter guard can refuse it.
-    require_path_safe_run_id(run_id, "--run-id")
+    """Test that a local run cannot write into a Vertex run's root."""
+    run_id = RUN_ID.removesuffix("-local")
+    # Self-check: well formed, so only the missing tag can refuse it.
+    require_train_run_id(run_id, "--run-id", local=False)
     # Keeps a run with the guard removed off the network.
     mocker.patch.object(
         run_outputs, "read_text_from_gcs", side_effect=FileNotFoundError
@@ -287,6 +288,34 @@ def test_a_run_id_safe_as_a_path_but_not_as_a_label_is_refused(
     )
 
     with pytest.raises(ValueError, match="--run-id"):
+        local_train_pipeline.main()
+
+
+def test_an_unnamed_run_mints_an_id_its_own_check_accepts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+) -> None:
+    """Test that minting and the tag check agree, or every unnamed local run fails."""
+    # The first failure past the id check, so reaching it proves the id passed.
+    mocker.patch.object(
+        run_outputs, "read_text_from_gcs", side_effect=FileNotFoundError
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "local_train_pipeline",
+            "--env",
+            ENV,
+            "--feature-run-id",
+            FEATURE_RUN_ID,
+            "--scratch-dir",
+            str(tmp_path / "scratch"),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="No outputs manifest"):
         local_train_pipeline.main()
 
 

@@ -5,6 +5,7 @@ import pytest
 from fcstnyctaxi.lib.run_identity import (
     _format_run_id,
     mint_run_id,
+    require_path_safe_run_id,
     require_train_run_id,
 )
 from fcstnyctaxi.schemas.run_identity import RUN_ID_TIMESTAMP_FORMAT
@@ -22,6 +23,8 @@ MALFORMED_IDS = {
     "trailing newline": f"{VALID_ID}\n",
     "non-ASCII digit": VALID_ID.replace("9", "\u0669"),
 }
+
+PATH_UNSAFE_RUN_IDS = ["f1\n", "..", ".hidden", "-x", ""]
 
 
 def test_zero_microseconds_still_print_six_digits() -> None:
@@ -65,3 +68,15 @@ def test_an_untagged_id_is_refused_for_the_local_runner() -> None:
     """A local run under a Vertex id would mix runners in one run root."""
     with pytest.raises(ValueError, match="--run-id"):
         require_train_run_id(mint_run_id("train"), "--run-id", local=True)
+
+
+@pytest.mark.parametrize("run_id", PATH_UNSAFE_RUN_IDS)
+def test_require_path_safe_run_id_rejects_unsafe_ids(run_id: str) -> None:
+    """Each case is a distinct hazard, not a variation on one."""
+    with pytest.raises(ValueError, match="--run-id"):
+        require_path_safe_run_id(run_id, "--run-id")
+
+
+def test_require_path_safe_run_id_accepts_a_minted_feature_id() -> None:
+    """A guard rejecting mint_run_id's output would fail every unnamed Feature run."""
+    require_path_safe_run_id(mint_run_id("feature"), "--feature-run-id")
