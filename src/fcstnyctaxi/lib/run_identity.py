@@ -1,0 +1,58 @@
+"""Minting and checking run ids, in the format `schemas/run_identity.py` defines."""
+
+import re
+from datetime import UTC, datetime
+
+from fcstnyctaxi.schemas.config.common import SliceName
+from fcstnyctaxi.schemas.run_identity import (
+    LOCAL_RUN_ID_SUFFIX,
+    RUN_ID_TIMESTAMP_FORMAT,
+    TRAIN_RUN_ID_PATTERN,
+)
+
+
+def _format_run_id(slice_name: SliceName, when: datetime, *, local: bool) -> str:
+    """`<slice>-<timestamp>`, suffixed when local. Pure, so tests can pin `when`."""
+    run_id = f"{slice_name}-{when.strftime(RUN_ID_TIMESTAMP_FORMAT)}"
+    return f"{run_id}{LOCAL_RUN_ID_SUFFIX}" if local else run_id
+
+
+def mint_run_id(slice_name: SliceName, *, local: bool = False) -> str:
+    """A new run id for `slice_name`, read from the UTC clock.
+
+    Args:
+        slice_name (SliceName): The slice the run belongs to, which prefixes the id.
+        local (bool): Whether the local runner is minting it, which suffixes the id.
+
+    Returns:
+        str: `<slice>-YYYYMMDDtHHMMSSffffffz`, ending in `-local` when `local`.
+    """
+    return _format_run_id(slice_name, datetime.now(UTC), local=local)
+
+
+def require_train_run_id(run_id: str, flag_name: str, *, local: bool) -> None:
+    """Refuse a Training id off the format, or tagged for the other entry point.
+
+    Args:
+        run_id (str): The identifier to check.
+        flag_name (str): Where it arrived, named in the error.
+        local (bool): Whether the caller is the local runner, the one entry point
+            whose ids end in `-local`.
+
+    Raises:
+        ValueError: `run_id` does not match `TRAIN_RUN_ID_PATTERN`, or its `-local`
+            suffix disagrees with `local`.
+    """
+    # fullmatch rather than match, whose "$" also matches before a trailing newline.
+    if not re.fullmatch(TRAIN_RUN_ID_PATTERN, run_id):
+        raise ValueError(
+            f"{flag_name} {run_id!r} must match {TRAIN_RUN_ID_PATTERN}, the form "
+            "mint_run_id('train') writes."
+        )
+    if run_id.endswith(LOCAL_RUN_ID_SUFFIX) != local:
+        entry_point = "the local runner" if local else "a Vertex run"
+        rule = "must" if local else "must not"
+        raise ValueError(
+            f"{flag_name} {run_id!r} {rule} end in {LOCAL_RUN_ID_SUFFIX!r} for "
+            f"{entry_point}; mint a new id rather than mixing runners in one run."
+        )

@@ -41,6 +41,17 @@ A contract term, not a check: the checks that read it live in
 module boundaries, which is the same reason it left ``compose_configs_impl``.
 """
 
+RUN_ID_TIMESTAMP_FORMAT = "%Y%m%dt%H%M%S%fz"
+"""UTC and fixed width, so lexicographic order is time order. `%f` always prints six
+digits, where `isoformat()` drops the fraction at exactly zero microseconds."""
+
+LOCAL_RUN_ID_SUFFIX = "-local"
+"""Marks an id the local runner minted. Declared by the entry point, never detected."""
+
+TRAIN_RUN_ID_PATTERN = r"^train-[0-9]{8}t[0-9]{12}z(?:-local)?$"
+r"""`[0-9]`, not `\d`: pydantic's pattern engine and `re` both let `\d` match non-ASCII
+digits."""
+
 
 class FeatureRunIdentity(BaseModel):
     """Provenance of one Feature run's published artifacts.
