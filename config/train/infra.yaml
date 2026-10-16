@@ -1,5 +1,5 @@
 # TrainInfraConfig — values that do not change the forecast numbers.
-display_name_prefix: fcst-train-pipeline
+display_name_prefix: fcst-monthly-revenue-pipeline
 
 model_registry:
   # Identical today; never merge them. model_id_prefix is permanent: every version

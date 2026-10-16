@@ -201,12 +201,14 @@ schemas/config/<slice>.py           destination schemas
 artifact_registry.images.<slice>    image references
 ```
 
-`train`, not `training`. GCP resource names follow the vocabulary too: the Vertex
-pipeline and its `display_name_prefix` are `fcst-train-pipeline`, and the
-container images are the flat names `feature`, `train`, `inference` inside one
-Docker repository, `fcst-ml-containers`. One repository rather than one per
-slice, because Training is a single image serving five components — a
-step-shaped image name would be structurally wrong for it.
+`train`, not `training`. GCP resource names follow the vocabulary too: the
+Vertex pipeline is `fcst-train-pipeline`, and the container images are the flat
+names `feature`, `train`, `inference` inside one Docker repository,
+`fcst-ml-containers`. One repository rather than one per slice, because Training
+is a single image serving five components: a step-shaped image name would be
+structurally wrong for it. Job display names are the exception: their prefix,
+`fcst-monthly-revenue-pipeline`, names the project, since the run id that
+follows already names the slice.
 
 **One grandfathered exception, and it no longer lives in this tree**: the ingress
 code still names `fcst-data-ingress-pipeline` and `extract-db-to-bucket` — a

@@ -108,17 +108,11 @@ def test_gate_does_not_fork_from_dev() -> None:
 
 
 def test_train_infra_validates() -> None:
-    """config/train/infra.yaml is a complete TrainInfraConfig.
-
-    display_name_prefix is also asserted in tests/lib/config/test_bindings.py,
-    and that is not duplication to be tidied away: this file asks whether the
-    shipped file validates and carries the intended value, that one asks whether
-    the binding composes it into the intended destination. An edit to infra.yaml
-    should fail both.
-    """
+    """config/train/infra.yaml is a complete TrainInfraConfig."""
     config = TrainInfraConfig(**_load_config_file(CONFIG_DIR / "train/infra.yaml"))
 
-    assert config.display_name_prefix == "fcst-train-pipeline"
+    # Pinned so an edit to the console label fails here, not unnoticed in a log.
+    assert config.display_name_prefix == "fcst-monthly-revenue-pipeline"
     assert config.model_registry.display_name_prefix == "fcst-monthly-revenue"
     # Pinned because an edit forks the registry: the next run creates a new Model
     # resource rather than a version, and nothing raises.
