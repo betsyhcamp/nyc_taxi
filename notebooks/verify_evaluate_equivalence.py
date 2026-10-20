@@ -48,11 +48,14 @@ except NameError:
     display = print
 
 # %%
-# The production run behind model version @11, named by dev/_latest.json, so the
-# hardest in the bucket to lose. Repinned from 20260918T030436650350Z, whose
-# run_identity.json predates the required additional_exog_uri. Both sides below
+# A local gate run that never registered: evaluate_impl refuses a run whose
+# run_output.json exists, so the pin must have none. If it is removed, repin to any
+# unregistered train- run with xgboost and naive sidecars. Repinned from
+# 20260929t045735959418z, whose bare id TrainRunIdentity refuses. Both sides below
 # read the same sidecars, so how those were produced is not under test.
-PINNED_RUN_URI = "gs://nyc-taxi-ehc--modeling/dev/train/20260929t045735959418z/"
+PINNED_RUN_URI = (
+    "gs://nyc-taxi-ehc--modeling/gate/train/train-20261019t235526846493z-local/"
+)
 CHALLENGER_MODEL = "xgboost"
 BENCHMARK_MODEL = "naive"
 
