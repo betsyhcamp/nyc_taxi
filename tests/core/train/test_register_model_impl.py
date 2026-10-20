@@ -12,6 +12,7 @@ import pytest
 import yaml
 from google.api_core.exceptions import AlreadyExists, NotFound
 from google.cloud.aiplatform.models import VersionInfo
+from pydantic import ValidationError
 from pytest_mock import MockerFixture
 from stand_in_model import STAND_IN_MODEL_NAME, stand_in_config_dir
 
@@ -46,10 +47,11 @@ from fcstnyctaxi.schemas.storage.common import (
 
 CONFIG_DIR = get_project_root_dir() / "config"
 ENV = "dev"
-TRAIN_RUN_ID = "t-20260921t000000000000z"
-OTHER_RUN_ID = "t-20260922t000000000000z"
+TRAIN_RUN_ID = "train-20260921t000000000000z"
+OTHER_RUN_ID = "train-20260922t000000000000z"
 # Feature's format is not ours, so its uppercase stays legal throughout.
 FEATURE_RUN_ID = "f-20260920T000000000000Z"
+OTHER_FEATURE_RUN_ID = "f-20260921T000000000000Z"
 GIT_HASH = "a" * 40
 OTHER_GIT_HASH = "b" * 40
 SERVING_IMAGE = "us-central1-docker.pkg.dev/p/r/train@sha256:" + "c" * 64
@@ -230,6 +232,7 @@ def _compose(
     *,
     config_dir: Path | None = None,
     env: str = ENV,
+    feature_run_id: str = FEATURE_RUN_ID,
 ) -> Path:
     """Run compose_configs for one run, in the layout the resolvers really produce.
 
@@ -244,7 +247,7 @@ def _compose(
         panel=panel,
         calendar=calendar,
         additional_exog=additional_exog,
-        expected_feature_run_id=FEATURE_RUN_ID,
+        expected_feature_run_id=feature_run_id,
         train_run_id=run_id,
         git_hash=git_hash,
         out_dir=run_dir / "compose_configs",
@@ -294,11 +297,11 @@ def run_dir(
     return run_dir
 
 
-def _bundle(run_dir: Path) -> SourcedPath:
+def _bundle(run_dir: Path, env: str = ENV) -> SourcedPath:
     """The bundle as its wrapper hands it over: a mount path and a gs:// URI."""
     return SourcedPath(
         path=run_dir / "final_fit" / MODEL_NAME,
-        uri=f"gs://bucket/{ENV}/train/{run_dir.name}/final_fit/{MODEL_NAME}/",
+        uri=f"gs://bucket/{env}/train/{run_dir.name}/final_fit/{MODEL_NAME}/",
     )
 
 
@@ -374,6 +377,7 @@ def test_the_upload_is_located_labeled_and_pointed_from_the_runs_own_record(
     assert upload["labels"] == {
         "train_run_id": identity.train_run_id,
         "git_hash": identity.git_hash,
+        "env": ENV,
     }
     assert upload["artifact_uri"] == _bundle(run_dir).uri
     assert upload["serving_container_image_uri"] == SERVING_IMAGE
@@ -459,22 +463,50 @@ def test_a_second_run_adds_a_version_to_the_same_resource(
     assert second.model_tag.endswith("@2")
 
 
-def test_a_restart_uploads_nothing_and_writes_the_same_record(
-    run_dir: Path, registry: FakeRegistry
-) -> None:
-    """A filter naming the wrong label finds nothing, so the rerun would upload again.
-    Only the completion time may differ between the two records."""
-    first = _register(run_dir)
-    first_outputs = _outputs(run_dir)
+def _die_writing_the_first_record(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The first record write raises, after the upload: the restart state that remains
+    reachable once a finished run is refused."""
+    original = TrainRunOutputs.model_dump_json
+    attempts: list[dict[str, Any]] = []
 
-    second = _register(run_dir)
+    def _dump_or_die(self: TrainRunOutputs, **kwargs: Any) -> str:
+        attempts.append(kwargs)
+        if len(attempts) == 1:
+            raise OSError("the run died writing its record")
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(TrainRunOutputs, "model_dump_json", _dump_or_die)
+
+
+def test_a_restart_uploads_nothing_and_a_finished_run_is_refused(
+    run_dir: Path, registry: FakeRegistry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A filter naming the wrong label finds nothing, so the restart would upload again;
+    once the record exists, a third call changes nothing."""
+    _die_writing_the_first_record(monkeypatch)
+    with pytest.raises(OSError):
+        _register(run_dir)
+    # Self-check: the version exists and the record does not.
+    assert len(registry.uploads) == 1
+    assert not (run_dir / RUN_OUTPUT_FILENAME).exists()
+
+    restarted = _register(run_dir)
 
     assert len(registry.uploads) == 1
-    assert not second.uploaded
-    assert second.model_tag == first.model_tag
-    assert _outputs(run_dir).model_dump(exclude={"completed_at"}) == (
-        first_outputs.model_dump(exclude={"completed_at"})
-    )
+    assert not restarted.uploaded
+    uploaded_tag = f"{registry.resource_name(_expected_model_id())}@1"
+    assert _outputs(run_dir).published.model_tag == uploaded_tag
+
+    record = (run_dir / RUN_OUTPUT_FILENAME).read_bytes()
+    pointer = latest_pointer_path(run_dir).read_bytes()
+    calls = len(_sdk(registry).mock_calls)
+
+    with pytest.raises(ValueError, match="finished"):
+        _register(run_dir)
+
+    assert (run_dir / RUN_OUTPUT_FILENAME).read_bytes() == record
+    assert latest_pointer_path(run_dir).read_bytes() == pointer
+    assert len(_sdk(registry).mock_calls) == calls
 
 
 def test_a_rerun_on_another_commit_raises_and_leaves_no_record(
@@ -484,15 +516,53 @@ def test_a_rerun_on_another_commit_raises_and_leaves_no_record(
     tmp_path: Path,
 ) -> None:
     """Skipping would leave a version whose git_hash label names a commit that did not
-    produce the bytes now at its URI; the message names both."""
+    produce the bytes at the new URI; the message names both."""
     _register(run_dir)
-    _stage(inputs, tmp_path, git_hash=OTHER_GIT_HASH)
+    # The same id in gate, whose run root no claim check in dev sees; one registry.
+    gate_run_dir = _compose(inputs, tmp_path, TRAIN_RUN_ID, OTHER_GIT_HASH, env="gate")
+    _fit(inputs, gate_run_dir)
 
     with pytest.raises(ValueError, match=f"{GIT_HASH}.*{OTHER_GIT_HASH}"):
-        _register(run_dir)
+        _register(gate_run_dir, bundle=_bundle(gate_run_dir, env="gate"))
 
     assert len(registry.uploads) == 1
-    assert not (run_dir / RUN_OUTPUT_FILENAME).exists()
+    assert not (gate_run_dir / RUN_OUTPUT_FILENAME).exists()
+
+
+def test_a_run_id_reused_in_another_environment_raises_and_leaves_no_record(
+    inputs: tuple[SourcedPath, SourcedPath, SourcedPath],
+    run_dir: Path,
+    registry: FakeRegistry,
+    tmp_path: Path,
+) -> None:
+    """One registry serves dev and gate, so a gate run would otherwise record dev's
+    version against its own bundle and another Feature run."""
+    _register(run_dir)
+    panel, calendar, additional_exog = inputs
+    other_panel = SourcedPath(
+        path=tmp_path / "other_inputs" / "time_series.parquet",
+        uri="gs://bucket/other/time_series.parquet",
+    )
+    other_panel.path.parent.mkdir()
+    pd.read_parquet(panel.path).assign(feature_run_id=OTHER_FEATURE_RUN_ID).to_parquet(
+        other_panel.path
+    )
+    other_inputs = (other_panel, calendar, additional_exog)
+    gate_run_dir = _compose(
+        other_inputs,
+        tmp_path,
+        TRAIN_RUN_ID,
+        GIT_HASH,
+        env="gate",
+        feature_run_id=OTHER_FEATURE_RUN_ID,
+    )
+    _fit(other_inputs, gate_run_dir)
+
+    with pytest.raises(ValueError, match="'dev'.*'gate'"):
+        _register(gate_run_dir, bundle=_bundle(gate_run_dir, env="gate"))
+
+    assert len(registry.uploads) == 1
+    assert not (gate_run_dir / RUN_OUTPUT_FILENAME).exists()
 
 
 def test_two_versions_under_one_run_id_raise_naming_both(
@@ -531,15 +601,23 @@ def test_a_run_dir_that_is_not_this_runs_root_is_refused(
     assert _sdk(registry).mock_calls == []
 
 
-def test_a_train_run_id_that_is_not_label_safe_is_refused(
-    inputs: tuple[SourcedPath, SourcedPath, SourcedPath],
-    registry: FakeRegistry,
-    tmp_path: Path,
+def test_a_run_minted_before_the_slice_prefix_is_refused(
+    run_dir: Path, registry: FakeRegistry
 ) -> None:
-    """A run minted before ids were lowercased; the service would refuse its label."""
-    legacy_run_dir = _stage(inputs, tmp_path, run_id="t-20260913T000000000000Z")
+    """Its identity no longer parses, so it is refused before any registry call."""
+    # As the old compose left it: the root and the record both name the bare id.
+    bare_id = TRAIN_RUN_ID.removeprefix("train-")
+    legacy_run_dir = run_dir.rename(run_dir.with_name(bare_id))
+    identity_path = legacy_run_dir / "run_identity.json"
+    staged = json.loads(identity_path.read_text())
+    legacy = TrainRunIdentity.model_validate(staged).model_copy(
+        update={"train_run_id": bare_id}
+    )
+    identity_path.write_text(legacy.model_dump_json(indent=2) + "\n")
+    # Self-check: the record differs from the staged one in the id alone.
+    assert json.loads(identity_path.read_text()) == {**staged, "train_run_id": bare_id}
 
-    with pytest.raises(ValueError, match="train_run_id"):
+    with pytest.raises(ValidationError, match="train_run_id"):
         _register(legacy_run_dir)
 
     assert _sdk(registry).mock_calls == []
@@ -559,18 +637,32 @@ def test_a_bundle_uri_naming_another_model_is_refused(
     assert _sdk(registry).mock_calls == []
 
 
+def test_a_lineage_block_without_executed_at_matches_its_identity(
+    run_dir: Path, registry: FakeRegistry
+) -> None:
+    """final_fit stamps definition fields alone, so record fields go uncompared."""
+    lineage = json.loads(
+        (_bundle(run_dir).path / "final_fit_manifest.json").read_text()
+    )["lineage"]
+    # Self-check: the state compose and final_fit leave every run in.
+    assert _identity(run_dir).executed_at is not None
+    assert "executed_at" not in lineage
+
+    assert _register(run_dir).uploaded
+
+
 def test_a_bundle_fitted_under_another_identity_is_refused(
     inputs: tuple[SourcedPath, SourcedPath, SourcedPath],
     run_dir: Path,
     registry: FakeRegistry,
     tmp_path: Path,
 ) -> None:
-    """A rerun whose compose_configs finished and final_fit did not: labeling the old
-    bytes with the new identity is the one outcome registration must never leave."""
-    _compose(inputs, tmp_path, TRAIN_RUN_ID, OTHER_GIT_HASH)
+    """Another run's bundle wired to this run: labeling its bytes with this identity is
+    the one outcome registration must never leave."""
+    other_run_dir = _stage(inputs, tmp_path, run_id=OTHER_RUN_ID)
 
     with pytest.raises(ValueError, match="fitted under"):
-        _register(run_dir)
+        _register(run_dir, bundle=_bundle(other_run_dir))
 
     assert _sdk(registry).mock_calls == []
 
@@ -602,20 +694,6 @@ def test_the_seeded_pointer_is_where_the_impl_reads_it(
 ) -> None:
     """The fixture places it by the layout; the impl derives it from run_dir alone."""
     assert latest_pointer_path(run_dir) == tmp_path / ENV / LATEST_POINTER_FILENAME
-
-
-def test_a_missing_pointer_raises_before_the_marker_is_deleted(
-    run_dir: Path, registry: FakeRegistry
-) -> None:
-    """Seeded once per environment, so absence means the wrong root, not a lost file."""
-    _register(run_dir)
-    earlier = (run_dir / RUN_OUTPUT_FILENAME).read_text()
-    latest_pointer_path(run_dir).unlink()
-
-    with pytest.raises(ValueError, match=LATEST_POINTER_FILENAME):
-        _register(run_dir)
-
-    assert (run_dir / RUN_OUTPUT_FILENAME).read_text() == earlier
 
 
 def test_a_missing_pointer_never_reaches_the_registry(

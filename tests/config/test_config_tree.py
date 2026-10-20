@@ -29,11 +29,13 @@ commit 11 (landed in GCS).
 
 import ast
 import importlib.util
+import re
 from pathlib import Path
 
 from tsbricks.backtesting.schema import BacktestConfig
 
 from fcstnyctaxi.lib.config.bindings import (
+    available_environments,
     model_names_from_roles,
     require_known_environment,
     resolve_bucket,
@@ -108,17 +110,11 @@ def test_gate_does_not_fork_from_dev() -> None:
 
 
 def test_train_infra_validates() -> None:
-    """config/train/infra.yaml is a complete TrainInfraConfig.
-
-    display_name_prefix is also asserted in tests/lib/config/test_bindings.py,
-    and that is not duplication to be tidied away: this file asks whether the
-    shipped file validates and carries the intended value, that one asks whether
-    the binding composes it into the intended destination. An edit to infra.yaml
-    should fail both.
-    """
+    """config/train/infra.yaml is a complete TrainInfraConfig."""
     config = TrainInfraConfig(**_load_config_file(CONFIG_DIR / "train/infra.yaml"))
 
-    assert config.display_name_prefix == "fcst-train-pipeline"
+    # Pinned so an edit to the console label fails here, not unnoticed in a log.
+    assert config.display_name_prefix == "fcst-monthly-revenue-pipeline"
     assert config.model_registry.display_name_prefix == "fcst-monthly-revenue"
     # Pinned because an edit forks the registry: the next run creates a new Model
     # resource rather than a version, and nothing raises.
@@ -282,3 +278,10 @@ def test_model_freq_matches_base_data_freq() -> None:
     # Required, not only checked: naive_weekly has no default for freq.
     assert declared["naive"] == data_freq
     assert set(declared.values()) <= {data_freq, None}, declared
+
+
+def test_every_environment_name_is_a_legal_registry_label() -> None:
+    """Each env becomes a registry label, so an illegal name fails registration."""
+    # The SDK's Model label rule (aiplatform/models.py), restricted to ASCII.
+    for env in available_environments(CONFIG_DIR):
+        assert re.fullmatch(r"[a-z0-9_-]{1,64}", env), env

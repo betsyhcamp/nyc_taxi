@@ -15,6 +15,7 @@ from fcstnyctaxi.lib.column_checks import (
     trim_to_allowlist,
 )
 from fcstnyctaxi.lib.exog import build_exog_frame
+from fcstnyctaxi.lib.run_identity import require_unfinished_run
 from fcstnyctaxi.lib.storage_layout import composed_config_filename
 from fcstnyctaxi.schemas.config.train import ModelSettings, TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
@@ -135,9 +136,10 @@ def final_fit_impl(
 
     Raises:
         ValueError: If `out_dir` is not this model's directory under that run root,
-            if `run_identity.json` is absent, if the config declares transforms or
-            the model no callables, on a failed lineage, column or exogenous-join
-            check, or if the save wrote nothing or a zero-byte file.
+            if `run_identity.json` is absent, if the run finished, if the config
+            declares transforms or the model no callables, on a failed lineage,
+            column or exogenous-join check, or if the save wrote nothing or a
+            zero-byte file.
         ValidationError: If a config or the identity fails to revalidate on read.
 
     Returns:
@@ -161,6 +163,7 @@ def final_fit_impl(
         raise ValueError(
             f"out_dir {out_dir} is not under run root {identity.train_run_id!r}."
         )
+    require_unfinished_run(compose_configs_dir.parent)
 
     # Otherwise a failed rerun leaves the old manifest over a mix of two runs' files.
     (out_dir / _MANIFEST_FILENAME).unlink(missing_ok=True)

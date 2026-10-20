@@ -7,7 +7,7 @@ from fsspec import AbstractFileSystem
 from fsspec.implementations.memory import MemoryFileSystem
 
 from dashboard.shared import load, paths, runs
-from fcstnyctaxi.lib.utils import generate_run_id
+from fcstnyctaxi.lib.run_identity import mint_run_id
 from fcstnyctaxi.schemas.run_outputs import (
     LatestRunPointer,
     RegisteredModel,
@@ -86,9 +86,9 @@ def _write_run(
 def three_states(fake_fs: AbstractFileSystem) -> dict[str, str]:
     """One run of each state the gate must distinguish, newest id last."""
     ids = {
-        "no_evaluate": generate_run_id(),
-        "evaluated_only": generate_run_id(),
-        "registered": generate_run_id(),
+        "no_evaluate": mint_run_id("train"),
+        "evaluated_only": mint_run_id("train"),
+        "registered": mint_run_id("train"),
     }
     _write_run(fake_fs, ids["no_evaluate"], evaluated=False, registered=False)
     _write_run(fake_fs, ids["evaluated_only"], evaluated=True, registered=False)
@@ -101,7 +101,7 @@ def three_states(fake_fs: AbstractFileSystem) -> dict[str, str]:
         for entry in fake_fs.ls(TRAIN_ROOT, detail=False)
     }
     assert listed == set(ids.values())
-    assert len(set(ids.values())) == len(ids), "generate_run_id collided"
+    assert len(set(ids.values())) == len(ids), "mint_run_id collided"
     return ids
 
 
@@ -233,8 +233,8 @@ def test_a_new_run_and_its_pointer_are_seen_together_once_the_cache_expires(
     """Otherwise a long-running server never offers a run evaluated after its first
     read, and a pointer expiring alone names a run the listing lacks."""
     monkeypatch.setattr(runs.gcsfs, "GCSFileSystem", MemoryFileSystem)
-    first, second = generate_run_id(), generate_run_id()
-    assert first != second, "generate_run_id collided"
+    first, second = mint_run_id("train"), mint_run_id("train")
+    assert first != second, "mint_run_id collided"
     _write_run(fake_fs, first, evaluated=True, registered=True)
     fake_fs.pipe(POINTER_URI, _pointer_json(first))
     assert runs.list_run_ids(TRAIN_ROOT) == (first,)

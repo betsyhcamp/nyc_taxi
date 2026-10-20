@@ -12,7 +12,8 @@ from fcstnyctaxi.lib.io import (
     prepare_sql,
     write_text_to_gcs,
 )
-from fcstnyctaxi.lib.utils import generate_run_id, get_project_root_dir
+from fcstnyctaxi.lib.run_identity import mint_run_id
+from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config_schemas import PipelineConfig
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ def main() -> None:
         format="%(asctime)s.%(msecs)03dZ %(name)s %(levelname)s %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S",
     )
-    run_id = generate_run_id()
+    run_id = mint_run_id("feature")
 
     project_root = get_project_root_dir()
     config_path = project_root / "config" / "configs_zone_demand_pipeline.yaml"

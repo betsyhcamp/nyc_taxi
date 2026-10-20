@@ -60,7 +60,8 @@ from fcstnyctaxi.lib.period_utils import (
     compute_series_weights,
     label_horizon,
 )
-from fcstnyctaxi.lib.utils import generate_run_id, get_project_root_dir
+from fcstnyctaxi.lib.run_identity import mint_run_id
+from fcstnyctaxi.lib.utils import get_project_root_dir
 
 # %%
 project_root = get_project_root_dir()
@@ -136,7 +137,7 @@ HYPERPARAMS = {
     "verbosity": -1,
 }
 
-sidecar_uri = f"{bucket}/dev/backtests/backtest_direct_month/{generate_run_id()}/"
+sidecar_uri = f"{bucket}/dev/backtests/backtest_direct_month/{mint_run_id('train')}/"
 
 
 # %%

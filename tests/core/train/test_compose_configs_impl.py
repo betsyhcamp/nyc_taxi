@@ -5,6 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 import yaml
+from finished_run import file_bytes, finish_run
 from pydantic import BaseModel, ValidationError
 from tsbricks.backtesting.schema import BacktestConfig
 
@@ -19,12 +20,15 @@ from fcstnyctaxi.lib.storage_layout import SourcedPath
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import TrainInfraConfig, TrainModelingConfig
-from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
+from fcstnyctaxi.schemas.run_identity import (
+    TRAIN_IDENTITY_RECORD_FIELDS,
+    TrainRunIdentity,
+)
 
 CONFIG_DIR = get_project_root_dir() / "config"
 
 FEATURE_RUN_ID = "f-2026-09-08"
-TRAIN_RUN_ID = "t-2026-09-08"
+TRAIN_RUN_ID = "train-20260908t000000000000z"
 GIT_HASH = "abc1234"
 
 _WEEKS_PER_MONTH = 4
@@ -121,6 +125,7 @@ def _run(
     calendar_df: pd.DataFrame | None = None,
     expected_feature_run_id: str = FEATURE_RUN_ID,
     config_dir: Path = CONFIG_DIR,
+    git_hash: str = GIT_HASH,
 ) -> ComposeConfigsSummary:
     """Compose one run into its step directory, defaulting to a consistent pair."""
     panel, calendar, additional_exog = _write_inputs(
@@ -136,7 +141,7 @@ def _run(
         additional_exog=additional_exog,
         expected_feature_run_id=expected_feature_run_id,
         train_run_id=TRAIN_RUN_ID,
-        git_hash=GIT_HASH,
+        git_hash=git_hash,
         out_dir=_step_dir(tmp_path),
     )
 
@@ -225,6 +230,8 @@ def test_run_identity_reloads_and_stamps_what_was_read(
     assert identity.panel_uri.endswith("time_series.parquet")
     assert identity.calendar_uri.endswith("fiscal_calendar.parquet")
     assert identity.additional_exog_uri.endswith("exogenous_features.parquet")
+    assert identity.executed_at is not None
+    assert identity.executed_at.utcoffset() is not None
 
 
 def test_run_identity_lands_at_the_run_root_not_in_the_step_directory(
@@ -492,3 +499,114 @@ def test_one_artifact_passed_in_two_slots_raises(
         )
 
     assert not _run_dir(tmp_path).exists()
+
+
+def test_an_off_format_train_run_id_raises_before_any_write(tmp_path: Path) -> None:
+    """The identity is built before the first write, so step 1 refuses the format."""
+    # The old minter's form, under a root named by it, so only the format refuses it.
+    bare_id = TRAIN_RUN_ID.removeprefix("train-")
+    panel, calendar, additional_exog = _write_inputs(
+        tmp_path, _panel_frame(), _calendar_frame()
+    )
+
+    with pytest.raises(ValidationError, match="train_run_id"):
+        compose_configs_impl(
+            config_dir=CONFIG_DIR,
+            env="dev",
+            panel=panel,
+            calendar=calendar,
+            additional_exog=additional_exog,
+            expected_feature_run_id=FEATURE_RUN_ID,
+            train_run_id=bare_id,
+            git_hash=GIT_HASH,
+            out_dir=tmp_path / bare_id / "compose_configs",
+        )
+
+    assert not (tmp_path / bare_id).exists()
+
+
+# ================================================
+# The claim check: a reused run id matches its record, or is refused
+# ================================================
+
+
+def _stored_identity(tmp_path: Path) -> TrainRunIdentity:
+    """The identity a previous call recorded at this run's root."""
+    return TrainRunIdentity.model_validate_json(
+        (_run_dir(tmp_path) / "run_identity.json").read_text()
+    )
+
+
+def test_a_fresh_run_id_is_claimed(tmp_path: Path) -> None:
+    """Nothing recorded at the run root, so this run's identity is written."""
+    assert not _run_dir(tmp_path).exists()
+
+    _run(tmp_path)
+
+    assert _stored_identity(tmp_path).train_run_id == TRAIN_RUN_ID
+
+
+def test_a_finished_run_is_refused_and_left_byte_unchanged(tmp_path: Path) -> None:
+    """A registered version names this run's bundle, so the run is never rewritten."""
+    _run(tmp_path)
+    finish_run(_run_dir(tmp_path))
+    before = file_bytes(_run_dir(tmp_path))
+
+    with pytest.raises(ValueError, match="finished"):
+        _run(tmp_path)
+
+    assert file_bytes(_run_dir(tmp_path)) == before
+
+
+def test_a_dirty_recorded_hash_is_refused_even_for_an_identical_definition(
+    tmp_path: Path,
+) -> None:
+    """A modified tree cannot be reproduced, so no rerun can match one."""
+    _run(tmp_path, git_hash=f"{GIT_HASH}-dirty")
+    before = file_bytes(_run_dir(tmp_path))
+
+    with pytest.raises(ValueError, match="modified tree"):
+        _run(tmp_path, git_hash=f"{GIT_HASH}-dirty")
+
+    assert file_bytes(_run_dir(tmp_path)) == before
+
+
+def test_another_feature_run_under_the_same_id_is_refused(tmp_path: Path) -> None:
+    """Reused at one commit with new data, the id would silently relabel a version."""
+    _run(tmp_path)
+    before = file_bytes(_run_dir(tmp_path))
+
+    with pytest.raises(ValueError, match=f"feature_run_id recorded '{FEATURE_RUN_ID}'"):
+        _run(
+            tmp_path,
+            panel_df=_panel_frame("f-another-run"),
+            expected_feature_run_id="f-another-run",
+        )
+
+    assert file_bytes(_run_dir(tmp_path)) == before
+
+
+def test_another_git_hash_under_the_same_id_is_refused(tmp_path: Path) -> None:
+    """Every step would rewrite under one id what another commit produced."""
+    _run(tmp_path)
+    before = file_bytes(_run_dir(tmp_path))
+
+    with pytest.raises(ValueError, match=f"git_hash recorded '{GIT_HASH}'"):
+        _run(tmp_path, git_hash="def5678")
+
+    assert file_bytes(_run_dir(tmp_path)) == before
+
+
+def test_a_matching_rerun_proceeds_and_records_its_own_attempt(tmp_path: Path) -> None:
+    """Resuming an unfinished run is what reusing an id is for."""
+    _run(tmp_path)
+    first = _stored_identity(tmp_path)
+
+    _run(tmp_path)
+
+    second = _stored_identity(tmp_path)
+    assert second.model_dump(exclude=TRAIN_IDENTITY_RECORD_FIELDS) == first.model_dump(
+        exclude=TRAIN_IDENTITY_RECORD_FIELDS
+    )
+    assert first.executed_at is not None and second.executed_at is not None
+    assert second.executed_at > first.executed_at

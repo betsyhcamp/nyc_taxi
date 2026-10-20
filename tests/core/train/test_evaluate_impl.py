@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import yaml
+from finished_run import file_bytes, finish_run
 
 from fcstnyctaxi.core.train.evaluate_impl import (
     _FOLD_KEYS,
@@ -32,11 +33,14 @@ from fcstnyctaxi.lib.period_utils import ORIGIN_TIME_UNIT, derive_horizon_label
 from fcstnyctaxi.lib.storage_layout import composed_config_filename
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
-from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
+from fcstnyctaxi.schemas.run_identity import (
+    TRAIN_IDENTITY_RECORD_FIELDS,
+    TrainRunIdentity,
+)
 
 CONFIG_DIR = get_project_root_dir() / "config"
 FEATURE_RUN_ID = "f-2026-09-18"
-TRAIN_RUN_ID = "t-2026-09-18"
+TRAIN_RUN_ID = "train-20260918t000000000000z"
 
 # ================================================
 # The fixture: two synthetic backtest sidecars and the run root above them
@@ -1406,7 +1410,7 @@ def test_lineage_values_propagate_into_every_table(
 ) -> None:
     """The values, not that six columns exist."""
     identity = _identity()
-    stamped = identity.model_dump()
+    stamped = identity.model_dump(exclude=TRAIN_IDENTITY_RECORD_FIELDS)
 
     for table in (
         "per_series_comparison",
@@ -1677,8 +1681,8 @@ def test_one_model_in_both_roles_scores_itself_at_one(
 def test_the_manifest_lineage_is_the_identity_the_tables_are_stamped_with(
     staged_run: dict[str, Path],
 ) -> None:
-    """Whole-object, as register_model compares the bundle's block: evaluate opens no
-    Feature artifact, so the block is the run's provenance and not what it read."""
+    """Every definition field, as register_model compares the bundle's block: evaluate
+    opens no Feature artifact, so the block is the run's provenance."""
     evaluate_impl(**staged_run)
     manifest = json.loads(
         (staged_run["out_dir"] / "evaluate_manifest.json").read_text()
@@ -1687,7 +1691,11 @@ def test_the_manifest_lineage_is_the_identity_the_tables_are_stamped_with(
         (staged_run["compose_configs_dir"].parent / "run_identity.json").read_text()
     )
 
-    assert manifest["lineage"] == identity
+    assert manifest["lineage"] == {
+        key: value
+        for key, value in identity.items()
+        if key not in TRAIN_IDENTITY_RECORD_FIELDS
+    }
 
 
 def test_the_manifest_agrees_with_the_tables_beside_it(
@@ -1793,3 +1801,18 @@ def test_a_failed_rerun_leaves_no_completion_marker(
         evaluate_impl(**staged_run)
 
     assert not marker.exists()
+
+
+def test_a_finished_run_is_refused_and_left_byte_unchanged(
+    staged_run: dict[str, Path],
+) -> None:
+    """Under a cached compose_configs this step re-executes alone, so it must refuse."""
+    evaluate_impl(**staged_run)
+    run_dir = staged_run["compose_configs_dir"].parent
+    finish_run(run_dir)
+    before = file_bytes(run_dir)
+
+    with pytest.raises(ValueError, match="finished"):
+        evaluate_impl(**staged_run)
+
+    assert file_bytes(run_dir) == before

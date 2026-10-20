@@ -24,11 +24,16 @@ from fcstnyctaxi.core.train.final_fit_impl import final_fit_impl
 from fcstnyctaxi.core.train.register_model_impl import register_model_impl
 from fcstnyctaxi.lib.container_images import require_digest_ref
 from fcstnyctaxi.lib.io import (
-    delete_from_gcs,
     download_from_gcs,
+    mirror_from_gcs,
     require_gcs_uri,
     sync_to_gcs,
     upload_to_gcs,
+)
+from fcstnyctaxi.lib.run_identity import (
+    mint_run_id,
+    require_path_safe_run_id,
+    require_train_run_id,
 )
 from fcstnyctaxi.lib.run_outputs import resolve_feature_artifacts
 from fcstnyctaxi.lib.storage_layout import (
@@ -39,13 +44,7 @@ from fcstnyctaxi.lib.storage_layout import (
     build_run_root,
     latest_pointer_path,
 )
-from fcstnyctaxi.lib.utils import (
-    generate_run_id,
-    get_project_root_dir,
-    require_git_hash,
-    require_label_safe_run_id,
-    require_path_safe_run_id,
-)
+from fcstnyctaxi.lib.utils import get_project_root_dir, require_git_hash
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.storage.common import (
@@ -109,8 +108,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--run-id",
         default=None,
-        help="Reuse an existing id, overwriting that run's artifacts; one is "
-        "generated when absent.",
+        help="Resume an unfinished run under its existing id; refused if that run "
+        "finished or recorded different inputs. Minted when absent. Must end in "
+        "-local.",
     )
     parser.add_argument(
         "--model",
@@ -200,9 +200,9 @@ def main() -> None:
 
     # Only --run-id becomes a path and a registry label. The other is Feature's, so
     # it is held to the path vocabulary alone.
-    run_id = generate_run_id() if args.run_id is None else args.run_id
+    run_id = mint_run_id("train", local=True) if args.run_id is None else args.run_id
     require_path_safe_run_id(args.feature_run_id, "--feature-run-id")
-    require_label_safe_run_id(run_id, "--run-id")
+    require_train_run_id(run_id, "--run-id", local=True)
     # Here, so a tag rather than a digest is refused before any step spends a thing.
     if args.serving_image is not None:
         require_digest_ref(args.serving_image, "--serving-image")
@@ -266,6 +266,10 @@ def main() -> None:
         path=download_from_gcs(artifacts.exogenous_uri, additional_exog_path.parent),
         uri=artifacts.exogenous_uri,
     )
+
+    # Before compose, so its claim check sees what GCS holds rather than a stale copy.
+    for filename in (RUN_IDENTITY_FILENAME, RUN_OUTPUT_FILENAME):
+        mirror_from_gcs(build_object_uri(run_root, filename), compose_dir.parent)
 
     summary = compose_configs_impl(
         config_dir=config_dir,
@@ -418,12 +422,6 @@ def main() -> None:
         final_fit_uri,
     )
 
-    # What the impl's unlink does through the mount on Vertex, at the same point: a
-    # rerun that registers nothing, or fails to, must not leave the earlier run's
-    # published record pointing at a version whose bundle was just replaced.
-    run_output_uri = build_object_uri(run_root, RUN_OUTPUT_FILENAME)
-    delete_from_gcs(run_output_uri)
-
     # Opt-in: every local run holds live credentials, and each registration is a
     # version in the shared registry.
     if args.serving_image is None:
@@ -440,6 +438,7 @@ def main() -> None:
     environment_root = build_environment_root(bucket, args.env)
     pointer_path = latest_pointer_path(compose_dir.parent)
     pointer_uri = build_object_uri(environment_root, LATEST_POINTER_FILENAME)
+    run_output_uri = build_object_uri(run_root, RUN_OUTPUT_FILENAME)
     download_from_gcs(pointer_uri, pointer_path.parent)
 
     # The wrapper's arguments: the bundle's mirror paired with the URI it uploads.

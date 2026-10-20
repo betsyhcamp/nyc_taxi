@@ -36,7 +36,8 @@ from fcstnyctaxi.lib.period_utils import (
     last_complete_actual_month,
     normalized_origin_horizon_pairs,
 )
-from fcstnyctaxi.lib.utils import get_project_root_dir, generate_run_id
+from fcstnyctaxi.lib.run_identity import mint_run_id
+from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.run_outputs import (
     CALENDAR_ALLOWED_COLUMNS,
     CALENDAR_REQUIRED_COLUMNS,
@@ -70,7 +71,7 @@ run_cfg = yaml.safe_load(run_config_path.read_text())
 backtest_cfg_path = project_root / run_cfg["configs"]["backtest_config"]
 model_cfg_path = project_root / run_cfg["configs"]["model"]
 
-sidecar_dir = generate_run_id()
+sidecar_dir = mint_run_id("train")
 sidecar_uri = (
     f"{run_cfg['project']['gcs_bucket']}/dev/backtests/backtest_weekly/{sidecar_dir}/"
 )

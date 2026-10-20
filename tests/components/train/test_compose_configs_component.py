@@ -18,6 +18,7 @@ from fcstnyctaxi.components.train.compose_configs_component import compose_confi
 from fcstnyctaxi.core.train.compose_configs_impl import ComposeConfigsSummary
 from fcstnyctaxi.lib.config.bindings import environment_bindings, resolve_model_names
 from fcstnyctaxi.lib.config.composition import compose_config
+from fcstnyctaxi.lib.run_identity import require_train_run_id
 from fcstnyctaxi.lib.storage_layout import SourcedPath
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.environment import EnvironmentConfig
@@ -30,7 +31,7 @@ CONFIG_DIR = get_project_root_dir() / "config"
 
 # The one input that cannot be a sentinel: composition runs against the real tree.
 ENV = "dev"
-TRAIN_RUN_ID = "t-sentinel"
+TRAIN_RUN_ID = "train-20260913t000000000000z"
 FEATURE_RUN_ID = "f-sentinel"
 GIT_HASH = "abc1234-dirty"
 
@@ -166,6 +167,30 @@ def test_missing_git_hash_raises_naming_the_variable(
         COMPONENT.execute(
             env=ENV,
             train_run_id=TRAIN_RUN_ID,
+            feature_run_id=FEATURE_RUN_ID,
+            declared_model_names=DECLARED_MODEL_NAMES,
+            panel=panel,
+            calendar=calendar,
+            additional_exog=additional_exog,
+            composed_configs=composed_configs,
+        )
+
+    mock_impl.assert_not_called()
+
+
+def test_a_local_runners_id_is_refused_before_the_impl(
+    real_config_dir: Path, mock_impl: Any, baked_git_hash: str
+) -> None:
+    """Test that a console or SDK clone cannot write into a local run's root."""
+    run_id = f"{TRAIN_RUN_ID}-local"
+    # Self-check: well formed, so only the tag can refuse it.
+    require_train_run_id(run_id, "train_run_id", local=True)
+    panel, calendar, additional_exog, composed_configs = _artifacts()
+
+    with pytest.raises(ValueError, match="train_run_id"):
+        COMPONENT.execute(
+            env=ENV,
+            train_run_id=run_id,
             feature_run_id=FEATURE_RUN_ID,
             declared_model_names=DECLARED_MODEL_NAMES,
             panel=panel,

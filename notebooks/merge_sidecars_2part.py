@@ -20,7 +20,7 @@ import pandas as pd
 import yaml
 
 from fcstnyctaxi.lib.io import write_text_to_gcs
-from fcstnyctaxi.lib.utils import generate_run_id
+from fcstnyctaxi.lib.run_identity import mint_run_id
 from tsbricks.blocks.metadata import get_git_hash, get_uv_lock_info
 
 # %%
@@ -31,7 +31,7 @@ SIDECAR_URI_2 = "gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_weekly/20260
 
 merged_output_uri = (
     "gs://nyc-taxi-ehc--modeling/dev/backtests/backtest_weekly_merged/"
-    f"{generate_run_id()}/" # fresh timestamp at runtime; trailing slash matters
+    f"{mint_run_id('train')}/" # fresh timestamp at runtime; trailing slash matters
 )
 
 

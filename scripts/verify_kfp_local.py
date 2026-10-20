@@ -10,7 +10,8 @@ from fcstnyctaxi.lib.io import (
     build_run_scoped_uri,
     prepare_sql,
 )
-from fcstnyctaxi.lib.utils import generate_run_id, get_project_root_dir
+from fcstnyctaxi.lib.run_identity import mint_run_id
+from fcstnyctaxi.lib.utils import get_project_root_dir
 
 _ADC_PATH_IN_CONTAINER = "/kfp-workspace/application_default_credentials.json"
 
@@ -39,7 +40,7 @@ def main() -> None:
         workspace_root=os.path.expanduser("~/.config/gcloud"),
     )
 
-    run_id = generate_run_id()
+    run_id = mint_run_id("feature")
 
     sql_path = project_root / "queries" / config.extract_db_to_bucket.sql_filename
     preparedsql = prepare_sql(

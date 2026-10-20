@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import yaml
+from finished_run import file_bytes, finish_run
 from pandas.testing import assert_frame_equal
 from stand_in_model import (
     STAND_IN_EXOG_FEATURES,
@@ -29,12 +30,13 @@ from fcstnyctaxi.lib.storage_layout import (
 )
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
+from fcstnyctaxi.schemas.run_identity import TRAIN_IDENTITY_RECORD_FIELDS
 from fcstnyctaxi.schemas.run_outputs import TrainingData
 from fcstnyctaxi.schemas.storage.common import BUNDLE_MODEL_DIR
 
 CONFIG_DIR = get_project_root_dir() / "config"
 FEATURE_RUN_ID = "f-2026-09-21"
-TRAIN_RUN_ID = "t-2026-09-21"
+TRAIN_RUN_ID = "train-20260921t000000000000z"
 MODEL_NAME = STAND_IN_MODEL_NAME
 _MARKER = "final_fit_manifest.json"
 
@@ -492,9 +494,13 @@ def test_the_manifest_names_what_a_reader_needs_to_load_and_predict(
     assert manifest["model_name"] == MODEL_NAME
     assert manifest["config"]["save_callable"] == settings.save_callable
     assert manifest["config"]["exog_features"] == settings.exog_features
-    # Whole-object: register_model revalidates this block as a TrainRunIdentity and
-    # compares it to the identity, so a missing slot fails every registration.
-    assert manifest["lineage"] == identity
+    # register_model revalidates this block as a TrainRunIdentity and compares its
+    # definition fields with the identity's, so a missing slot fails every registration.
+    assert manifest["lineage"] == {
+        key: value
+        for key, value in identity.items()
+        if key not in TRAIN_IDENTITY_RECORD_FIELDS
+    }
 
 
 def test_the_summary_carries_the_run_ids_it_discovered(
@@ -533,3 +539,18 @@ def test_summary_as_dict_survives_json_serialization(panel: pd.DataFrame) -> Non
         json.dumps(dataclasses.asdict(summary))
 
     json.dumps(summary.as_dict(), allow_nan=False)
+
+
+def test_a_finished_run_is_refused_and_left_byte_unchanged(
+    staged: dict[str, Any],
+) -> None:
+    """Under a cached compose_configs this step re-executes alone, so it must refuse."""
+    final_fit_impl(**staged)
+    run_dir = staged["compose_configs_dir"].parent
+    finish_run(run_dir)
+    before = file_bytes(run_dir)
+
+    with pytest.raises(ValueError, match="finished"):
+        final_fit_impl(**staged)
+
+    assert file_bytes(run_dir) == before

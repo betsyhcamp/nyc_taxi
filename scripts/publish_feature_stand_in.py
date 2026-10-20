@@ -19,12 +19,9 @@ from tsbricks.blocks.metadata import get_git_hash
 
 from fcstnyctaxi.lib.config.bindings import resolve_bucket
 from fcstnyctaxi.lib.io import delete_from_gcs, write_text_to_gcs
+from fcstnyctaxi.lib.run_identity import mint_run_id, require_path_safe_run_id
 from fcstnyctaxi.lib.storage_layout import build_object_uri, build_run_root
-from fcstnyctaxi.lib.utils import (
-    generate_run_id,
-    get_project_root_dir,
-    require_path_safe_run_id,
-)
+from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.run_identity import LINEAGE_COLUMN
 from fcstnyctaxi.schemas.run_outputs import FeatureArtifacts, FeatureRunOutputs
 from fcstnyctaxi.schemas.storage.common import RUN_OUTPUT_FILENAME
@@ -93,7 +90,7 @@ def main() -> None:
     """
     args = _parse_args()
     feature_run_id = (
-        generate_run_id() if args.feature_run_id is None else args.feature_run_id
+        mint_run_id("feature") if args.feature_run_id is None else args.feature_run_id
     )
     require_path_safe_run_id(feature_run_id, "--feature-run-id")
 

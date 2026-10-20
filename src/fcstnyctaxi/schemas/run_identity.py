@@ -14,11 +14,11 @@ The id prefixes are the **slice tokens** — ``feature``, ``train``, ``inference
 ``<env>/<slice>/<run_id>/<step>/`` storage convention. One vocabulary, used
 everywhere. (note we are using ``train``, **NOT** ``training``)
 
-Three flat models, **not** a hierarchy. The shared surface is one field
-(``git_hash``); Feature cannot carry the URIs because it *produces* them; and
-only one of the three exists to be written today. ``InferenceRunIdentity`` is
-not built — its ``model_version`` depends on registration that does not exist
-until later.
+Three flat models, **not** a hierarchy. The shared surface is two fields
+(``git_hash``, ``executed_at``); Feature cannot carry the URIs because it
+*produces* them; and only one of the three exists to be written today.
+``InferenceRunIdentity`` is not built: its ``model_version`` depends on
+registration that does not exist until later.
 
 The ``gs://`` patterns close a second live slip: the local runner holds both
 the original URI and the staged local ``Path``, and passing the wrong one would
@@ -31,7 +31,7 @@ config-file hashes in each run's emitted ``manifest.json``, and is deliberately 
 accepted here — one field, one spelling.
 """
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 LINEAGE_COLUMN = "feature_run_id"
 """The column Feature stamps on the panel, and every Training impl checks there.
@@ -41,11 +41,22 @@ A contract term, not a check: the checks that read it live in
 module boundaries, which is the same reason it left ``compose_configs_impl``.
 """
 
+RUN_ID_TIMESTAMP_FORMAT = "%Y%m%dt%H%M%S%fz"
+"""UTC and fixed width, so lexicographic order is time order. `%f` always prints six
+digits, where `isoformat()` drops the fraction at exactly zero microseconds."""
+
+LOCAL_RUN_ID_SUFFIX = "-local"
+"""Marks an id the local runner minted. Declared by the entry point, never detected."""
+
+TRAIN_RUN_ID_PATTERN = r"^train-[0-9]{8}t[0-9]{12}z(?:-local)?$"
+r"""`[0-9]`, not `\d`: pydantic's pattern engine and `re` both let `\d` match non-ASCII
+digits."""
+
 
 class FeatureRunIdentity(BaseModel):
     """Provenance of one Feature run's published artifacts.
 
-    Built although Feature does not exist yet: the three fields are
+    Built although Feature does not exist yet: its fields are
     already specified, and run-scoped writes plus ``feature_run_id`` stamping is
     precisely what ``scripts/publish_feature_stand_in.py`` imitates.
     """
@@ -55,6 +66,8 @@ class FeatureRunIdentity(BaseModel):
     git_hash: str = Field(min_length=1)
     feature_run_id: str = Field(min_length=1)
     sql_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    # Part of Feature's identity, so compared: a rerun is a new run.
+    executed_at: AwareDatetime
 
 
 class TrainRunIdentity(BaseModel):
@@ -75,7 +88,15 @@ class TrainRunIdentity(BaseModel):
 
     git_hash: str = Field(min_length=1)
     feature_run_id: str = Field(min_length=1)
-    train_run_id: str = Field(min_length=1)
+    train_run_id: str = Field(pattern=TRAIN_RUN_ID_PATTERN)
     panel_uri: str = Field(pattern=r"^gs://")
     calendar_uri: str = Field(pattern=r"^gs://")
     additional_exog_uri: str = Field(pattern=r"^gs://")
+    # Optional: lineage blocks parse into this model and carry only the six fields
+    # above. On a rerun, the latest attempt whose compose_configs executed.
+    executed_at: AwareDatetime | None = None
+
+
+TRAIN_IDENTITY_RECORD_FIELDS = frozenset({"executed_at"})
+"""Fields that record an attempt rather than define the run, so every identity
+comparison excludes them."""

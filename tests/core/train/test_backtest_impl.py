@@ -6,6 +6,7 @@ from typing import Any, cast
 import numpy as np
 import pandas as pd
 import pytest
+from finished_run import file_bytes, finish_run
 from tsbricks.backtesting import generate_folds
 from tsbricks.backtesting.schema import BacktestConfig
 
@@ -38,7 +39,10 @@ from fcstnyctaxi.lib.period_utils import (
 from fcstnyctaxi.lib.storage_layout import composed_config_filename
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
-from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
+from fcstnyctaxi.schemas.run_identity import (
+    TRAIN_IDENTITY_RECORD_FIELDS,
+    TrainRunIdentity,
+)
 from fcstnyctaxi.schemas.run_outputs import (
     ADDITIONAL_EXOG_REQUIRED_COLUMNS,
     CALENDAR_ALLOWED_COLUMNS,
@@ -47,7 +51,7 @@ from fcstnyctaxi.schemas.run_outputs import (
 
 CONFIG_DIR = get_project_root_dir() / "config"
 FEATURE_RUN_ID = "f-2026-09-17"
-TRAIN_RUN_ID = "t-2026-09-17"
+TRAIN_RUN_ID = "train-20260917t000000000000z"
 MODEL_NAME = "naive"
 
 # ================================================
@@ -490,9 +494,11 @@ def test_the_manifest_records_the_effective_settings_not_the_defaults() -> None:
     manifest = _build_manifest(MODEL_NAME, _summary(), _identity(), tuned)
 
     assert manifest["config"]["tiering"]["trailing_weeks"] == 13
-    # Whole-object, as register_model compares the bundle's block: every field of
-    # the identity is echoed, so a slot left out of the block is a silent drift.
-    assert manifest["lineage"] == _identity().model_dump()
+    # Every definition field, as register_model compares the bundle's block: a slot
+    # left out of the block is a silent drift.
+    assert manifest["lineage"] == _identity().model_dump(
+        exclude=TRAIN_IDENTITY_RECORD_FIELDS
+    )
 
 
 def test_the_manifest_survives_json_serialisation() -> None:
@@ -886,3 +892,18 @@ def test_the_snapshots_are_trimmed_to_the_contract(completed_run: Path) -> None:
     assert tuple(panel_snapshot.columns) == PANEL_REQUIRED_COLUMNS
     assert tuple(calendar_snapshot.columns) == CALENDAR_ALLOWED_COLUMNS
     assert tuple(exog_snapshot.columns) == ADDITIONAL_EXOG_REQUIRED_COLUMNS
+
+
+def test_a_finished_run_is_refused_and_left_byte_unchanged(
+    staged: dict[str, Any],
+) -> None:
+    """Under a cached compose_configs this step re-executes alone, so it must refuse."""
+    backtest_impl(**staged)
+    run_dir = staged["compose_configs_dir"].parent
+    finish_run(run_dir)
+    before = file_bytes(run_dir)
+
+    with pytest.raises(ValueError, match="finished"):
+        backtest_impl(**staged)
+
+    assert file_bytes(run_dir) == before

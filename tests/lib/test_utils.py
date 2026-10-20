@@ -1,40 +1,14 @@
 import re
 import subprocess
-from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 from fcstnyctaxi.lib.utils import (
     find_root_project_dir,
-    generate_run_id,
     get_project_root_dir,
     require_git_hash,
-    require_label_safe_run_id,
-    require_path_safe_run_id,
 )
-
-# ================================================
-# generate_run_id tests
-# ================================================
-
-
-def test_generate_run_id_is_chronological_and_increasing():
-    "Test that run_ids are monotonic, chronologically ordered and sortable."
-    ids = [generate_run_id() for _ in range(20)]
-    assert ids == sorted(ids)
-
-
-def test_generate_run_id_makes_correct_format():
-    """Test that generate_run_id makes desired microsecond format"""
-    run_id = generate_run_id()
-
-    assert re.fullmatch(r"\d{8}t\d{12}z", run_id)
-
-    # strptime raises ValueError if run_id doesn't match format;
-    # then pytest catches ValueError & test will fail
-    datetime.strptime(run_id, "%Y%m%dt%H%M%S%fz")
-
 
 # ================================================
 # find_root_project_dir — happy path
@@ -93,60 +67,6 @@ def test_get_project_root_dir_falls_back_when_env_not_set(
     monkeypatch.delenv("PROJECT_ROOT", raising=False)
     result = get_project_root_dir(start_path=Path(__file__).resolve())
     assert (result / "pyproject.toml").exists()
-
-
-# ================================================
-# require_path_safe_run_id tests
-# ================================================
-
-PATH_UNSAFE_RUN_IDS = ["f1\n", "..", ".hidden", "-x", ""]
-
-
-@pytest.mark.parametrize("run_id", PATH_UNSAFE_RUN_IDS)
-def test_require_path_safe_run_id_rejects_unsafe_ids(run_id: str) -> None:
-    """Each case is a distinct hazard, not a variation on one."""
-    with pytest.raises(ValueError, match="--run-id"):
-        require_path_safe_run_id(run_id, "--run-id")
-
-
-def test_require_path_safe_run_id_accepts_a_generated_id() -> None:
-    """A guard rejecting generate_run_id's output would fail every unnamed run."""
-    require_path_safe_run_id(generate_run_id(), "--run-id")
-
-
-# ================================================
-# require_label_safe_run_id tests
-# ================================================
-
-
-@pytest.mark.parametrize("run_id", PATH_UNSAFE_RUN_IDS)
-def test_require_label_safe_run_id_rejects_every_path_unsafe_id(run_id: str) -> None:
-    """It replaces the path guard on --run-id, so it must refuse what that one does."""
-    with pytest.raises(ValueError, match="--run-id"):
-        require_label_safe_run_id(run_id, "--run-id")
-
-
-@pytest.mark.parametrize("run_id", ["t-20260913T000000000000Z", "t.1", "a" * 65])
-def test_require_label_safe_run_id_rejects_a_path_safe_illegal_label(
-    run_id: str,
-) -> None:
-    """Uppercase, a dot, a 65th character: each is illegal only as a label."""
-    # Self-check: the case would otherwise prove only what the path guard does.
-    require_path_safe_run_id(run_id, "--run-id")
-
-    with pytest.raises(ValueError, match="--run-id"):
-        require_label_safe_run_id(run_id, "--run-id")
-
-
-@pytest.mark.parametrize("run_id", ["a" * 64, "backfill_2026-09"])
-def test_require_label_safe_run_id_accepts_a_legal_label(run_id: str) -> None:
-    """The cap's own boundary, and the underscore the label charset allows."""
-    require_label_safe_run_id(run_id, "--run-id")
-
-
-def test_require_label_safe_run_id_accepts_a_generated_id() -> None:
-    """A guard rejecting generate_run_id's output would fail every unnamed run."""
-    require_label_safe_run_id(generate_run_id(), "--run-id")
 
 
 # ================================================

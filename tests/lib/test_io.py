@@ -7,6 +7,7 @@ from fcstnyctaxi.lib.io import (
     build_run_scoped_uri,
     delete_from_gcs,
     download_from_gcs,
+    mirror_from_gcs,
     prepare_sql,
     read_text_from_gcs,
     sync_to_gcs,
@@ -289,6 +290,70 @@ def test_download_from_gcs_raises_on_a_prefix_uri(
         download_from_gcs("gs://BUCKET/dev/train/RUNID/compose_configs", download_dir)
 
     assert not download_dir.exists()
+
+
+# ================================================
+# mirror_from_gcs tests
+# ================================================
+
+RECORD_URI = "gs://BUCKET/dev/train/RUNID/run_identity.json"
+
+
+@pytest.mark.parametrize(
+    "uri",
+    ["s3://BUCKET/dev/train/RUNID/run_identity.json", "/tmp/run_identity.json"],
+)
+def test_mirror_from_gcs_rejects_non_gcs_uri(download_dir: Path, uri: str) -> None:
+    """Unguarded, a bare path is mirrored from local disk and reported as GCS."""
+    with pytest.raises(ValueError, match="must be a gs://"):
+        mirror_from_gcs(uri, download_dir)
+
+
+def test_mirror_from_gcs_replaces_a_stale_copy_with_the_objects_bytes(
+    fake_gcs: Path, download_dir: Path
+) -> None:
+    """A present object wins over whatever an earlier run left locally."""
+    write_text_to_gcs('{"attempt": 2}', RECORD_URI)
+    download_dir.mkdir(parents=True)
+    (download_dir / "run_identity.json").write_text('{"attempt": 1}')
+
+    result = mirror_from_gcs(RECORD_URI, download_dir)
+
+    assert result == download_dir / "run_identity.json"
+    assert result.read_text() == read_text_from_gcs(RECORD_URI)
+
+
+def test_mirror_from_gcs_returns_none_and_creates_nothing_for_an_absent_object(
+    fake_gcs: Path, download_dir: Path
+) -> None:
+    """A run's first attempt has no record yet, so absence is the normal case."""
+    assert mirror_from_gcs(RECORD_URI, download_dir) is None
+    assert not download_dir.exists()
+
+
+def test_mirror_from_gcs_removes_a_stale_copy_of_an_absent_object(
+    fake_gcs: Path, download_dir: Path
+) -> None:
+    """A copy GCS does not hold would make a check refuse a run GCS never saw."""
+    download_dir.mkdir(parents=True)
+    (download_dir / "run_identity.json").write_text('{"attempt": 1}')
+
+    assert mirror_from_gcs(RECORD_URI, download_dir) is None
+    assert not (download_dir / "run_identity.json").exists()
+
+
+def test_mirror_from_gcs_refuses_a_prefix_and_leaves_the_local_copy(
+    fake_gcs: Path, download_dir: Path
+) -> None:
+    """Single objects only, as download_from_gcs: a run root is not a record."""
+    write_text_to_gcs("{}", RECORD_URI)
+    download_dir.mkdir(parents=True)
+    (download_dir / "RUNID").write_text("local")
+
+    with pytest.raises(ValueError, match="single object"):
+        mirror_from_gcs("gs://BUCKET/dev/train/RUNID", download_dir)
+
+    assert (download_dir / "RUNID").read_text() == "local"
 
 
 # ================================================
