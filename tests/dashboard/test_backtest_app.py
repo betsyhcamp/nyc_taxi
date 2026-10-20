@@ -26,7 +26,7 @@ from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 
-APP = str(get_project_root_dir() / "dashboard" / "app.py")
+APP = str(get_project_root_dir() / "dashboard" / "backtest_app.py")
 SELECTED = "train-20260929t045735959418z"
 OTHER = "train-20260929t045146753815z"
 FEATURE_RUN_ID = "20260923t011300349443z"
