@@ -1,6 +1,6 @@
 """Backtest monitor for one train run. Assembly only.
 
-Run `uv run streamlit run dashboard/app.py` from the repo root.
+Run `task dashboard-backtest`.
 """
 
 import sys
