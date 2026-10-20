@@ -273,6 +273,17 @@ tasks:
       - uv run python scripts/submit_train_pipeline.py {{.CLI_ARGS}} --template-path build/fcst-train-pipeline.yaml
 
   # ===========================================
+  # DASHBOARDS
+  # ===========================================
+  # Task runs each command from this file's directory, the only one where
+  # Streamlit finds .streamlit/config.toml and its light theme.
+
+  dashboard-backtest:
+    desc: Launch the backtest monitor over train runs
+    cmds:
+      - uv run streamlit run dashboard/backtest_app.py
+
+  # ===========================================
   # COMPOSITE TASKS
   # ===========================================
 
