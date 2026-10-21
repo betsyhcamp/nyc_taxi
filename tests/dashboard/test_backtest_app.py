@@ -12,6 +12,7 @@ from streamlit.testing.v1 import AppTest
 
 from dashboard.shared import load, paths, runs
 from dashboard.train import contribution, origin_skill
+from fcstnyctaxi.core.train import backtest_impl
 from fcstnyctaxi.core.train.evaluate_impl import (
     _OUTPUT_FILENAMES,
     _build_manifest,
@@ -21,6 +22,7 @@ from fcstnyctaxi.core.train.evaluate_impl import (
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
+from fcstnyctaxi.schemas.storage.train import BACKTEST_DIR
 
 APP = str(get_project_root_dir() / "dashboard" / "backtest_app.py")
 SELECTED = "train-20260929t045735959418z"
@@ -105,15 +107,37 @@ def _monthly_series(model: str, modeling: TrainModelingConfig) -> pd.DataFrame:
     return frame
 
 
-def _write_run(root: Path, run_id: str) -> None:
-    """One run's evaluate directory, every table and the manifest from evaluate's
-    own builders, written as `evaluate_impl` writes them."""
-    modeling = _modeling()
+def _backtest_summary(
+    monthly_series: pd.DataFrame, identity: TrainRunIdentity
+) -> backtest_impl.BacktestSummary:
+    """What backtest reports having run, over this sidecar's monthly_series."""
+    origins = sorted(monthly_series["forecast_origin_date"].unique())
+    return backtest_impl.BacktestSummary(
+        n_origins=len(origins),
+        first_origin=backtest_impl._origin_label(pd.Timestamp(origins[0])),
+        last_origin=backtest_impl._origin_label(pd.Timestamp(origins[-1])),
+        n_series=int(monthly_series["unique_id"].nunique()),
+        train_run_id=identity.train_run_id,
+        feature_run_id=identity.feature_run_id,
+        output_rows={
+            backtest_impl._OUTPUT_FILENAMES["monthly_series"]: len(monthly_series)
+        },
+    )
+
+
+def _write_run(root: Path, run_id: str, modeling: TrainModelingConfig) -> None:
+    """One run's evaluate directory and a sidecar per model, every file from its
+    producer's own builders, written as each step writes them."""
     roles = modeling.model_roles
     identity = _identity(run_id)
+    # Keyed by model, as the pipeline writes one sidecar per model.
+    sidecars = {
+        model: _monthly_series(model, modeling)
+        for model in (roles.challenger, roles.benchmark)
+    }
     outputs = compute_evaluate_outputs(
-        challenger_ms=_monthly_series(roles.challenger, modeling),
-        benchmark_ms=_monthly_series(roles.benchmark, modeling),
+        challenger_ms=sidecars[roles.challenger],
+        benchmark_ms=sidecars[roles.benchmark],
         calendar_df=_calendar(),
         challenger_model=roles.challenger,
         benchmark_model=roles.benchmark,
@@ -133,30 +157,50 @@ def _write_run(root: Path, run_id: str) -> None:
     )
     (evaluate / paths.EVALUATE_MANIFEST).write_text(json.dumps(manifest))
 
+    for model, monthly_series in sidecars.items():
+        sidecar = root / run_id / BACKTEST_DIR / model
+        sidecar.mkdir(parents=True)
+        _calendar().to_parquet(sidecar / backtest_impl._CALENDAR_FILENAME, index=False)
+        backtest_manifest = backtest_impl._build_manifest(
+            model, _backtest_summary(monthly_series, identity), identity, modeling
+        )
+        (sidecar / backtest_impl._MANIFEST_FILENAME).write_text(
+            json.dumps(backtest_manifest, indent=2) + "\n"
+        )
 
-@pytest.fixture
-def page_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Both runs on local disk, and the page's four remote reads pointed there. The
-    listing is the real gate, globbed over the local root."""
-    for run_id in (SELECTED, OTHER):
-        _write_run(tmp_path, run_id)
+
+def _point_page_at(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The page's remote reads, pointed at the runs under `root`. The listing is the
+    real gate, globbed over the local root."""
 
     def list_run_ids(slice_root: str) -> tuple[str, ...]:
-        return runs.discover_run_ids(f"{tmp_path}/", LocalFileSystem())
+        return runs.discover_run_ids(f"{root}/", LocalFileSystem())
 
     def pointer_run_id(pointer_uri: str) -> str:
         return SELECTED
 
     def evaluate_uri(config_dir: str, env: str, run_id: str) -> str:
-        return f"{tmp_path / run_id / 'evaluate'}/"
+        return f"{root / run_id / 'evaluate'}/"
 
     def run_outputs_uri(config_dir: str, env: str, run_id: str) -> str:
-        return f"{tmp_path / run_id}/run_output.json"
+        return f"{root / run_id}/run_output.json"
+
+    def sidecar_uri(config_dir: str, env: str, run_id: str, model_name: str) -> str:
+        return f"{root / run_id / BACKTEST_DIR / model_name}/"
 
     monkeypatch.setattr(runs, "list_run_ids", list_run_ids)
     monkeypatch.setattr(runs, "pointer_run_id", pointer_run_id)
     monkeypatch.setattr(load, "evaluate_uri", evaluate_uri)
     monkeypatch.setattr(load, "run_outputs_uri", run_outputs_uri)
+    monkeypatch.setattr(load, "sidecar_uri", sidecar_uri)
+
+
+@pytest.fixture
+def page_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Both runs on local disk, and the page's remote reads pointed there."""
+    for run_id in (SELECTED, OTHER):
+        _write_run(tmp_path, run_id, _modeling())
+    _point_page_at(tmp_path, monkeypatch)
     return tmp_path
 
 
@@ -251,3 +295,52 @@ def test_another_runs_file_stops_the_page_before_it_draws(
     assert OTHER in app.exception[0].message
     assert not app.markdown
     assert not app.get("plotly_chart")
+
+
+@pytest.mark.parametrize("role", ["challenger", "benchmark"])
+def test_another_runs_sidecar_stops_the_page_before_it_draws(
+    page_root: Path, role: str
+) -> None:
+    """Each role's sidecar, whose tables carry no run id, so its manifest is the
+    witness. The message naming the planted run shows the plant tripped it."""
+    manifest = (
+        Path(BACKTEST_DIR)
+        / getattr(_modeling().model_roles, role)
+        / paths.BACKTEST_MANIFEST
+    )
+    shutil.copy(page_root / OTHER / manifest, page_root / SELECTED / manifest)
+    app = AppTest.from_file(APP, default_timeout=30).run()
+    assert app.exception
+    assert OTHER in app.exception[0].message
+    assert not app.markdown
+    assert not app.get("plotly_chart")
+
+
+def test_one_model_in_both_roles_reads_one_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ModelRoles permits it, and the pipeline then writes one sidecar for both."""
+    modeling = _modeling()
+    shared = modeling.model_copy(
+        update={
+            "model_roles": modeling.model_roles.model_copy(
+                update={"benchmark": modeling.model_roles.challenger}
+            )
+        }
+    )
+    _write_run(tmp_path, SELECTED, shared)
+    # Self-check: the run holds exactly one sidecar.
+    (sidecar,) = (tmp_path / SELECTED / BACKTEST_DIR).iterdir()
+    _point_page_at(tmp_path, monkeypatch)
+
+    read = []
+    load_backtest_manifest = load.load_backtest_manifest
+
+    def recording_load(prefix: str) -> dict:
+        read.append(prefix)
+        return load_backtest_manifest(prefix)
+
+    monkeypatch.setattr(load, "load_backtest_manifest", recording_load)
+    app = AppTest.from_file(APP, default_timeout=30).run()
+    assert not app.exception, app.exception[0].message if app.exception else ""
+    assert read == [f"{sidecar}/"]

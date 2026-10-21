@@ -67,6 +67,18 @@ def main() -> None:
             paths.PER_SERIES_COMPARISON: per_series_comparison,
         },
     )
+    # Keyed by model, so one sidecar when a model holds both roles.
+    sidecars = {
+        model: load.sidecar_uri(config_dir, env, run_id, model)
+        for model in (manifest["challenger_model"], manifest["benchmark_model"])
+    }
+    load.check_sidecar_lineage(
+        run_id,
+        {
+            model: load.load_backtest_manifest(prefix)
+            for model, prefix in sidecars.items()
+        },
+    )
     tier_labels = manifest["config"]["tiering"]["tier_labels"]
 
     header.render_identity_strip(
