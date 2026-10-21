@@ -298,8 +298,8 @@ def test_every_x_axis_is_a_date_axis(fold_metrics: pd.DataFrame) -> None:
 def test_the_two_horizons_sit_on_opposite_sides_of_the_origin(
     fold_metrics: pd.DataFrame,
 ) -> None:
-    """A shared offset stacks the two marks, and a tick or a ring off its mark's
-    side reads as the other horizon's."""
+    """Each horizon 5px to its own side, its tick and ring with it; a shared side
+    stacks the marks, and a vertical offset moves them off their values."""
     figure = _figure(fold_metrics, "wape")
     offsets = {}
     for horizon in palette.HORIZON_COLOR:
@@ -317,7 +317,13 @@ def test_the_two_horizons_sit_on_opposite_sides_of_the_origin(
         }
     assert _rings(figure)
     assert all(len(offset) == 1 for offset in offsets.values())
-    assert offsets["horizon_1"] != offsets["horizon_2"]
+    ((angle_1, standoff_1),) = offsets["horizon_1"]
+    ((angle_2, standoff_2),) = offsets["horizon_2"]
+    # A literal, not _OFFSET_PX: the spec fixes 5px, and a test reading the
+    # constant would carry a mistyped one along.
+    assert standoff_1 == standoff_2 == 5
+    assert angle_1 % 180 == angle_2 % 180 == 90
+    assert (angle_1 - angle_2) % 360 == 180
 
 
 def test_a_metric_without_a_drawn_benchmark_has_no_ticks(
