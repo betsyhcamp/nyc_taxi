@@ -11,7 +11,7 @@ from fsspec.implementations.local import LocalFileSystem
 from streamlit.testing.v1 import AppTest
 
 from dashboard.shared import load, paths, runs
-from dashboard.train import contribution, origin_skill
+from dashboard.train import cohort, contribution, origin_skill
 from fcstnyctaxi.core.train import backtest_impl
 from fcstnyctaxi.core.train.evaluate_impl import (
     _OUTPUT_FILENAMES,
@@ -19,6 +19,7 @@ from fcstnyctaxi.core.train.evaluate_impl import (
     _build_summary,
     compute_evaluate_outputs,
 )
+from fcstnyctaxi.lib.origin_modeling_table.builders import enumerate_origins
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
@@ -64,20 +65,22 @@ def _identity(run_id: str) -> TrainRunIdentity:
 
 
 def _calendar() -> pd.DataFrame:
-    """The calendar columns evaluate reads, each week's fraction of its month."""
-    months = [month for month, weeks in WEEKS_IN_MONTH.items() for _ in range(weeks)]
-    elapsed = [
-        week / weeks
-        for weeks in WEEKS_IN_MONTH.values()
+    """The calendar columns evaluate and `enumerate_origins` read."""
+    rows = [
+        {
+            "fiscal_year_month": month,
+            "fiscal_week_of_month": week,
+            "weeks_in_month": weeks,
+            "origin_month_fraction_elapsed": week / weeks,
+        }
+        for month, weeks in WEEKS_IN_MONTH.items()
         for week in range(1, weeks + 1)
     ]
-    return pd.DataFrame(
-        {
-            "ds": WEEKS,
-            "fiscal_year_month": months,
-            "origin_month_fraction_elapsed": elapsed,
-        }
-    )
+    frame = pd.DataFrame(rows).assign(ds=WEEKS)
+    # Self-check: every fixture origin is on the spine the cohort strip reads.
+    spine = set(enumerate_origins(frame)["forecast_origin_date"])
+    assert {origin for origin, _ in ORIGIN_TARGETS} <= spine
+    return frame
 
 
 def _monthly_series(model: str, modeling: TrainModelingConfig) -> pd.DataFrame:
@@ -241,6 +244,14 @@ def test_the_page_draws_the_origin_skill_panel(page_root: Path) -> None:
     app = AppTest.from_file(APP, default_timeout=30).run()
     names = {annotation.get("name") for annotation in _annotations(app)}
     assert origin_skill.COUNTS_ANNOTATION in names
+
+
+def test_the_page_draws_the_cohort_strip(page_root: Path) -> None:
+    """From the challenger's sidecar calendar, found by its row labels."""
+    app = AppTest.from_file(APP, default_timeout=30).run()
+    assert not app.exception, app.exception[0].message if app.exception else ""
+    names = {annotation.get("name") for annotation in _annotations(app)}
+    assert cohort.ROWS_ANNOTATION in names
 
 
 def test_the_page_draws_the_contribution_scatter_and_a_table_per_facet(

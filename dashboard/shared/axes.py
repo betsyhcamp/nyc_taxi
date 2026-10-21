@@ -81,10 +81,15 @@ def horizon_offset(horizon: str) -> dict[str, int]:
     return {"angle": _OFFSET_ANGLE[horizon], "standoff": _OFFSET_PX}
 
 
+def offset_tick(horizon: str, line: dict[str, Any], size: int) -> dict[str, Any]:
+    """A level tick at a horizon's offset. `line-ns`, because the offset's quarter
+    turn would stand `line-ew` upright."""
+    return {"symbol": "line-ns", "size": size, "line": line, **horizon_offset(horizon)}
+
+
 def offset_benchmark_mark(horizon: str) -> dict[str, Any]:
-    """`BENCHMARK_MARK` at a horizon's offset. `line-ns`, because the offset's
-    quarter turn would stand `line-ew` upright."""
-    return {**BENCHMARK_MARK, "symbol": "line-ns", **horizon_offset(horizon)}
+    """`BENCHMARK_MARK` at a horizon's offset."""
+    return offset_tick(horizon, BENCHMARK_MARK["line"], BENCHMARK_MARK["size"])
 
 
 def empty_facet() -> go.Scatter:
