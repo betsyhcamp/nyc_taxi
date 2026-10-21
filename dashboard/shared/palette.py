@@ -4,8 +4,10 @@ Plotly interpolates Viridis from ten stops and matplotlib from 256, so a live
 sample differs by one or two RGB units per library. Hence tier literals, and
 CLIP_* as provenance: editing one fails the derivation test, it does not recolor.
 
-TIER_SYMBOL is load-bearing, not decoration.
+TIER_SYMBOLS is load-bearing, not decoration.
 """
+
+from collections.abc import Sequence
 
 ALPHA = 0.85
 
@@ -28,30 +30,31 @@ CLIP_LIGHT = 0.35
 METRICS = ("wrmae_pooled", "wape", "signed_bias_pooled")
 """The three the dashboard displays. The evaluate outputs carry six."""
 
-TIERS = ("very_low", "low", "middle", "high", "very_high")
-"""The ramp's domain. A tier grid reads the run's configured labels instead."""
-
 # A guardrail breach is direction from the baseline, never a recolored mark,
 # which would lose horizon identity exactly where it failed.
 HORIZON_COLOR = {"horizon_1": "#2a78d6", "horizon_2": "#d95926"}
 HORIZON_MARKER = {"horizon_1": "circle", "horizon_2": "diamond"}
 ACTUAL_INK = "#52514e"
 
-TIER_COLOR = {
-    "very_low": "#440154",
-    "low": "#453882",
-    "middle": "#31668e",
-    "high": "#228d8d",
-    "very_high": "#2fb47c",
+TIER_RAMPS = {
+    2: ("#440154", "#2fb47c"),
+    3: ("#440154", "#31668e", "#2fb47c"),
+    4: ("#440154", "#3f4889", "#27808e", "#2fb47c"),
+    5: ("#440154", "#453882", "#31668e", "#228d8d", "#2fb47c"),
 }
+"""Viridis resampled over the clip at each tier count, lowest tier first. Not a
+subset of one ramp, which at four tiers steps less far. Ramps pass the gates to
+seven; nothing above five, which would need symbols no one has measured."""
 
-TIER_SYMBOL = {
-    "very_low": "square-open",
-    "low": "triangle-up-open",
-    "middle": "triangle-down-open",
-    "high": "x-thin",
-    "very_high": "cross-thin",
-}
+TIER_SYMBOLS = (
+    "square-open",
+    "triangle-up-open",
+    "triangle-down-open",
+    "x-thin",
+    "cross-thin",
+)
+"""In tier order, n tiers taking the first n. Shape carries identity: a ramp is
+validated on adjacent steps, while a scatter puts any two tiers side by side."""
 
 # Drawn as a constant, never read off a benchmark row: that row reads near 1.0,
 # not 1.0, because `wrmae_per_series` renormalizes.
@@ -64,6 +67,35 @@ SYMMETRIC_RANGE = {
     "wape": False,
     "signed_bias_pooled": True,
 }
+
+
+def tier_encoding(tier_labels: Sequence[str]) -> dict[str, tuple[str, str]]:
+    """Each configured tier's color and symbol, by rank.
+
+    By the configured count, not the count present: a run whose `assign_tiers`
+    emitted a prefix keeps its config's ramp, and a prefix of validated adjacent
+    steps is itself validated.
+
+    Args:
+        tier_labels: The run's configured labels, lowest tier first.
+
+    Raises:
+        ValueError: If no ramp exists for that many tiers.
+
+    Returns:
+        dict[str, tuple[str, str]]: Each label to its hex color and Plotly symbol.
+    """
+    ramp = TIER_RAMPS.get(len(tier_labels))
+    if ramp is None:
+        raise ValueError(
+            f"{len(tier_labels)} configured tiers, while tier ramps are validated "
+            f"for {min(TIER_RAMPS)} to {max(TIER_RAMPS)} only."
+        )
+    symbols = TIER_SYMBOLS[: len(ramp)]
+    return {
+        label: (color, symbol)
+        for label, color, symbol in zip(tier_labels, ramp, symbols, strict=True)
+    }
 
 
 def rgba(hex_color: str, alpha: float = ALPHA) -> str:

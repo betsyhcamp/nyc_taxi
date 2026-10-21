@@ -20,6 +20,8 @@ ADJACENT_LIGHTNESS_GATE = 0.06
 # measuring 1.25:1 to 1.41:1, so 1.15 sits just below the band.
 GRID_CONTRAST_FLOOR = 1.15
 
+TIER_COUNTS = sorted(palette.TIER_RAMPS)
+
 
 def _channels(hex_color: str) -> tuple[int, int, int]:
     """The three 0-255 channels of a #rrggbb string."""
@@ -127,11 +129,12 @@ def test_the_grid_is_visible_against_the_plot_area() -> None:
     assert mark_contrast(palette.GRID_COLOR, palette.GRID_ALPHA) >= GRID_CONTRAST_FLOOR
 
 
-def test_the_grid_never_outweighs_the_faintest_datum() -> None:
-    """Chrome stays under every data mark, the lightest tier included."""
+@pytest.mark.parametrize("count", TIER_COUNTS)
+def test_the_grid_never_outweighs_the_faintest_datum(count: int) -> None:
+    """Chrome stays under every data mark, each ramp's lightest tier included."""
     data_marks = (
         *palette.HORIZON_COLOR.values(),
-        *palette.TIER_COLOR.values(),
+        *palette.TIER_RAMPS[count],
         palette.ACTUAL_INK,
     )
     faintest = min(mark_contrast(color) for color in data_marks)
@@ -145,35 +148,38 @@ def test_the_font_color_clears_the_text_gate() -> None:
     )
 
 
-def test_the_tier_ramp_steps_far_enough_to_read_as_ordered() -> None:
-    """Adjacent OKLab lightness across the ramp, in configured tier order."""
-    lightness = [oklab_lightness(palette.TIER_COLOR[tier]) for tier in palette.TIERS]
+@pytest.mark.parametrize("count", TIER_COUNTS)
+def test_the_tier_ramp_steps_far_enough_to_read_as_ordered(count: int) -> None:
+    """Adjacent OKLab lightness across each ramp, lowest tier first."""
+    lightness = [oklab_lightness(color) for color in palette.TIER_RAMPS[count]]
     steps = [later - earlier for earlier, later in pairwise(lightness)]
     assert min(steps) >= ADJACENT_LIGHTNESS_GATE
 
 
-def test_the_tier_ramp_rises_monotonically() -> None:
+@pytest.mark.parametrize("count", TIER_COUNTS)
+def test_the_tier_ramp_rises_monotonically(count: int) -> None:
     """Lightness carries tier order, so a reordered literal must fail."""
-    lightness = [oklab_lightness(palette.TIER_COLOR[tier]) for tier in palette.TIERS]
+    lightness = [oklab_lightness(color) for color in palette.TIER_RAMPS[count]]
     assert lightness == sorted(lightness)
 
 
-def test_the_lightest_tier_clears_the_ordinal_contrast_floor() -> None:
+@pytest.mark.parametrize("count", TIER_COUNTS)
+def test_the_lightest_tier_clears_the_ordinal_contrast_floor(count: int) -> None:
     """The step nearest the plot area is the binding one; CLIP_LIGHT buys it."""
-    nearest = min(mark_contrast(palette.TIER_COLOR[tier]) for tier in palette.TIERS)
+    nearest = min(mark_contrast(color) for color in palette.TIER_RAMPS[count])
     assert nearest >= ORDINAL_CONTRAST_GATE
 
 
-def test_tier_color_literals_match_the_colormap_at_the_documented_clip() -> None:
+@pytest.mark.parametrize("count", TIER_COUNTS)
+def test_tier_color_literals_match_the_colormap_at_the_documented_clip(
+    count: int,
+) -> None:
     """The literals exist so Plotly cannot resample; this is what they came from."""
     viridis = matplotlib.colormaps["viridis"]
     low, high = palette.CLIP_DARK, 1.0 - palette.CLIP_LIGHT
-    step = (high - low) / (len(palette.TIERS) - 1)
-    derived = {
-        tier: to_hex(viridis(low + index * step))
-        for index, tier in enumerate(palette.TIERS)
-    }
-    assert palette.TIER_COLOR == derived
+    step = (high - low) / (count - 1)
+    derived = tuple(to_hex(viridis(low + index * step)) for index in range(count))
+    assert palette.TIER_RAMPS[count] == derived
 
 
 # ================================================
@@ -183,7 +189,7 @@ def test_tier_color_literals_match_the_colormap_at_the_documented_clip() -> None
 
 def test_no_other_mark_reuses_a_horizon_color() -> None:
     """Color means horizon everywhere, so any other mark sharing a hex breaks it."""
-    others = set(palette.TIER_COLOR.values()) | {
+    others = {color for ramp in palette.TIER_RAMPS.values() for color in ramp} | {
         palette.ACTUAL_INK,
         palette.AXIS_COLOR,
         palette.GRID_COLOR,
@@ -195,7 +201,12 @@ def test_no_other_mark_reuses_a_horizon_color() -> None:
 
 def test_the_tier_symbols_avoid_both_horizon_markers() -> None:
     """Circle and diamond mean horizon_1 and horizon_2, so tiers cannot use them."""
-    assert not set(palette.TIER_SYMBOL.values()) & set(palette.HORIZON_MARKER.values())
+    assert not set(palette.TIER_SYMBOLS) & set(palette.HORIZON_MARKER.values())
+
+
+def test_the_tier_symbols_are_distinct() -> None:
+    """Shape carries tier identity in a scatter, so two tiers sharing one merge."""
+    assert len(set(palette.TIER_SYMBOLS)) == len(palette.TIER_SYMBOLS)
 
 
 # ================================================
@@ -213,21 +224,34 @@ def test_every_displayed_metric_has_a_rule(rules: dict[str, object]) -> None:
     assert not set(palette.METRICS) - set(rules)
 
 
-def test_the_palette_covers_the_configured_tier_vocabulary() -> None:
-    """The ramp is validated at five steps and keyed by these exact names, while
-    the pipeline's vocabulary is configured. Nothing else compares the two, so a
-    renamed or resized tier set would surface as a KeyError in the contribution
-    scatter of [[backtest_monitor_diagnostics]] rather than here. See that spec's
-    Future directions entry before changing either side."""
+# ================================================
+# the rank-indexed tier encoding
+# ================================================
+
+
+@pytest.mark.parametrize("count", TIER_COUNTS)
+def test_tier_encoding_maps_the_labels_in_rank_order(count: int) -> None:
+    """The lowest configured tier takes the darkest color and the first symbol."""
+    labels = [f"tier_{index}" for index in range(count)]
+    encoding = palette.tier_encoding(labels)
+    colors, symbols = zip(*encoding.values(), strict=True)
+    assert list(encoding) == labels
+    assert colors == palette.TIER_RAMPS[count]
+    assert symbols == palette.TIER_SYMBOLS[:count]
+
+
+@pytest.mark.parametrize("count", [1, 6])
+def test_tier_encoding_raises_outside_the_validated_counts(count: int) -> None:
+    """Six would need a symbol no one has measured; one has nothing to separate."""
+    with pytest.raises(ValueError, match=rf"^{count} configured tiers"):
+        palette.tier_encoding([f"tier_{index}" for index in range(count)])
+
+
+def test_the_committed_tier_count_has_a_ramp() -> None:
+    """Otherwise the scatter shows a message in its place on every run."""
     modeling = TrainModelingConfig.model_validate(
         yaml.safe_load(
             (get_project_root_dir() / "config/train/modeling.yaml").read_text()
         )
     )
-    assert list(palette.TIERS) == modeling.tiering.tier_labels
-
-
-def test_every_tier_has_both_a_color_and_a_symbol() -> None:
-    """A tier missing either channel draws as a hole in the scatter's legend."""
-    assert not set(palette.TIERS) - set(palette.TIER_COLOR)
-    assert not set(palette.TIERS) - set(palette.TIER_SYMBOL)
+    assert len(modeling.tiering.tier_labels) in palette.TIER_RAMPS
