@@ -11,6 +11,7 @@ from fsspec.implementations.local import LocalFileSystem
 from streamlit.testing.v1 import AppTest
 
 from dashboard.shared import load, paths, runs
+from dashboard.train import origin_skill
 from fcstnyctaxi.core.train.evaluate_impl import (
     _OUTPUT_FILENAMES,
     _build_manifest,
@@ -165,6 +166,17 @@ def test_a_run_whose_files_are_its_own_draws_the_whole_page(page_root: Path) -> 
     assert not app.exception, app.exception[0].message if app.exception else ""
     assert app.selectbox[0].value == SELECTED
     assert app.get("plotly_chart")
+
+
+def test_the_page_draws_the_origin_skill_panel(page_root: Path) -> None:
+    """Below the scorecard rows, found by the annotation only that panel carries."""
+    app = AppTest.from_file(APP, default_timeout=30).run()
+    names = {
+        annotation.get("name")
+        for chart in app.get("plotly_chart")
+        for annotation in json.loads(chart.proto.spec)["layout"].get("annotations", [])
+    }
+    assert origin_skill.COUNTS_ANNOTATION in names
 
 
 @pytest.mark.parametrize(
