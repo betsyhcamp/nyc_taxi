@@ -74,6 +74,9 @@ _OUTPUT_FILENAMES = {
     "metrics": "metrics.parquet",
     "raw_cv_forecasts": "raw_cv_forecasts.parquet",
 }
+# Copies of two inputs. The backtest monitor reads both and pins its names to these.
+_CALENDAR_FILENAME = "fiscal_calendar.parquet"
+_SNAPSHOT_FILENAME = "time_series_snapshot.parquet"
 _MANIFEST_FILENAME = "backtest_manifest.json"
 
 
@@ -528,8 +531,8 @@ def backtest_impl(
     out_dir.mkdir(parents=True, exist_ok=True)
     for field, filename in _OUTPUT_FILENAMES.items():
         getattr(outputs, field).to_parquet(out_dir / filename, index=False)
-    calendar_df.to_parquet(out_dir / "fiscal_calendar.parquet", index=False)
-    panel_df.to_parquet(out_dir / "time_series_snapshot.parquet", index=False)
+    calendar_df.to_parquet(out_dir / _CALENDAR_FILENAME, index=False)
+    panel_df.to_parquet(out_dir / _SNAPSHOT_FILENAME, index=False)
     # No _snapshot suffix, following fiscal_calendar.parquet: the panel's copy
     # carries one only because its source is also named time_series.parquet.
     additional_exog_df.to_parquet(out_dir / "additional_exog.parquet", index=False)
