@@ -11,7 +11,23 @@ from fcstnyctaxi.lib.fold_metrics import compute_wrmae_pooled_shares
 _KEY = "contribution"
 SUMS_ANNOTATION = "share_sums"
 """Names each facet's Σx and Σy annotation."""
+ZEROS_ANNOTATION = "zero_shares"
+"""Names each facet's count of the zero shares a log axis cannot draw."""
+SCALE_KEY = f"{_KEY}_scale"
 TOP_N = 20
+
+_SCALES = ("linear", "log-log")
+_CAPTION = (
+    "Each series' share of the benchmark's error (x) and the challenger's (y), "
+    "each fold divided by its own benchmark total. Σx is 1 and Σy is the "
+    "scorecard's wrmae_pooled. "
+)
+_DISTANCE = {
+    "linear": "A series above y = x lost ground, by its net effect on the headline, "
+    "y - x.",
+    "log-log": "Distance from y = x is the ratio y/x, each series' change against "
+    "its own benchmark error, not its effect on the headline.",
+}
 
 _MARKER_SIZE = 8
 _STROKE = 2
@@ -63,30 +79,40 @@ def horizon_shares(
 
 
 def contribution_figure(
-    shares: dict[str, pd.DataFrame], tier_labels: Sequence[str]
+    shares: dict[str, pd.DataFrame],
+    tier_labels: Sequence[str],
+    *,
+    log_log: bool = False,
 ) -> go.Figure:
     """One facet per horizon: the benchmark's share against the challenger's, one
     trace per tier, `y = x` and the two sums.
 
     The first facet's y-axis is anchored 1:1 to its x, which is what makes `y = x`
-    a 45 degree line. Plotly forbids `scaleanchor` beside `matches` on one axis,
-    so the other facet takes the aspect by matching both of the first's axes.
+    a 45 degree line, on either scale. Plotly forbids `scaleanchor` beside
+    `matches` on one axis, so the other facet takes the aspect by matching both of
+    the first's axes. On log-log a zero share cannot be drawn, so each facet
+    counts the series it leaves out.
 
     Raises:
         ValueError: If no tier ramp exists for that many configured tiers.
     """
     encoding = palette.tier_encoding(tier_labels)
     horizons = sorted(shares)
-    # Across both facets, since their ranges match: y = x reaches the shared extent.
+    # Across both facets, since their ranges match: y = x spans the shared extent.
     # One max over all of them, since Python's max keeps a leading nan.
-    top = float(pd.concat([frame[["x", "y"]] for frame in shares.values()]).max().max())
+    values = pd.concat([frame[["x", "y"]] for frame in shares.values()])
+    top = float(values.max().max())
+    bottom = float(values[values > 0].min().min()) if log_log else 0.0
     figure = make_subplots(
         rows=1, cols=len(horizons), subplot_titles=horizons, horizontal_spacing=0.08
     )
     for column, horizon in enumerate(horizons, start=1):
         frame = shares[horizon]
+        # Exact zeros only: a nan share is not drawn on either scale, and is no zero.
+        zero = (frame["x"] == 0) | (frame["y"] == 0)
+        drawn = frame[~zero] if log_log else frame
         for tier in tier_labels:
-            points = frame[frame["tier"] == tier]
+            points = drawn[drawn["tier"] == tier]
             if not points.empty:
                 figure.add_trace(
                     _tier_marks(points, tier, encoding[tier], legend=column == 1),
@@ -95,8 +121,8 @@ def contribution_figure(
                 )
         figure.add_shape(
             type="line",
-            x0=0,
-            y0=0,
+            x0=bottom,
+            y0=bottom,
             x1=top,
             y1=top,
             line={"color": palette.AXIS_COLOR, "width": 2},
@@ -120,11 +146,30 @@ def contribution_figure(
             row=1,
             col=column,
         )
+        if log_log and zero.any():
+            figure.add_annotation(
+                text=f"{int(zero.sum())} series with a zero share not drawn",
+                name=ZEROS_ANNOTATION,
+                xref="x domain",
+                yref="y domain",
+                x=0.02,
+                y=0.98,
+                yshift=-18,
+                xanchor="left",
+                yanchor="top",
+                showarrow=False,
+                row=1,
+                col=column,
+            )
 
     axes.style_axes(figure)
+    # Plotly applies `rangemode` to linear axes only, so on log-log it does nothing.
     figure.update_xaxes(rangemode="tozero", title_text="benchmark's share, x")
     figure.update_yaxes(rangemode="tozero")
     figure.update_yaxes(title_text="challenger's share, y", row=1, col=1)
+    if log_log:
+        figure.update_xaxes(type="log")
+        figure.update_yaxes(type="log")
     figure.update_layout(yaxis={"scaleanchor": "x", "scaleratio": 1})
     for column in range(2, len(horizons) + 1):
         figure.update_xaxes(matches="x", row=1, col=column)
@@ -146,11 +191,14 @@ def top_table(frame: pd.DataFrame) -> pd.DataFrame:
 def render_contribution(
     per_series_comparison: pd.DataFrame, tier_labels: Sequence[str]
 ) -> None:
-    """The scatter, or a message in its place, then a top-share table per facet."""
+    """The scatter under its scale toggle, or a message in its place, then a
+    top-share table per facet."""
     st.subheader("Contribution by series")
     shares = horizon_shares(per_series_comparison, tier_labels)
+    scale = _SCALES[0]
     if len(tier_labels) in palette.TIER_RAMPS:
-        figure = contribution_figure(shares, tier_labels)
+        scale = st.radio("axes", _SCALES, horizontal=True, key=SCALE_KEY)
+        figure = contribution_figure(shares, tier_labels, log_log=scale == "log-log")
         st.plotly_chart(figure, width="stretch", key=f"{_KEY}_chart")
     else:
         st.warning(
@@ -158,11 +206,7 @@ def render_contribution(
             f"validated for {min(palette.TIER_RAMPS)} to {max(palette.TIER_RAMPS)} "
             "only, so the scatter is not drawn. The tables below are unaffected."
         )
-    st.caption(
-        "Each series' share of the benchmark's error (x) and the challenger's (y), "
-        "each fold divided by its own benchmark total. Σx is 1 and Σy is the "
-        "scorecard's wrmae_pooled; a series above y = x lost ground."
-    )
+    st.caption(_CAPTION + _DISTANCE[scale])
     for column, horizon in zip(st.columns(len(shares)), sorted(shares), strict=True):
         column.caption(f"{horizon}: the {TOP_N} largest benchmark shares")
         column.dataframe(
@@ -228,7 +272,7 @@ def _tier_marks(
         customdata=points[["unique_id", "label", "net"]],
         hovertemplate=(
             "%{customdata[0]}<br>%{customdata[1]}"
-            "<br>x %{x:.4f}   y %{y:.4f}"
-            "<br>y - x %{customdata[2]:+.4f}<extra></extra>"
+            "<br>x %{x:.4~g}   y %{y:.4~g}"
+            "<br>y - x %{customdata[2]:+.4~g}<extra></extra>"
         ),
     )

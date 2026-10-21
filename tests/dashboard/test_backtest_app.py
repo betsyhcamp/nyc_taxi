@@ -177,6 +177,21 @@ def _annotations(app: AppTest) -> list[dict]:
     ]
 
 
+def _layout_with(app: AppTest, annotation_name: str) -> dict:
+    """The layout of the one chart carrying this annotation."""
+    (layout,) = [
+        layout
+        for layout in (
+            json.loads(chart.proto.spec)["layout"] for chart in app.get("plotly_chart")
+        )
+        if any(
+            annotation.get("name") == annotation_name
+            for annotation in layout.get("annotations", [])
+        )
+    ]
+    return layout
+
+
 def test_the_page_draws_the_origin_skill_panel(page_root: Path) -> None:
     """Below the scorecard rows, found by the annotation only that panel carries."""
     app = AppTest.from_file(APP, default_timeout=30).run()
@@ -197,6 +212,20 @@ def test_the_page_draws_the_contribution_scatter_and_a_table_per_facet(
     tables = [table for table in app.dataframe if "series" in table.value.columns]
     assert sums
     assert len(tables) == len(sums)
+
+
+def test_the_page_switches_the_scatter_to_log_log(page_root: Path) -> None:
+    """The toggle reaches the figure the page draws, found by its sums annotation."""
+    app = AppTest.from_file(APP, default_timeout=30).run()
+    app.radio(key=contribution.SCALE_KEY).set_value("log-log").run()
+    assert not app.exception, app.exception[0].message if app.exception else ""
+    layout = _layout_with(app, contribution.SUMS_ANNOTATION)
+    axis_types = {
+        axis.get("type")
+        for name, axis in layout.items()
+        if name.startswith(("xaxis", "yaxis"))
+    }
+    assert axis_types == {"log"}
 
 
 @pytest.mark.parametrize(

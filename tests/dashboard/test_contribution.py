@@ -4,6 +4,8 @@
 row is one the producer emits and the sums are checked against its own table.
 """
 
+import json
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -39,6 +41,8 @@ MIGRANT = "time_series_p"
 DISPLACED = "time_series_q"
 # The largest series, which the challenger misses by exactly the benchmark's error.
 EVEN = "time_series_x"
+# With no trailing revenue, weighted 0 at every origin, so both its shares are 0.
+DORMANT = "time_series_a"
 
 
 def _tier(series: str, origin_index: int) -> str:
@@ -94,8 +98,8 @@ def _monthly_series(model: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _evaluate(benchmark_ms: pd.DataFrame):
-    """The producer's four tables, over the challenger's sidecar and this one."""
+def _evaluate(challenger_ms: pd.DataFrame, benchmark_ms: pd.DataFrame):
+    """The producer's four tables over the two sidecars."""
     identity = TrainRunIdentity(
         git_hash="0" * 40,
         feature_run_id="feature_run",
@@ -105,7 +109,7 @@ def _evaluate(benchmark_ms: pd.DataFrame):
         additional_exog_uri="gs://bucket/exog.parquet",
     )
     return compute_evaluate_outputs(
-        challenger_ms=_monthly_series(CHALLENGER),
+        challenger_ms=challenger_ms,
         benchmark_ms=benchmark_ms,
         calendar_df=_calendar(),
         challenger_model=CHALLENGER,
@@ -118,7 +122,7 @@ def _evaluate(benchmark_ms: pd.DataFrame):
 @pytest.fixture(scope="module")
 def outputs():
     """The producer's four tables over the two sidecars."""
-    return _evaluate(_monthly_series(BENCHMARK))
+    return _evaluate(_monthly_series(CHALLENGER), _monthly_series(BENCHMARK))
 
 
 @pytest.fixture(scope="module")
@@ -137,12 +141,33 @@ def perfect_horizon_1(outputs) -> pd.DataFrame:
     benchmark.loc[exact, "monthly_forecast"] = benchmark.loc[
         exact, "actual_monthly_total"
     ]
-    rerun = _evaluate(benchmark)
+    rerun = _evaluate(_monthly_series(CHALLENGER), benchmark)
     # Self-check: horizon_1's hero is nan and horizon_2's is not.
     hero = _hero_metric_values(rerun.summary_metrics, CHALLENGER)
     assert np.isnan(hero["horizon_1"])
     assert np.isfinite(hero["horizon_2"])
     return rerun.per_series_comparison
+
+
+@pytest.fixture(scope="module")
+def dormant() -> pd.DataFrame:
+    """The table again, DORMANT shaped like a real dormant series: no revenue, weight
+    0, a naive forecast of 0, and a challenger forecast that is not."""
+    sidecars = []
+    for model in (CHALLENGER, BENCHMARK):
+        frame = _monthly_series(model)
+        rows = frame["unique_id"] == DORMANT
+        frame.loc[rows, ["series_weight", "actual_monthly_total"]] = 0.0
+        if model == BENCHMARK:
+            frame.loc[rows, "monthly_forecast"] = 0.0
+        sidecars.append(frame)
+    table = _evaluate(*sidecars).per_series_comparison
+    # Self-check: in each horizon DORMANT alone has a zero share.
+    for horizon in sorted(table["horizon"].unique()):
+        shares = _shares(table, horizon)
+        zero = shares[(shares["x"] == 0) | (shares["y"] == 0)]
+        assert list(zero["unique_id"]) == [DORMANT]
+    return table
 
 
 @pytest.fixture(scope="module")
@@ -175,10 +200,12 @@ def _shares(frame: pd.DataFrame, horizon: str) -> pd.DataFrame:
     return compute_wrmae_pooled_shares(challenger, benchmark)
 
 
-def _figure(per_series: pd.DataFrame) -> go.Figure:
+def _figure(per_series: pd.DataFrame, *, log_log: bool = False) -> go.Figure:
     """The scatter over the producer's table."""
     return contribution.contribution_figure(
-        contribution.horizon_shares(per_series, TIER_LABELS), TIER_LABELS
+        contribution.horizon_shares(per_series, TIER_LABELS),
+        TIER_LABELS,
+        log_log=log_log,
     )
 
 
@@ -310,3 +337,86 @@ def test_an_unsupported_tier_count_shows_a_message_and_the_tables(per_series) ->
     assert "6 tiers" in warning.value
     assert f"{min(palette.TIER_RAMPS)} to {max(palette.TIER_RAMPS)}" in warning.value
     assert len(app.dataframe) == len(per_series["horizon"].unique())
+
+
+# ================================================
+# the scale toggle
+# ================================================
+
+
+def test_the_axes_open_on_linear(per_series) -> None:
+    """Linear answers the panel's question: which series moved the headline."""
+    app = AppTest.from_function(_contribution_page, args=(per_series, TIER_LABELS))
+    app.run()
+    assert not app.exception, app.exception[0].message if app.exception else ""
+    assert app.radio(key=contribution.SCALE_KEY).value == "linear"
+    (chart,) = app.get("plotly_chart")
+    layout = json.loads(chart.proto.spec)["layout"]
+    axis_types = [
+        axis.get("type")
+        for name, axis in layout.items()
+        if name.startswith(("xaxis", "yaxis"))
+    ]
+    assert axis_types
+    assert "log" not in axis_types
+
+
+def test_log_log_puts_every_axis_on_log_and_keeps_the_aspect(per_series) -> None:
+    """Both facets, both axes; y = x stays square and starts above zero."""
+    figure = _figure(per_series, log_log=True)
+    axis_types = [
+        axis.type for axis in (*figure.select_xaxes(), *figure.select_yaxes())
+    ]
+    assert axis_types
+    assert set(axis_types) == {"log"}
+    layout = figure.layout
+    assert layout.yaxis.scaleanchor == "x"
+    assert layout.yaxis.scaleratio == 1
+    assert layout.xaxis2.matches == "x"
+    assert layout.yaxis2.matches == "y"
+    for shape in layout.shapes:
+        ends = np.array([shape.x0, shape.y0, shape.x1, shape.y1], dtype=float)
+        assert np.isfinite(ends).all() and (ends > 0).all()
+
+
+def test_log_log_leaves_out_zero_shares_and_counts_them(dormant) -> None:
+    """A log axis cannot draw a zero, so each facet's note counts what it drops."""
+    figure = _figure(dormant, log_log=True)
+    for traces in _facets(figure).values():
+        drawn = {series for trace in traces for series in trace.customdata[:, 0]}
+        assert DORMANT not in drawn
+
+    notes = [
+        annotation.text
+        for annotation in figure.layout.annotations
+        if annotation.name == contribution.ZEROS_ANNOTATION
+    ]
+    zero_shares = []
+    for horizon in sorted(dormant["horizon"].unique()):
+        shares = _shares(dormant, horizon)
+        zero_shares.append(int(((shares["x"] == 0) | (shares["y"] == 0)).sum()))
+    assert [int(note.split()[0]) for note in notes] == zero_shares
+
+
+def test_a_nan_share_is_not_noted_as_a_zero(perfect_horizon_1) -> None:
+    """A horizon with no included fold has nan shares, not zeros, so it gets no note."""
+    figure = _figure(perfect_horizon_1, log_log=True)
+    names = {annotation.name for annotation in figure.layout.annotations}
+    assert contribution.ZEROS_ANNOTATION not in names
+
+
+@pytest.mark.parametrize(
+    ("scale", "reads", "never_reads"),
+    [("linear", "net effect", "ratio"), ("log-log", "ratio", "net effect")],
+)
+def test_the_caption_reads_the_diagonal_by_scale(
+    per_series, scale: str, reads: str, never_reads: str
+) -> None:
+    """Distance from y = x is the net effect on linear axes, the ratio on log-log."""
+    app = AppTest.from_function(_contribution_page, args=(per_series, TIER_LABELS))
+    app.run()
+    app.radio(key=contribution.SCALE_KEY).set_value(scale).run()
+    assert not app.exception, app.exception[0].message if app.exception else ""
+    (caption,) = [caption.value for caption in app.caption if "y = x" in caption.value]
+    assert reads in caption
+    assert never_reads not in caption
