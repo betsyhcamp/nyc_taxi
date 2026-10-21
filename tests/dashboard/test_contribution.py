@@ -271,7 +271,7 @@ def test_a_migrating_series_keeps_its_last_tier_in_both_facets(per_series) -> No
         held_middle = int((folds["tier"].astype(str) == "middle").sum())
         assert trace.name == "high"
         assert trace.customdata[row, 1] == (
-            f"high (also middle, {held_middle} of {len(folds)} folds)"
+            f"high at last origin (middle in {held_middle} of {len(folds)} folds)"
         )
 
 

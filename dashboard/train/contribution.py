@@ -179,7 +179,7 @@ def _tier_labels_held(
     folds: pd.DataFrame, last_tier: pd.Series, tier_labels: Sequence[str]
 ) -> pd.Series:
     """Per series, its last-origin tier plus any other tier it held in these folds,
-    as "middle (also high, 21 of 30 folds)"."""
+    as "middle at last origin (high in 21 of 30 folds)"."""
     held = (
         folds.groupby(["unique_id", "tier"])
         .size()
@@ -191,11 +191,13 @@ def _tier_labels_held(
         tier = last_tier[unique_id]
         total = int(counts.sum())
         others = [
-            f"{other}, {int(count)} of {total} folds"
+            f"{other} in {int(count)} of {total} folds"
             for other, count in counts.items()
             if other != tier and count
         ]
-        labels[unique_id] = f"{tier} (also {'; '.join(others)})" if others else tier
+        labels[unique_id] = (
+            f"{tier} at last origin ({'; '.join(others)})" if others else tier
+        )
     return pd.Series(labels)
 
 
