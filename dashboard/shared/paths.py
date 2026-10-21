@@ -25,6 +25,7 @@ TRAIN_SLICE: SliceName = "train"
 EVALUATE_MANIFEST = "evaluate_manifest.json"
 SUMMARY_METRICS = "summary_metrics.parquet"
 FOLD_METRICS = "fold_metrics.parquet"
+PER_SERIES_COMPARISON = "per_series_comparison.parquet"
 
 
 @st.cache_data(show_spinner=False)

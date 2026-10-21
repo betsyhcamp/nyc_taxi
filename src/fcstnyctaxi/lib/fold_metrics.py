@@ -17,6 +17,36 @@ _PROGRESS_COLS = ["weeks_in_month", "weeks_actualized"]
 _PROGRESS_SKILL_COLS = _PROGRESS_COLS + ["n_events", "wrmae_vs_benchmark"]
 
 
+def _weighted_fold_errors(
+    challenger_df: pd.DataFrame, benchmark_df: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series]:
+    """Both sides' weighted absolute errors per row, their sums per fold, and the
+    folds whose benchmark sum is too near zero to divide by."""
+    ch_cols = _JOIN_KEYS + ["monthly_forecast", "actual_monthly_total", "series_weight"]
+    bm_cols = _JOIN_KEYS + ["monthly_forecast"]
+
+    merged = challenger_df[ch_cols].merge(
+        benchmark_df[bm_cols],
+        on=_JOIN_KEYS,
+        suffixes=("_ch", "_bm"),
+        how="inner",
+    )
+    merged["weighted_errors_ch"] = (
+        merged["series_weight"]
+        * (merged["monthly_forecast_ch"] - merged["actual_monthly_total"]).abs()
+    )
+    merged["weighted_errors_bm"] = (
+        merged["series_weight"]
+        * (merged["monthly_forecast_bm"] - merged["actual_monthly_total"]).abs()
+    )
+    fold_totals = merged.groupby(_FOLD_KEYS)[
+        ["weighted_errors_ch", "weighted_errors_bm"]
+    ].sum()
+    excluded_mask = ~(fold_totals["weighted_errors_bm"] > _SMALL_NUM_BOUND)
+
+    return merged, fold_totals, excluded_mask
+
+
 def compute_wrmae_pooled(
     challenger_df: pd.DataFrame,
     benchmark_df: pd.DataFrame,
@@ -27,33 +57,12 @@ def compute_wrmae_pooled(
         challenger_df = challenger_df[challenger_df["tier"] == tier]
         benchmark_df = benchmark_df[benchmark_df["tier"] == tier]
 
-    ch_cols = _JOIN_KEYS + ["monthly_forecast", "actual_monthly_total", "series_weight"]
-    bm_cols = _JOIN_KEYS + ["monthly_forecast"]
-
-    merged = challenger_df[ch_cols].merge(
-        benchmark_df[bm_cols],
-        on=_JOIN_KEYS,
-        suffixes=("_ch", "_bm"),
-        how="inner",
+    merged, fold_totals, excluded_mask = _weighted_fold_errors(
+        challenger_df, benchmark_df
     )
     if merged.empty:
         return np.nan
 
-    merged["challenger_errors"] = (
-        merged["monthly_forecast_ch"] - merged["actual_monthly_total"]
-    ).abs()
-    merged["weighted_errors_ch"] = merged["series_weight"] * merged["challenger_errors"]
-
-    merged["benchmark_errors"] = (
-        merged["monthly_forecast_bm"] - merged["actual_monthly_total"]
-    ).abs()
-    merged["weighted_errors_bm"] = merged["series_weight"] * merged["benchmark_errors"]
-    fold_totals = merged.groupby(_FOLD_KEYS)[
-        ["weighted_errors_ch", "weighted_errors_bm"]
-    ].sum()
-
-    # compute the exclusion mask once, reuse for log and guard
-    excluded_mask = ~(fold_totals["weighted_errors_bm"] > _SMALL_NUM_BOUND)
     if excluded_mask.any():
         _log.warning(
             "compute_wrmae_pooled: %d fold(s) excluded near-zero benchmark sum "
@@ -79,6 +88,48 @@ def compute_wrmae_pooled(
         )
 
     return np.nanmean(per_fold_ratio.to_numpy(dtype=np.float64)).item()
+
+
+def compute_wrmae_pooled_shares(
+    challenger_df: pd.DataFrame, benchmark_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Each series' fold-normalized share of the benchmark's and the challenger's error.
+
+    Each weighted error is divided by its own fold's benchmark sum, since
+    `compute_wrmae_pooled` is a mean of per-fold ratios. So `x` sums to 1, `y` to
+    `compute_wrmae_pooled`, and `y - x` to `wrmae_pooled - 1`; one denominator
+    pooled across folds reconciles to none of them.
+
+    Args:
+        challenger_df: The frame `compute_wrmae_pooled` takes, cut to one horizon.
+        benchmark_df: Same grain and horizon.
+
+    Returns:
+        pd.DataFrame: One row per `unique_id`, with `x` the benchmark's share and
+            `y` the challenger's. A fold `compute_wrmae_pooled` excludes adds
+            nothing and is not counted.
+    """
+    merged, fold_totals, excluded_mask = _weighted_fold_errors(
+        challenger_df, benchmark_df
+    )
+    denominators = (
+        fold_totals.loc[~excluded_mask, "weighted_errors_bm"]
+        .rename("fold_denominator")
+        .reset_index()
+    )
+    rows = merged.merge(denominators, on=_FOLD_KEYS, how="inner")
+    rows["x"] = rows["weighted_errors_bm"] / rows["fold_denominator"]
+    rows["y"] = rows["weighted_errors_ch"] / rows["fold_denominator"]
+
+    # A series held only in excluded folds keeps its row, at zero.
+    every_series = sorted(merged["unique_id"].unique())
+    totals = (
+        rows.groupby("unique_id")[["x", "y"]]
+        .sum()
+        .reindex(every_series, fill_value=0.0)
+    )
+    n_included = int((~excluded_mask).sum())
+    return (totals / n_included).rename_axis("unique_id").reset_index()
 
 
 def compute_wrmae_per_series(

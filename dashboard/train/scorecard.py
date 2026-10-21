@@ -11,11 +11,6 @@ from dashboard.shared import axes, palette
 # name for the aggregate column beside the tier partition, never a total.
 from fcstnyctaxi.core.train.evaluate_impl import GLOBAL_TIER
 
-_BENCHMARK_MARK = {
-    "symbol": "line-ew",
-    "size": 18,
-    "line": {"color": palette.AXIS_COLOR, "width": 2},
-}
 _MARKER_SIZE = 13
 _STEM_WIDTH = 3
 
@@ -76,7 +71,7 @@ def metric_row(
                     col=column,
                 )
         if not drawn:
-            figure.add_trace(_empty_facet(), row=1, col=column)
+            figure.add_trace(axes.empty_facet(), row=1, col=column)
 
     axes.add_reference(figure, metric)
     axes.style_axes(figure)
@@ -205,20 +200,9 @@ def _benchmark_tick(horizon: str, value: float) -> go.Scatter:
         x=[horizon],
         y=[value],
         mode="markers",
-        marker=_BENCHMARK_MARK,
+        marker=axes.BENCHMARK_MARK,
         name="benchmark",
         legendgroup="benchmark",
         showlegend=False,
         hovertemplate=f"benchmark {horizon}<br>%{{y:.4f}}<extra></extra>",
     )
-
-
-def _empty_facet() -> go.Scatter:
-    """A placeholder for a configured tier with no rows.
-
-    Measured: Plotly materializes no axis for a facet holding no trace, and
-    `add_hline` reaches only facets that hold one, with or without `row="all"`.
-    So without this the tier's panel loses its frame and the reference rule
-    breaks mid-row, instead of rendering as the empty panel the grid promises.
-    """
-    return go.Scatter(x=[], y=[], mode="markers", showlegend=False, hoverinfo="skip")

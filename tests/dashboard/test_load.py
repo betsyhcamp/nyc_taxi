@@ -285,8 +285,9 @@ def test_the_shipped_config_parses() -> None:
     [
         (paths.SUMMARY_METRICS, "summary_metrics"),
         (paths.FOLD_METRICS, "fold_metrics"),
+        (paths.PER_SERIES_COMPARISON, "per_series_comparison"),
     ],
-    ids=["summary_metrics", "fold_metrics"],
+    ids=["summary_metrics", "fold_metrics", "per_series_comparison"],
 )
 def test_each_table_filename_is_the_one_the_producer_writes(
     dashboard_name: str, producer_field: str

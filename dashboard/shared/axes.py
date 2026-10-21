@@ -9,6 +9,13 @@ from dashboard.shared import palette
 _PAD = 0.06
 """Fraction of the span added at each end of axes."""
 
+BENCHMARK_MARK = {
+    "symbol": "line-ew",
+    "size": 18,
+    "line": {"color": palette.AXIS_COLOR, "width": 2},
+}
+"""The benchmark's muted tick, in the axis color to stay out of the horizon palette."""
+
 
 def metric_range(values: Iterable[float], metric: str) -> tuple[float, float]:
     """The y-range one metric's row shares across its facets.
@@ -60,6 +67,17 @@ def add_reference(figure: go.Figure, metric: str) -> None:
     if reference is None:
         return
     figure.add_hline(y=reference, line_color=palette.AXIS_COLOR, line_width=2)
+
+
+def empty_facet() -> go.Scatter:
+    """A placeholder for a configured tier with no rows.
+
+    Measured: Plotly materializes no axis for a facet holding no trace, and
+    `add_hline` reaches only facets that hold one, with or without `row="all"`.
+    So without this the tier's panel loses its frame and the reference rule
+    breaks at it, instead of rendering as the empty panel the grid promises.
+    """
+    return go.Scatter(x=[], y=[], mode="markers", showlegend=False, hoverinfo="skip")
 
 
 def base_layout(**overrides: Any) -> dict[str, Any]:

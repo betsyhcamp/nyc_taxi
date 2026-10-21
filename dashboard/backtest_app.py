@@ -17,7 +17,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 import streamlit as st  # noqa: E402
 
 from dashboard.shared import load, paths, runs  # noqa: E402
-from dashboard.train import header, scorecard  # noqa: E402
+from dashboard.train import contribution, header, origin_skill, scorecard  # noqa: E402
 
 _CONFIG_PATH = Path(__file__).resolve().parent / "config.toml"
 
@@ -57,10 +57,15 @@ def main() -> None:
     manifest = load.load_evaluate_manifest(prefix)
     summary_metrics = load.load_summary_metrics(prefix)
     fold_metrics = load.load_fold_metrics(prefix)
+    per_series_comparison = load.load_per_series_comparison(prefix)
     load.check_lineage(
         run_id,
         manifest,
-        {paths.SUMMARY_METRICS: summary_metrics, paths.FOLD_METRICS: fold_metrics},
+        {
+            paths.SUMMARY_METRICS: summary_metrics,
+            paths.FOLD_METRICS: fold_metrics,
+            paths.PER_SERIES_COMPARISON: per_series_comparison,
+        },
     )
     tier_labels = manifest["config"]["tiering"]["tier_labels"]
 
@@ -83,6 +88,17 @@ def main() -> None:
             key=key,
             default_metric=default_metric,
         )
+    st.divider()
+
+    origin_skill.render_origin_skill(
+        fold_metrics,
+        tier_labels,
+        manifest["challenger_model"],
+        manifest["benchmark_model"],
+    )
+    st.divider()
+
+    contribution.render_contribution(per_series_comparison, tier_labels)
 
 
 main()
