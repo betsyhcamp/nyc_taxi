@@ -14,6 +14,7 @@ from fcstnyctaxi.lib.fold_metrics import (
     compute_wrmae_by_progress,
     compute_wrmae_per_series,
     compute_wrmae_pooled,
+    compute_wrmae_pooled_shares,
 )
 from fcstnyctaxi.lib.metrics import (
     _SMALL_NUM_BOUND,
@@ -175,6 +176,100 @@ def test_compute_wrmae_pooled_near_zero_benchmark_fold_excluded(base_dfs):
     # Only fold 2 contributes: weighted_ch=15, weighted_bm=30 -> 0.5
     result = compute_wrmae_pooled(challenger, benchmark)
     np.testing.assert_allclose(result, 0.5, rtol=1e-7)
+
+
+# ================================================
+# compute_wrmae_pooled_shares
+# ================================================
+
+
+@pytest.fixture
+def share_dfs():
+    """2 folds whose benchmark sums differ, 50 then 170, scoring 0.5 then 0.6.
+    time_series_c starts in fold 2, as a short series does."""
+    # Weighted errors, benchmark then challenger: fold 1 a/b 10/40 and 5/20,
+    # fold 2 a/b/c 30/120/20 and 30/60/12.
+    # (origin, month, unique_id, actual, weight, challenger, benchmark)
+    rows = [
+        (_ORIGIN_1, _MONTH_1, "time_series_a", 100.0, 1.0, 105.0, 90.0),
+        (_ORIGIN_1, _MONTH_1, "time_series_b", 200.0, 2.0, 190.0, 220.0),
+        (_ORIGIN_2, _MONTH_2, "time_series_a", 100.0, 1.0, 130.0, 70.0),
+        (_ORIGIN_2, _MONTH_2, "time_series_b", 200.0, 2.0, 170.0, 260.0),
+        (_ORIGIN_2, _MONTH_2, "time_series_c", 50.0, 0.5, 74.0, 10.0),
+    ]
+    frame = pd.DataFrame(
+        rows,
+        columns=_JOIN_KEYS
+        + ["actual_monthly_total", "series_weight", "challenger", "benchmark"],
+    )
+    challenger = frame.drop(columns="benchmark").rename(
+        columns={"challenger": "monthly_forecast"}
+    )
+    benchmark = frame[_JOIN_KEYS + ["benchmark"]].rename(
+        columns={"benchmark": "monthly_forecast"}
+    )
+    # Self-check: the mean of the two fold ratios the docstring states.
+    np.testing.assert_allclose(compute_wrmae_pooled(challenger, benchmark), 0.55)
+    return challenger, benchmark
+
+
+def _weighted_errors(challenger, benchmark) -> tuple[pd.Series, pd.Series]:
+    """Each side's weighted absolute error per row of the share fixture."""
+    actual, weight = challenger["actual_monthly_total"], challenger["series_weight"]
+    return (
+        weight * (challenger["monthly_forecast"] - actual).abs(),
+        weight * (benchmark["monthly_forecast"] - actual).abs(),
+    )
+
+
+def _shares(challenger, benchmark) -> dict[str, tuple[float, float]]:
+    """compute_wrmae_pooled_shares as unique_id to (x, y)."""
+    shares = compute_wrmae_pooled_shares(challenger, benchmark)
+    columns = shares[["unique_id", "x", "y"]]
+    return {uid: (x, y) for uid, x, y in columns.itertuples(index=False)}
+
+
+def test_compute_wrmae_pooled_shares_reconcile_to_one_and_to_the_hero(share_dfs):
+    """Sum of x is 1 and sum of y is compute_wrmae_pooled, on unequal fold sums."""
+    challenger, benchmark = share_dfs
+    hero = compute_wrmae_pooled(challenger, benchmark)
+
+    # Self-check: one denominator pooled across folds misses the hero here, as it
+    # would not on equal fold sums.
+    ch_errors, bm_errors = _weighted_errors(challenger, benchmark)
+    assert bm_errors.groupby(challenger["forecast_origin_date"]).sum().is_unique
+    assert abs(ch_errors.sum() / bm_errors.sum() - hero) > 1e-3
+
+    shares = compute_wrmae_pooled_shares(challenger, benchmark)
+    np.testing.assert_allclose(shares["x"].sum(), 1.0, rtol=0, atol=1e-10)
+    np.testing.assert_allclose(shares["y"].sum(), hero, rtol=0, atol=1e-10)
+
+
+def test_compute_wrmae_pooled_shares_skip_a_near_zero_benchmark_fold(share_dfs):
+    """An excluded fold adds nothing and is not counted; its only series reads 0."""
+    challenger, benchmark = share_dfs
+    benchmark = benchmark.copy()
+    fold_2 = benchmark["forecast_origin_date"] == _ORIGIN_2
+    benchmark.loc[fold_2, "monthly_forecast"] = (
+        challenger.loc[fold_2, "actual_monthly_total"] + _SMALL_NUM_BOUND * 0.1
+    )
+    # Self-check: the fold's sum is positive, so the bound is what drops it.
+    _, bm_errors = _weighted_errors(challenger, benchmark)
+    assert 0 < bm_errors[fold_2].sum() <= _SMALL_NUM_BOUND
+
+    # Fold 1 alone, F = 1: benchmark 10/40 and challenger 5/20 over 50.
+    assert _shares(challenger, benchmark) == {
+        "time_series_a": pytest.approx((0.2, 0.1)),
+        "time_series_b": pytest.approx((0.8, 0.4)),
+        "time_series_c": (0.0, 0.0),
+    }
+
+
+def test_compute_wrmae_pooled_shares_divide_a_missing_fold_by_every_fold(share_dfs):
+    """A series absent from a fold adds zero there and still divides by F."""
+    challenger, benchmark = share_dfs
+    x, y = _shares(challenger, benchmark)["time_series_c"]
+    assert (x, y) == pytest.approx((20 / 170 / 2, 12 / 170 / 2))
 
 
 # ================================================
