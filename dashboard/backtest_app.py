@@ -17,7 +17,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 import streamlit as st  # noqa: E402
 
 from dashboard.shared import load, paths, runs  # noqa: E402
-from dashboard.train import header, origin_skill, scorecard  # noqa: E402
+from dashboard.train import contribution, header, origin_skill, scorecard  # noqa: E402
 
 _CONFIG_PATH = Path(__file__).resolve().parent / "config.toml"
 
@@ -96,6 +96,9 @@ def main() -> None:
         manifest["challenger_model"],
         manifest["benchmark_model"],
     )
+    st.divider()
+
+    contribution.render_contribution(per_series_comparison, tier_labels)
 
 
 main()

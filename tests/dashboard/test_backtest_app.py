@@ -11,7 +11,7 @@ from fsspec.implementations.local import LocalFileSystem
 from streamlit.testing.v1 import AppTest
 
 from dashboard.shared import load, paths, runs
-from dashboard.train import origin_skill
+from dashboard.train import contribution, origin_skill
 from fcstnyctaxi.core.train.evaluate_impl import (
     _OUTPUT_FILENAMES,
     _build_manifest,
@@ -168,15 +168,35 @@ def test_a_run_whose_files_are_its_own_draws_the_whole_page(page_root: Path) -> 
     assert app.get("plotly_chart")
 
 
+def _annotations(app: AppTest) -> list[dict]:
+    """Every annotation on every chart the page drew."""
+    return [
+        annotation
+        for chart in app.get("plotly_chart")
+        for annotation in json.loads(chart.proto.spec)["layout"].get("annotations", [])
+    ]
+
+
 def test_the_page_draws_the_origin_skill_panel(page_root: Path) -> None:
     """Below the scorecard rows, found by the annotation only that panel carries."""
     app = AppTest.from_file(APP, default_timeout=30).run()
-    names = {
-        annotation.get("name")
-        for chart in app.get("plotly_chart")
-        for annotation in json.loads(chart.proto.spec)["layout"].get("annotations", [])
-    }
+    names = {annotation.get("name") for annotation in _annotations(app)}
     assert origin_skill.COUNTS_ANNOTATION in names
+
+
+def test_the_page_draws_the_contribution_scatter_and_a_table_per_facet(
+    page_root: Path,
+) -> None:
+    """Found by the sums annotation only the scatter carries, one sum per facet."""
+    app = AppTest.from_file(APP, default_timeout=30).run()
+    sums = [
+        annotation
+        for annotation in _annotations(app)
+        if annotation.get("name") == contribution.SUMS_ANNOTATION
+    ]
+    tables = [table for table in app.dataframe if "series" in table.value.columns]
+    assert sums
+    assert len(tables) == len(sums)
 
 
 @pytest.mark.parametrize(
