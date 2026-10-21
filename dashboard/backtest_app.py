@@ -57,10 +57,15 @@ def main() -> None:
     manifest = load.load_evaluate_manifest(prefix)
     summary_metrics = load.load_summary_metrics(prefix)
     fold_metrics = load.load_fold_metrics(prefix)
+    per_series_comparison = load.load_per_series_comparison(prefix)
     load.check_lineage(
         run_id,
         manifest,
-        {paths.SUMMARY_METRICS: summary_metrics, paths.FOLD_METRICS: fold_metrics},
+        {
+            paths.SUMMARY_METRICS: summary_metrics,
+            paths.FOLD_METRICS: fold_metrics,
+            paths.PER_SERIES_COMPARISON: per_series_comparison,
+        },
     )
     tier_labels = manifest["config"]["tiering"]["tier_labels"]
 

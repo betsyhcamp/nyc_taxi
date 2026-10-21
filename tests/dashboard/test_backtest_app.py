@@ -12,15 +12,10 @@ from streamlit.testing.v1 import AppTest
 
 from dashboard.shared import load, paths, runs
 from fcstnyctaxi.core.train.evaluate_impl import (
-    _METRIC_NAMES,
-    _PERIOD_KEYS,
-    _SCORE_KEYS,
-    GLOBAL_TIER,
-    EvaluateOutputs,
+    _OUTPUT_FILENAMES,
     _build_manifest,
     _build_summary,
-    _derive,
-    _stamp_lineage,
+    compute_evaluate_outputs,
 )
 from fcstnyctaxi.lib.utils import get_project_root_dir
 from fcstnyctaxi.schemas.config.train import TrainModelingConfig
@@ -30,8 +25,17 @@ APP = str(get_project_root_dir() / "dashboard" / "backtest_app.py")
 SELECTED = "train-20260929t045735959418z"
 OTHER = "train-20260929t045146753815z"
 FEATURE_RUN_ID = "20260923t011300349443z"
-ORIGIN = pd.Timestamp("2025-03-23")
-PREDICTED_MONTH = {"horizon_1": 202504, "horizon_2": 202505}
+
+# Half a 4/4/5 fiscal year of Sunday weeks. Three origins in the 5-week month:
+# two mid-month, forecasting it and the next, and one at its end, which has
+# completed it and forecasts the two after.
+WEEKS = pd.date_range("2025-01-05", periods=26, freq="W-SUN")
+WEEKS_IN_MONTH = {202501: 4, 202502: 4, 202503: 5, 202504: 4, 202505: 4, 202506: 5}
+ORIGIN_TARGETS = (
+    (WEEKS[10], (202503, 202504)),
+    (WEEKS[11], (202503, 202504)),
+    (WEEKS[12], (202504, 202505)),
+)
 
 
 def _modeling() -> TrainModelingConfig:
@@ -56,58 +60,76 @@ def _identity(run_id: str) -> TrainRunIdentity:
     )
 
 
+def _calendar() -> pd.DataFrame:
+    """The calendar columns evaluate reads, each week's fraction of its month."""
+    months = [month for month, weeks in WEEKS_IN_MONTH.items() for _ in range(weeks)]
+    elapsed = [
+        week / weeks
+        for weeks in WEEKS_IN_MONTH.values()
+        for week in range(1, weeks + 1)
+    ]
+    return pd.DataFrame(
+        {
+            "ds": WEEKS,
+            "fiscal_year_month": months,
+            "origin_month_fraction_elapsed": elapsed,
+        }
+    )
+
+
+def _monthly_series(model: str, modeling: TrainModelingConfig) -> pd.DataFrame:
+    """One sidecar's monthly_series, one series per tier. The benchmark errs by 20%
+    and up, the challenger by 8% and up, rising by fold, series and horizon."""
+    tiers = modeling.tiering.tier_labels
+    base_error = 0.20 if model == modeling.model_roles.benchmark else 0.08
+    rows = []
+    for fold_index, (origin, months) in enumerate(ORIGIN_TARGETS):
+        for step, month in enumerate(months):
+            for index, tier in enumerate(tiers):
+                actual = 100.0 * (index + 1) ** 2 * (1 + 0.05 * (month - 202503))
+                error = base_error + 0.01 * fold_index + 0.02 * index + 0.03 * step
+                rows.append(
+                    {
+                        "forecast_origin_date": origin,
+                        "predicted_fiscal_year_month": month,
+                        "unique_id": f"time_series_{chr(ord('a') + index)}",
+                        "tier": tier,
+                        "series_weight": 2.0 * (index + 1),
+                        "monthly_forecast": actual * (1 + (-1) ** index * error),
+                        "actual_monthly_total": actual,
+                    }
+                )
+    frame = pd.DataFrame(rows)
+    frame["tier"] = pd.Categorical(frame["tier"], categories=tiers, ordered=True)
+    return frame
+
+
 def _write_run(root: Path, run_id: str) -> None:
-    """One run's evaluate directory. One series per tier, so every tier is populated
-    at the one origin, as it is on a real run."""
+    """One run's evaluate directory, every table and the manifest from evaluate's
+    own builders, written as `evaluate_impl` writes them."""
     modeling = _modeling()
     roles = modeling.model_roles
-    tiers = modeling.tiering.tier_labels
-    series = [f"time_series_{chr(ord('a') + index)}" for index in range(len(tiers))]
     identity = _identity(run_id)
-
-    folds = pd.DataFrame(
-        [
-            {
-                "model": model,
-                "horizon": horizon,
-                "tier": tier,
-                "forecast_origin_date": ORIGIN,
-                "predicted_fiscal_year_month": month,
-                "metric": metric,
-                "value": 0.9,
-                "n_obs": len(series) if tier == GLOBAL_TIER else 1,
-            }
-            for model in (roles.challenger, roles.benchmark)
-            for horizon, month in PREDICTED_MONTH.items()
-            for tier in (GLOBAL_TIER, *tiers)
-            for metric in _METRIC_NAMES
-        ]
+    outputs = compute_evaluate_outputs(
+        challenger_ms=_monthly_series(roles.challenger, modeling),
+        benchmark_ms=_monthly_series(roles.benchmark, modeling),
+        calendar_df=_calendar(),
+        challenger_model=roles.challenger,
+        benchmark_model=roles.benchmark,
+        tier_labels=tuple(modeling.tiering.tier_labels),
+        identity=identity,
     )
-    per_series = pd.DataFrame(
-        [
-            {
-                "forecast_origin_date": ORIGIN,
-                "predicted_fiscal_year_month": month,
-                "unique_id": unique_id,
-            }
-            for month in PREDICTED_MONTH.values()
-            for unique_id in series
-        ]
-    )
-    outputs = EvaluateOutputs(
-        per_series_comparison=_stamp_lineage(per_series, identity),
-        fold_metrics=_stamp_lineage(folds, identity),
-        period_metrics=_stamp_lineage(_derive(folds, _PERIOD_KEYS), identity),
-        summary_metrics=_stamp_lineage(_derive(folds, _SCORE_KEYS), identity),
-    )
-    manifest = _build_manifest(
-        _build_summary(outputs, identity, roles), identity, modeling
-    )
+    # Self-check: the stated target months are the two horizons evaluate labels.
+    horizons = set(outputs.per_series_comparison["horizon"])
+    assert horizons == {"horizon_1", "horizon_2"}, horizons
 
     evaluate = root / run_id / "evaluate"
     evaluate.mkdir(parents=True)
-    outputs.fold_metrics.to_parquet(evaluate / paths.FOLD_METRICS)
-    outputs.summary_metrics.to_parquet(evaluate / paths.SUMMARY_METRICS)
+    for field, filename in _OUTPUT_FILENAMES.items():
+        getattr(outputs, field).to_parquet(evaluate / filename, index=False)
+    manifest = _build_manifest(
+        _build_summary(outputs, identity, roles), identity, modeling
+    )
     (evaluate / paths.EVALUATE_MANIFEST).write_text(json.dumps(manifest))
 
 
@@ -146,7 +168,13 @@ def test_a_run_whose_files_are_its_own_draws_the_whole_page(page_root: Path) -> 
 
 
 @pytest.mark.parametrize(
-    "filename", [paths.EVALUATE_MANIFEST, paths.SUMMARY_METRICS, paths.FOLD_METRICS]
+    "filename",
+    [
+        paths.EVALUATE_MANIFEST,
+        paths.SUMMARY_METRICS,
+        paths.FOLD_METRICS,
+        paths.PER_SERIES_COMPARISON,
+    ],
 )
 def test_another_runs_file_stops_the_page_before_it_draws(
     page_root: Path, filename: str

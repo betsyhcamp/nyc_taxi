@@ -97,8 +97,15 @@ def load_summary_metrics(prefix: str) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def load_fold_metrics(prefix: str) -> pd.DataFrame:
-    """Fold grain. The largest table read."""
+    """Fold grain."""
     return pd.read_parquet(f"{prefix}{paths.FOLD_METRICS}")
+
+
+@st.cache_data(show_spinner=False)
+def load_per_series_comparison(prefix: str) -> pd.DataFrame:
+    """Series by fold, both forecasts on one row. The largest table read, and the
+    only one growing with the series count."""
+    return pd.read_parquet(f"{prefix}{paths.PER_SERIES_COMPARISON}")
 
 
 def check_lineage(
