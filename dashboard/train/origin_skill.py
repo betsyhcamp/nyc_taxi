@@ -28,13 +28,6 @@ _LATEST_SIZE = 13
 _HALO_WIDTH = 2
 _RING_WIDTH = 2
 
-# Plotly places a scatter point in data units only. Measured: `standoff` moves the
-# drawn marker in px opposite to `angle`, whatever its docstring says, and a circle
-# or a diamond turned a quarter is unchanged. So horizon_1 sits 5px left of its
-# origin and horizon_2 5px right.
-_OFFSET_ANGLE = {"horizon_1": 90, "horizon_2": 270}
-_OFFSET_PX = 5
-
 
 def origin_figure(
     fold_metrics: pd.DataFrame,
@@ -162,8 +155,7 @@ def _marks(
             "size": [
                 _LATEST_SIZE if is_latest else _MARKER_SIZE for is_latest in latest
             ],
-            "angle": _OFFSET_ANGLE[horizon],
-            "standoff": _OFFSET_PX,
+            **axes.horizon_offset(horizon),
         },
         customdata=points[["n_obs"]],
         hovertemplate=(
@@ -192,15 +184,13 @@ def _latest_ring(point: pd.DataFrame, horizon: str) -> go.Scatter:
             "size": _LATEST_SIZE + 2 * _HALO_WIDTH + _RING_WIDTH,
             "color": palette.PLOT_BGCOLOR,
             "line": {"color": palette.AXIS_COLOR, "width": _RING_WIDTH},
-            "angle": _OFFSET_ANGLE[horizon],
-            "standoff": _OFFSET_PX,
+            **axes.horizon_offset(horizon),
         },
     )
 
 
 def _benchmark_ticks(points: pd.DataFrame, horizon: str) -> go.Scatter:
-    """The benchmark's values at its horizon's offset. `line-ns`, because the offset's
-    quarter turn would stand `BENCHMARK_MARK`'s `line-ew` upright."""
+    """The benchmark's values at its horizon's offset."""
     return go.Scatter(
         x=points["forecast_origin_date"],
         y=points["value"],
@@ -208,12 +198,7 @@ def _benchmark_ticks(points: pd.DataFrame, horizon: str) -> go.Scatter:
         name="benchmark",
         legendgroup="benchmark",
         showlegend=False,
-        marker={
-            **axes.BENCHMARK_MARK,
-            "symbol": "line-ns",
-            "angle": _OFFSET_ANGLE[horizon],
-            "standoff": _OFFSET_PX,
-        },
+        marker=axes.offset_benchmark_mark(horizon),
         hovertemplate=(
             f"benchmark {horizon}<br>%{{x|%Y-%m-%d}}<br>%{{y:.4f}}<extra></extra>"
         ),
