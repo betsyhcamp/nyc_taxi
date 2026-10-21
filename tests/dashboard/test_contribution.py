@@ -4,6 +4,7 @@
 row is one the producer emits and the sums are checked against its own table.
 """
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import pytest
@@ -93,9 +94,8 @@ def _monthly_series(model: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-@pytest.fixture(scope="module")
-def outputs():
-    """The producer's four tables over the two sidecars."""
+def _evaluate(benchmark_ms: pd.DataFrame):
+    """The producer's four tables, over the challenger's sidecar and this one."""
     identity = TrainRunIdentity(
         git_hash="0" * 40,
         feature_run_id="feature_run",
@@ -106,13 +106,43 @@ def outputs():
     )
     return compute_evaluate_outputs(
         challenger_ms=_monthly_series(CHALLENGER),
-        benchmark_ms=_monthly_series(BENCHMARK),
+        benchmark_ms=benchmark_ms,
         calendar_df=_calendar(),
         challenger_model=CHALLENGER,
         benchmark_model=BENCHMARK,
         tier_labels=TIER_LABELS,
         identity=identity,
     )
+
+
+@pytest.fixture(scope="module")
+def outputs():
+    """The producer's four tables over the two sidecars."""
+    return _evaluate(_monthly_series(BENCHMARK))
+
+
+@pytest.fixture(scope="module")
+def perfect_horizon_1(outputs) -> pd.DataFrame:
+    """The table again, the benchmark exact on every horizon_1 fold, so every one
+    is excluded and horizon_1 has no fold to average."""
+    keys = ["forecast_origin_date", "predicted_fiscal_year_month", "unique_id"]
+    table = outputs.per_series_comparison
+    horizon_1 = table.loc[table["horizon"] == "horizon_1", keys]
+    benchmark = _monthly_series(BENCHMARK)
+    exact = (
+        benchmark.merge(horizon_1, on=keys, how="left", indicator=True)["_merge"]
+        .eq("both")
+        .to_numpy()
+    )
+    benchmark.loc[exact, "monthly_forecast"] = benchmark.loc[
+        exact, "actual_monthly_total"
+    ]
+    rerun = _evaluate(benchmark)
+    # Self-check: horizon_1's hero is nan and horizon_2's is not.
+    hero = _hero_metric_values(rerun.summary_metrics, CHALLENGER)
+    assert np.isnan(hero["horizon_1"])
+    assert np.isfinite(hero["horizon_2"])
+    return rerun.per_series_comparison
 
 
 @pytest.fixture(scope="module")
@@ -185,6 +215,22 @@ def test_the_sums_read_one_and_the_hero_of_each_horizon(outputs, per_series) -> 
     assert sums == [
         f"Σx = 1.000   Σy = {hero[horizon]:.3f}" for horizon in sorted(hero)
     ]
+
+
+def test_a_horizon_with_no_included_fold_reads_nan(perfect_horizon_1) -> None:
+    """Not 0.000, a reconciliation that is not there; the other facet's y = x stays."""
+    figure = contribution.contribution_figure(
+        contribution.horizon_shares(perfect_horizon_1, TIER_LABELS), TIER_LABELS
+    )
+    sums = [
+        annotation.text
+        for annotation in figure.layout.annotations
+        if annotation.name == contribution.SUMS_ANNOTATION
+    ]
+    assert sums[0] == "Σx = nan   Σy = nan"
+    assert all(
+        np.isfinite([shape.x1, shape.y1]).all() for shape in figure.layout.shapes
+    )
 
 
 # ================================================

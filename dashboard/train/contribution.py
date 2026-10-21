@@ -78,7 +78,8 @@ def contribution_figure(
     encoding = palette.tier_encoding(tier_labels)
     horizons = sorted(shares)
     # Across both facets, since their ranges match: y = x reaches the shared extent.
-    top = max(float(frame[["x", "y"]].max().max()) for frame in shares.values())
+    # One max over all of them, since Python's max keeps a leading nan.
+    top = float(pd.concat([frame[["x", "y"]] for frame in shares.values()]).max().max())
     figure = make_subplots(
         rows=1, cols=len(horizons), subplot_titles=horizons, horizontal_spacing=0.08
     )
@@ -104,7 +105,10 @@ def contribution_figure(
             col=column,
         )
         figure.add_annotation(
-            text=f"Σx = {frame['x'].sum():.3f}   Σy = {frame['y'].sum():.3f}",
+            text=(
+                f"Σx = {frame['x'].sum(min_count=1):.3f}   "
+                f"Σy = {frame['y'].sum(min_count=1):.3f}"
+            ),
             name=SUMS_ANNOTATION,
             xref="x domain",
             yref="y domain",
