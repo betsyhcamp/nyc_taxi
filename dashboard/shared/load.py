@@ -109,8 +109,7 @@ def load_fold_metrics(prefix: str) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def load_per_series_comparison(prefix: str) -> pd.DataFrame:
-    """Series by fold, both forecasts on one row. The largest table read, and the
-    only one growing with the series count."""
+    """Series by fold, both forecasts on one row, growing with the series count."""
     return pd.read_parquet(f"{prefix}{paths.PER_SERIES_COMPARISON}")
 
 
@@ -136,6 +135,19 @@ def load_backtest_manifest(prefix: str) -> dict[str, Any]:
 def load_fiscal_calendar(prefix: str) -> pd.DataFrame:
     """The calendar backtest copied into a sidecar, the same in every model's."""
     return pd.read_parquet(f"{prefix}{paths.FISCAL_CALENDAR}")
+
+
+@st.cache_data(show_spinner=False)
+def load_time_series_snapshot(prefix: str) -> pd.DataFrame:
+    """The weekly panel backtest copied into a sidecar, every series' full history.
+    The largest read, growing with both the series count and the weeks."""
+    return pd.read_parquet(f"{prefix}{paths.TIME_SERIES_SNAPSHOT}")
+
+
+@st.cache_data(show_spinner=False)
+def load_raw_cv_forecasts(prefix: str) -> pd.DataFrame:
+    """One model's weekly forecasts from every origin."""
+    return pd.read_parquet(f"{prefix}{paths.RAW_CV_FORECASTS}")
 
 
 def check_lineage(
