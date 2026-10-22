@@ -426,6 +426,20 @@ def test_another_runs_sidecar_stops_the_page_before_it_draws(
     assert not app.get("plotly_chart")
 
 
+def test_a_sidecar_backtest_never_wrote_stops_the_page_at_its_manifest(
+    page_root: Path,
+) -> None:
+    """Its manifest is read before any of its tables, so the error names it."""
+    challenger = _modeling().model_roles.challenger
+    # Backtest creates a sidecar only to write it, so an unrun one is absent.
+    shutil.rmtree(page_root / SELECTED / BACKTEST_DIR / challenger)
+    app = AppTest.from_file(APP, default_timeout=30).run()
+    assert app.exception
+    assert f"holds no {paths.BACKTEST_MANIFEST}" in app.exception[0].message
+    assert not app.markdown
+    assert not app.get("plotly_chart")
+
+
 def test_one_model_in_both_roles_reads_one_sidecar(
     tmp_path: Path,
     tmp_path_factory: pytest.TempPathFactory,
