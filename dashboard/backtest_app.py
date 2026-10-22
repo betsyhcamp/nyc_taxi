@@ -21,6 +21,7 @@ from dashboard.train import (  # noqa: E402
     cohort,
     contribution,
     header,
+    line_grid,
     origin_skill,
     scorecard,
 )
@@ -86,6 +87,13 @@ def main() -> None:
         },
     )
     tier_labels = manifest["config"]["tiering"]["tier_labels"]
+    models = {
+        "challenger": manifest["challenger_model"],
+        "benchmark": manifest["benchmark_model"],
+    }
+    # The calendar and the snapshot are the same in every sidecar; evaluate reads
+    # the challenger's.
+    calendar = load.load_fiscal_calendar(sidecars[models["challenger"]])
 
     header.render_identity_strip(
         manifest, load.load_run_output(load.run_outputs_uri(config_dir, env, run_id))
@@ -118,7 +126,7 @@ def main() -> None:
 
     cohort.render_cohort(
         fold_metrics,
-        load.load_fiscal_calendar(sidecars[manifest["challenger_model"]]),
+        calendar,
         tier_labels,
         manifest["challenger_model"],
         manifest["benchmark_model"],
@@ -126,6 +134,20 @@ def main() -> None:
     st.divider()
 
     contribution.render_contribution(per_series_comparison, tier_labels)
+    st.divider()
+
+    line_grid.render_line_grids(
+        line_grid.grid_data(
+            calendar,
+            load.load_time_series_snapshot(sidecars[models["challenger"]]),
+            per_series_comparison,
+            {
+                role: load.load_raw_cv_forecasts(sidecars[model])
+                for role, model in models.items()
+            },
+            models,
+        )
+    )
 
 
 main()

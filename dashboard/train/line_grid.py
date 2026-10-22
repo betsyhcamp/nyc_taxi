@@ -5,8 +5,10 @@ from itertools import pairwise
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import streamlit as st
+from plotly.subplots import make_subplots
 
-from dashboard.shared import palette
+from dashboard.shared import axes, palette
 from fcstnyctaxi.core.train.evaluate_impl import GLOBAL_TIER
 
 COMPLETE = "complete"
@@ -40,6 +42,25 @@ _BOUNDARY_TICK = 0.08
 """The month boundary's tick, as a fraction of the facet's height."""
 _NOTE_LINE = 14
 """The header line under each title reserved for notes, in px."""
+
+_KEY = "line_grid"
+GRIDS = 2
+ROWS, COLS = 3, 2
+GRAINS = (MONTHLY, WEEKLY)
+Y_SCALES = ("independent", "shared")
+WINDOWS = ("full history", "backtest window")
+EXPANDER = "Time series line grids"
+_HISTORY = pd.Timedelta(weeks=52)
+"""How far before the run's first origin the backtest window starts."""
+_FLAT_HEADROOM = 1.1
+"""A facet of one repeated value runs from 0 to this multiple of it."""
+_FACET_HEIGHT = 200
+"""Plot area per facet, in px."""
+_ROW_GAP = 64
+"""Room between rows for the next row's two header lines; ticks are last-row only."""
+_COLUMN_GAP = 0.06
+_PAD = 0.04
+"""Fraction of a span added at each end of a computed range."""
 
 
 def reindex_weeks(snapshot: pd.DataFrame, calendar: pd.DataFrame) -> pd.DataFrame:
@@ -497,3 +518,174 @@ def _forecast_line(
         customdata=points[["fiscal_year_month"]],
         hovertemplate=f"{model} {horizon}<br>{when}<br>%{{y:,.0f}}<extra></extra>",
     )
+
+
+def grid_data(
+    calendar: pd.DataFrame,
+    snapshot: pd.DataFrame,
+    per_series_comparison: pd.DataFrame,
+    raw_cv_forecasts: dict[str, pd.DataFrame],
+    models: dict[str, str],
+) -> GridData:
+    """The frames both grids read, with the reindex and the month rule run once."""
+    weekly = reindex_weeks(snapshot, calendar)
+    return GridData(
+        calendar=calendar,
+        weekly=weekly,
+        monthly=monthly_totals(weekly, calendar),
+        per_series_comparison=per_series_comparison,
+        raw_cv_forecasts=raw_cv_forecasts,
+        models=models,
+    )
+
+
+def default_selection(
+    per_series_comparison: pd.DataFrame,
+) -> tuple[object, pd.Timestamp]:
+    """The first series in sorted order, from the run's last origin."""
+    return (
+        sorted(per_series_comparison["unique_id"].unique())[0],
+        per_series_comparison["forecast_origin_date"].max(),
+    )
+
+
+def grid_figure(
+    data: GridData,
+    selections: Sequence[tuple[object, pd.Timestamp]],
+    grain: str,
+    *,
+    shared_y: bool,
+    window: bool,
+) -> go.Figure:
+    """Six facets, three rows by two columns, on one x axis.
+
+    At full history a short series draws only over the right of an axis a long one
+    fills, which shows ragged starts. The backtest window runs from `_HISTORY`
+    before the run's first origin to the panel's end, and fits y to it, which
+    Plotly cannot: it fits a facet's y to all of its data, visible or not.
+
+    Args:
+        data: From `grid_data`.
+        selections: Each facet's series and origin, in reading order.
+        grain: `MONTHLY` or `WEEKLY`, for every facet.
+        shared_y: One y range over every facet, rather than each its own.
+        window: The backtest window rather than full history.
+
+    Returns:
+        go.Figure: The grid, its legend naming each trace once.
+    """
+    plot_height = ROWS * _FACET_HEIGHT + (ROWS - 1) * _ROW_GAP
+    figure = make_subplots(
+        rows=ROWS,
+        cols=COLS,
+        shared_xaxes="all",
+        horizontal_spacing=_COLUMN_GAP,
+        vertical_spacing=_ROW_GAP / plot_height,
+    )
+    facets = [build_facet(data, series, origin, grain) for series, origin in selections]
+    for index, facet in enumerate(facets):
+        row, col = divmod(index, COLS)
+        add_facet(figure, facet, data.models, row=row + 1, col=col + 1, legend=True)
+    named = set()
+    for trace in figure.data:
+        trace.showlegend = trace.showlegend and trace.name not in named
+        named.add(trace.name)
+
+    end = data.weekly["ds"].max()
+    start = (
+        data.per_series_comparison["forecast_origin_date"].min() - _HISTORY
+        if window
+        else data.weekly["ds"].min()
+    )
+    figure.update_xaxes(range=_padded(start, end))
+    visible = [_visible(facet, start) for facet in facets]
+    if shared_y:
+        figure.update_yaxes(range=_y_range(pd.concat(visible)))
+    else:
+        for index, values in enumerate(visible):
+            # A lone repeated value would autoscale to a sliver around it.
+            if window or values.nunique() == 1:
+                row, col = divmod(index, COLS)
+                figure.update_yaxes(range=_y_range(values), row=row + 1, col=col + 1)
+    axes.style_axes(figure)
+    figure.update_layout(
+        **axes.base_layout(
+            showlegend=True,
+            hovermode="closest",
+            height=plot_height + 120,
+            legend={
+                "orientation": "h",
+                "x": 0,
+                "y": 1,
+                "yanchor": "top",
+                "yref": "container",
+            },
+            margin={"l": 56, "r": 16, "t": 84, "b": 36},
+        )
+    )
+    return figure
+
+
+def render_line_grids(data: GridData) -> None:
+    """Both grids in a collapsed expander, each under its own grain, y-axis and
+    window radios."""
+    selection = default_selection(data.per_series_comparison)
+    with st.expander(EXPANDER, expanded=False):
+        for grid in range(1, GRIDS + 1):
+            st.markdown(f"**Grid {grid}**")
+            grain_column, y_column, window_column = st.columns(3)
+            grain = grain_column.radio(
+                "grain", GRAINS, horizontal=True, key=grain_key(grid)
+            )
+            y_scale = y_column.radio(
+                "y-axis", Y_SCALES, horizontal=True, key=y_key(grid)
+            )
+            extent = window_column.radio(
+                "x-axis", WINDOWS, horizontal=True, key=window_key(grid)
+            )
+            figure = grid_figure(
+                data,
+                [selection] * (ROWS * COLS),
+                grain,
+                shared_y=y_scale == "shared",
+                window=extent == "backtest window",
+            )
+            st.plotly_chart(figure, width="stretch", key=f"{_KEY}_{grid}_chart")
+
+
+def grain_key(grid: int) -> str:
+    """The widget key of a grid's grain radio."""
+    return f"{_KEY}_{grid}_grain"
+
+
+def y_key(grid: int) -> str:
+    """The widget key of a grid's y-axis radio."""
+    return f"{_KEY}_{grid}_y"
+
+
+def window_key(grid: int) -> str:
+    """The widget key of a grid's x-axis radio."""
+    return f"{_KEY}_{grid}_window"
+
+
+def _visible(facet: Facet, start: pd.Timestamp) -> pd.Series:
+    """Every value the facet plots from `start` on."""
+    actual = facet.actual.loc[facet.actual["ds"] >= start, "y"]
+    return pd.concat([actual, *(facet.forecast[role] for role in ROLES)]).dropna()
+
+
+def _y_range(values: pd.Series) -> list | None:
+    """A padded range over `values`, or 0 to `_FLAT_HEADROOM` of a lone repeated
+    one. None, leaving Plotly's, when there is no nonzero value to scale by."""
+    if values.empty:
+        return None
+    low, high = values.min(), values.max()
+    if low == high:
+        return sorted([0.0, _FLAT_HEADROOM * high]) if high else None
+    return _padded(low, high)
+
+
+def _padded(low, high) -> list:
+    """`low` to `high`, widened by `_PAD` of the span at each end."""
+    margin = (high - low) * _PAD
+    return [low - margin, high + margin]

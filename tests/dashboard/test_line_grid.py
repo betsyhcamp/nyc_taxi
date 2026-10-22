@@ -14,6 +14,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import pytest
 from plotly.subplots import make_subplots
+from streamlit.testing.v1 import AppTest
 
 from dashboard.shared import axes, palette
 from dashboard.train import line_grid
@@ -670,3 +671,195 @@ def test_a_missing_week_in_one_member_leaves_globals_week_missing(gapped_grid) -
     total = facet.actual.set_index("ds")["y"]
     assert np.isnan(total[WEEKS[HISTORY_GAP]])
     assert np.isfinite(total[WEEKS[HISTORY_GAP + 1]])
+
+
+# ================================================
+# two grids
+# ================================================
+
+SIX = [
+    ("time_series_a", FIRST_ORIGIN),
+    ("time_series_b", FIRST_ORIGIN),
+    (line_grid.GLOBAL, FIRST_ORIGIN),
+    ("time_series_a", SECOND_ORIGIN),
+    (LATE, SECOND_ORIGIN),
+    (line_grid.GLOBAL, SECOND_ORIGIN),
+]
+
+
+def _grid_figure(data, selections=SIX, *, shared_y=False, window=False) -> go.Figure:
+    """A monthly grid of six facets."""
+    return line_grid.grid_figure(
+        data, selections, line_grid.MONTHLY, shared_y=shared_y, window=window
+    )
+
+
+def _axes(figure: go.Figure, prefix: str) -> list:
+    """The figure's x or y axes in facet order, which the layout's own is not."""
+    names = [name for name in figure.layout if name.startswith(prefix)]
+    return [figure.layout[name] for name in sorted(names, key=_facet_number)]
+
+
+def _facet_number(axis_name: str) -> int:
+    """`yaxis` is facet 1, `yaxis2` facet 2."""
+    return int(axis_name.removeprefix("xaxis").removeprefix("yaxis") or 1)
+
+
+def _plotted(figure: go.Figure, axis: str) -> np.ndarray:
+    """Every finite value drawn against one y axis."""
+    values = [
+        y
+        for trace in figure.data
+        if (trace.yaxis or "y") == axis
+        for y in np.asarray(trace.y, dtype=float)
+    ]
+    return np.array([value for value in values if np.isfinite(value)])
+
+
+def test_a_grids_facets_share_one_x_range_covering_full_history(grid) -> None:
+    """One zoom moves all six, and a short series draws only over the right."""
+    figure = _grid_figure(grid)
+    xaxes = _axes(figure, "xaxis")
+    anchors = [axis for axis in xaxes if axis.matches is None]
+    assert len(anchors) == 1
+    assert {axis.matches for axis in xaxes} - {None} == {
+        anchors[0].anchor.replace("y", "x")
+    }
+    ((low, high),) = {tuple(axis.range) for axis in xaxes}
+    assert pd.Timestamp(low) <= grid.weekly["ds"].min()
+    assert pd.Timestamp(high) >= grid.weekly["ds"].max()
+
+
+def test_the_backtest_window_keeps_every_forecast_in_view(grid) -> None:
+    """From before the run's first origin to the panel's end."""
+    figure = _grid_figure(grid, window=True)
+    ((low, high),) = {tuple(axis.range) for axis in _axes(figure, "xaxis")}
+    first = grid.per_series_comparison["forecast_origin_date"].min()
+    assert pd.Timestamp(low) < first
+    assert pd.Timestamp(high) >= grid.weekly["ds"].max()
+
+
+@pytest.fixture
+def spiked_grid(monkeypatch: pytest.MonkeyPatch) -> line_grid.GridData:
+    """A spike early in time_series_a's history, with the window shortened so it
+    starts inside the fixture's half year, after the spike."""
+    snapshot = _snapshot(SPANS)
+    spike = (snapshot["unique_id"] == "time_series_a") & (snapshot["ds"] == WEEKS[0])
+    snapshot.loc[spike, "y"] = 1e6
+    monkeypatch.setattr(line_grid, "_HISTORY", pd.Timedelta(weeks=4))
+    # Self-check: the shortened window starts after the spike.
+    assert FIRST_ORIGIN - line_grid._HISTORY > WEEKS[0]
+    return _grid(snapshot)
+
+
+@pytest.mark.parametrize("shared_y", [False, True])
+def test_the_backtest_window_fits_y_to_what_it_shows(spiked_grid, shared_y) -> None:
+    """Plotly fits y to all of a facet's data, so a spike out of view flattens it."""
+    figure = _grid_figure(spiked_grid, shared_y=shared_y, window=True)
+    ((low, _),) = {tuple(axis.range) for axis in _axes(figure, "xaxis")}
+    assert pd.Timestamp(low) > WEEKS[0]
+    (facet_a,) = _axes(figure, "yaxis")[:1]
+    assert facet_a.range is not None
+    assert facet_a.range[1] < 1e6
+    in_view = [
+        y
+        for trace in figure.data
+        if (trace.yaxis or "y") == "y"
+        for x, y in zip(pd.to_datetime(pd.Series(trace.x)), trace.y, strict=True)
+        if x >= pd.Timestamp(low) and np.isfinite(y)
+    ]
+    assert facet_a.range[0] <= min(in_view)
+    assert max(in_view) <= facet_a.range[1]
+
+
+def test_shared_y_sets_one_range_holding_every_value(grid) -> None:
+    """So the six read on one scale."""
+    figure = _grid_figure(grid, shared_y=True)
+    ((low, high),) = {tuple(axis.range) for axis in _axes(figure, "yaxis")}
+    for index, _ in enumerate(SIX):
+        values = _plotted(figure, "y" if index == 0 else f"y{index + 1}")
+        assert low <= values.min()
+        assert values.max() <= high
+
+
+def test_independent_y_at_full_history_sets_none(grid) -> None:
+    """Each facet keeps Plotly's own fit to its data, which hides nothing."""
+    figure = _grid_figure(grid)
+    # Self-check: no facet holds a single repeated value, which gets a range.
+    assert all(len(set(_plotted(figure, axis))) > 1 for axis in ("y", "y2", "y6"))
+    assert all(axis.range is None for axis in _axes(figure, "yaxis"))
+
+
+def test_a_facet_of_one_repeated_value_runs_from_zero(grid) -> None:
+    """Plotly would autoscale it to a sliver around the value, with nonsense ticks."""
+    late = "time_series_d"
+    data = _grid(_snapshot({**SPANS, late: range(19, len(WEEKS))}))
+    selections = [(late, FIRST_ORIGIN), *SIX[1:]]
+    figure = _grid_figure(data, selections)
+    values = _plotted(figure, "y")
+    # Self-check: the late series has one whole month, the panel's last.
+    assert len(values) == 1
+    (facet,) = _axes(figure, "yaxis")[:1]
+    assert facet.range[0] == 0
+    assert facet.range[1] > values[0]
+    assert all(axis.range is None for axis in _axes(figure, "yaxis")[1:])
+
+
+def test_the_legend_names_each_trace_once(grid) -> None:
+    """Six facets draw each series six times; the legend lists it once."""
+    figure = _grid_figure(grid)
+    shown = [trace.name for trace in figure.data if trace.showlegend]
+    drawn = {trace.name for trace in figure.data if trace.name}
+    assert sorted(shown) == sorted(set(shown))
+    assert set(shown) == drawn
+
+
+def test_the_default_selection_is_the_first_series_at_the_last_origin(
+    per_series,
+) -> None:
+    """Until a facet is chosen, every facet shows the run's latest forecast."""
+    series, origin = line_grid.default_selection(per_series)
+    assert series == min(per_series["unique_id"])
+    assert origin == per_series["forecast_origin_date"].max()
+
+
+# Unannotated: `AppTest.from_function` runs this function's source as a script of
+# its own, where the annotations are evaluated and `line_grid` is undefined.
+def _line_grid_page(data):
+    """The two grids alone, as a script `AppTest` can run."""
+    from dashboard.train import line_grid
+
+    line_grid.render_line_grids(data)
+
+
+def _actual_points(app, grid: int) -> int:
+    """How many points grid `grid`'s first facet draws for its actual."""
+    import json
+
+    charts = app.get("plotly_chart")
+    actual = next(
+        trace
+        for trace in json.loads(charts[grid - 1].proto.spec)["data"]
+        if trace.get("name") == line_grid.ACTUAL
+    )
+    return len(actual["x"])
+
+
+def test_each_grid_opens_monthly_independent_and_at_full_history(grid) -> None:
+    """The defaults that hide nothing and match what every metric scores."""
+    app = AppTest.from_function(_line_grid_page, args=(grid,)).run()
+    assert not app.exception, app.exception[0].message if app.exception else ""
+    for index in range(1, line_grid.GRIDS + 1):
+        assert app.radio(key=line_grid.grain_key(index)).value == line_grid.MONTHLY
+        assert app.radio(key=line_grid.y_key(index)).value == "independent"
+        assert app.radio(key=line_grid.window_key(index)).value == "full history"
+
+
+def test_each_grid_takes_its_own_grain(grid) -> None:
+    """Grid 2 can show the weeks under grid 1's months, same series, same origin."""
+    app = AppTest.from_function(_line_grid_page, args=(grid,)).run()
+    monthly = _actual_points(app, 1)
+    app.radio(key=line_grid.grain_key(1)).set_value(line_grid.WEEKLY).run()
+    assert not app.exception, app.exception[0].message if app.exception else ""
+    assert _actual_points(app, 1) > monthly
+    assert _actual_points(app, 2) == monthly

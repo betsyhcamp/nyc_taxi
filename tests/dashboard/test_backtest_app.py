@@ -1,9 +1,11 @@
 """The real page, run offline with its four remote reads pointed at local runs."""
 
+import base64
 import json
 import shutil
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 import yaml
@@ -11,13 +13,18 @@ from fsspec.implementations.local import LocalFileSystem
 from streamlit.testing.v1 import AppTest
 
 from dashboard.shared import load, paths, runs
-from dashboard.train import cohort, contribution, origin_skill
+from dashboard.train import cohort, contribution, line_grid, origin_skill
 from fcstnyctaxi.core.train import backtest_impl
 from fcstnyctaxi.core.train.evaluate_impl import (
     _OUTPUT_FILENAMES,
     _build_manifest,
     _build_summary,
     compute_evaluate_outputs,
+)
+from fcstnyctaxi.lib.monthly_aggregation import (
+    attach_tier_and_weight,
+    build_monthly_forecast_vs_actual,
+    compute_actual_monthly_totals,
 )
 from fcstnyctaxi.lib.origin_modeling_table.builders import enumerate_origins
 from fcstnyctaxi.lib.utils import get_project_root_dir
@@ -83,29 +90,83 @@ def _calendar() -> pd.DataFrame:
     return frame
 
 
-def _monthly_series(model: str, modeling: TrainModelingConfig) -> pd.DataFrame:
-    """One sidecar's monthly_series, one series per tier. The benchmark errs by 20%
-    and up, the challenger by 8% and up, rising by fold, series and horizon."""
-    tiers = modeling.tiering.tier_labels
+def _snapshot(modeling: TrainModelingConfig) -> pd.DataFrame:
+    """The weekly panel, one series per tier, each level the square of its rank and
+    rising 1% a week."""
+    return pd.DataFrame(
+        [
+            {
+                "unique_id": _series(index),
+                "ds": week,
+                "y": 25.0 * (index + 1) ** 2 * (1 + 0.01 * step),
+            }
+            for index, _ in enumerate(modeling.tiering.tier_labels)
+            for step, week in enumerate(WEEKS)
+        ]
+    )
+
+
+def _series(index: int) -> str:
+    """The synthetic series name at one tier index."""
+    return f"time_series_{chr(ord('a') + index)}"
+
+
+def _raw_cv_forecasts(model: str, modeling: TrainModelingConfig) -> pd.DataFrame:
+    """One sidecar's weekly forecasts, to each origin's later target month's end.
+    The benchmark errs by 20% and up, the challenger by 8% and up, rising by fold,
+    series and week, with the sign alternating by series."""
+    snapshot = _snapshot(modeling)
+    last_week = _calendar().groupby("fiscal_year_month")["ds"].max()
     base_error = 0.20 if model == modeling.model_roles.benchmark else 0.08
     rows = []
-    for fold_index, (origin, months) in enumerate(ORIGIN_TARGETS):
-        for step, month in enumerate(months):
-            for index, tier in enumerate(tiers):
-                actual = 100.0 * (index + 1) ** 2 * (1 + 0.05 * (month - 202503))
-                error = base_error + 0.01 * fold_index + 0.02 * index + 0.03 * step
+    for fold, (origin, months) in enumerate(ORIGIN_TARGETS):
+        weeks = WEEKS[(WEEKS > origin) & (WEEKS <= last_week[months[-1]])]
+        train = snapshot[snapshot["ds"] <= origin]
+        for index, level in enumerate(train.groupby("unique_id")["y"].last()):
+            for step, week in enumerate(weeks):
+                error = base_error + 0.01 * fold + 0.02 * index + 0.005 * step
                 rows.append(
                     {
                         "forecast_origin_date": origin,
-                        "predicted_fiscal_year_month": month,
-                        "unique_id": f"time_series_{chr(ord('a') + index)}",
-                        "tier": tier,
-                        "series_weight": 2.0 * (index + 1),
-                        "monthly_forecast": actual * (1 + (-1) ** index * error),
-                        "actual_monthly_total": actual,
+                        "unique_id": _series(index),
+                        "ds": week,
+                        "ypred": level * (1 + (-1) ** index * error),
+                        "fold_id": f"fold_{fold}",
                     }
                 )
-    frame = pd.DataFrame(rows)
+    return pd.DataFrame(rows)[backtest_impl._RAW_CV_FORECAST_COLUMNS]
+
+
+def _monthly_series(raw: pd.DataFrame, modeling: TrainModelingConfig) -> pd.DataFrame:
+    """One sidecar's monthly_series, assembled from its weekly forecasts and the
+    panel as backtest assembles each fold; tiers and weights take `assign_tiers`'
+    and `compute_series_weights`' output shape."""
+    tiers = modeling.tiering.tier_labels
+    snapshot, calendar = _snapshot(modeling), _calendar()
+    actuals = compute_actual_monthly_totals(snapshot, calendar)
+    fraction = calendar.set_index("ds")["origin_month_fraction_elapsed"]
+    names = [_series(index) for index, _ in enumerate(tiers)]
+    folds = [
+        attach_tier_and_weight(
+            monthly_rows_df=build_monthly_forecast_vs_actual(
+                forecast_df=raw[raw["forecast_origin_date"] == origin],
+                train_df=snapshot[snapshot["ds"] <= origin],
+                calendar_df=calendar,
+                actual_monthly_df=actuals,
+            ),
+            tier_df=pd.DataFrame({"unique_id": names, "tier": list(tiers)}),
+            weight_df=pd.DataFrame(
+                {
+                    "unique_id": names,
+                    "series_weight": [2.0 * (i + 1) for i in range(len(tiers))],
+                }
+            ),
+            fold_origin=origin,
+            origin_month_fraction_elapsed=fraction[origin],
+        )
+        for origin, _ in ORIGIN_TARGETS
+    ]
+    frame = pd.concat(folds, ignore_index=True)
     frame["tier"] = pd.Categorical(frame["tier"], categories=tiers, ordered=True)
     return frame
 
@@ -134,9 +195,12 @@ def _write_run(root: Path, run_id: str, modeling: TrainModelingConfig) -> None:
     roles = modeling.model_roles
     identity = _identity(run_id)
     # Keyed by model, as the pipeline writes one sidecar per model.
-    sidecars = {
-        model: _monthly_series(model, modeling)
+    forecasts = {
+        model: _raw_cv_forecasts(model, modeling)
         for model in (roles.challenger, roles.benchmark)
+    }
+    sidecars = {
+        model: _monthly_series(raw, modeling) for model, raw in forecasts.items()
     }
     outputs = compute_evaluate_outputs(
         challenger_ms=sidecars[roles.challenger],
@@ -150,6 +214,30 @@ def _write_run(root: Path, run_id: str, modeling: TrainModelingConfig) -> None:
     # Self-check: the stated target months are the two horizons evaluate labels.
     horizons = set(outputs.per_series_comparison["horizon"])
     assert horizons == {"horizon_1", "horizon_2"}, horizons
+    # Self-check: a monthly forecast is its month's weeks to the origin, actual,
+    # plus its forecast weeks, so the line grids' two grains agree.
+    origin, (month, _) = ORIGIN_TARGETS[0]
+    week_month = _calendar().set_index("ds")["fiscal_year_month"]
+    snapshot, raw = _snapshot(modeling), forecasts[roles.challenger]
+    observed = snapshot[
+        (snapshot["unique_id"] == _series(0))
+        & (snapshot["ds"].map(week_month) == month)
+        & (snapshot["ds"] <= origin)
+    ]["y"].sum()
+    predicted = raw[
+        (raw["forecast_origin_date"] == origin)
+        & (raw["unique_id"] == _series(0))
+        & (raw["ds"].map(week_month) == month)
+    ]["ypred"].sum()
+    ms = sidecars[roles.challenger]
+    (forecast,) = ms.loc[
+        (ms["forecast_origin_date"] == origin)
+        & (ms["unique_id"] == _series(0))
+        & (ms["predicted_fiscal_year_month"] == month),
+        "monthly_forecast",
+    ]
+    assert observed > 0
+    assert forecast == pytest.approx(observed + predicted)
 
     evaluate = root / run_id / "evaluate"
     evaluate.mkdir(parents=True)
@@ -164,6 +252,12 @@ def _write_run(root: Path, run_id: str, modeling: TrainModelingConfig) -> None:
         sidecar = root / run_id / BACKTEST_DIR / model
         sidecar.mkdir(parents=True)
         _calendar().to_parquet(sidecar / backtest_impl._CALENDAR_FILENAME, index=False)
+        _snapshot(modeling).to_parquet(
+            sidecar / backtest_impl._SNAPSHOT_FILENAME, index=False
+        )
+        forecasts[model].to_parquet(
+            sidecar / backtest_impl._OUTPUT_FILENAMES["raw_cv_forecasts"], index=False
+        )
         backtest_manifest = backtest_impl._build_manifest(
             model, _backtest_summary(monthly_series, identity), identity, modeling
         )
@@ -281,6 +375,68 @@ def test_the_page_switches_the_scatter_to_log_log(page_root: Path) -> None:
         if name.startswith(("xaxis", "yaxis"))
     }
     assert axis_types == {"log"}
+
+
+def test_the_page_draws_both_line_grids_in_a_collapsed_expander(
+    page_root: Path,
+) -> None:
+    """The tallest panel, and the one that answers nothing until a series is named."""
+    app = AppTest.from_file(APP, default_timeout=30).run()
+    assert not app.exception, app.exception[0].message if app.exception else ""
+    (expander,) = [e for e in app.expander if e.label == line_grid.EXPANDER]
+    assert not expander.proto.expanded
+    assert len(_grids(app)) == line_grid.GRIDS
+
+
+def _grids(app: AppTest) -> list[dict]:
+    """Each line grid's figure JSON, in page order, found by its facet titles."""
+    figures = [json.loads(chart.proto.spec) for chart in app.get("plotly_chart")]
+    return [
+        figure
+        for figure in figures
+        if any(
+            annotation.get("name") == line_grid.TITLE_ANNOTATION
+            for annotation in figure["layout"].get("annotations", [])
+        )
+    ]
+
+
+def _decoded(values) -> np.ndarray:
+    """A trace's values from chart JSON, which Plotly writes as a typed array."""
+    if isinstance(values, dict):
+        return np.frombuffer(base64.b64decode(values["bdata"]), dtype=values["dtype"])
+    return np.asarray(values, dtype=float)
+
+
+def test_each_roles_weekly_forecast_comes_from_its_own_sidecar(page_root: Path) -> None:
+    """Read from the challenger's for both, every benchmark line would be the
+    challenger's, on a complete and plausible page."""
+    roles = _modeling().model_roles
+    app = AppTest.from_file(APP, default_timeout=30).run()
+    app.radio(key=line_grid.grain_key(1)).set_value(line_grid.WEEKLY).run()
+    assert not app.exception, app.exception[0].message if app.exception else ""
+    first_grid = _grids(app)[0]
+    origin = max(origin for origin, _ in ORIGIN_TARGETS)
+    drawn = {}
+    for model in (roles.challenger, roles.benchmark):
+        raw = _raw_cv_forecasts(model, _modeling())
+        expected = raw[
+            (raw["forecast_origin_date"] == origin) & (raw["unique_id"] == _series(0))
+        ].sort_values("ds")["ypred"]
+        # The first facet's line for each horizon, in horizon order.
+        drawn[model] = np.concatenate(
+            [
+                _decoded(
+                    next(t for t in first_grid["data"] if t.get("name") == name)["y"]
+                )
+                for name in (f"{model} horizon_1", f"{model} horizon_2")
+            ]
+        )
+        assert drawn[model].tolist() == pytest.approx(expected.tolist())
+    # Self-check: the two models' weeks differ, so a crossed read would show.
+    assert drawn[roles.challenger].tolist() != pytest.approx(
+        drawn[roles.benchmark].tolist()
+    )
 
 
 @pytest.mark.parametrize(
