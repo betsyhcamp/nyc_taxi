@@ -1,18 +1,29 @@
-"""The line grids' data: the weekly reindex, the month rule, and `global`.
+"""The line grids: the weekly reindex, the month rule, `global`, and one facet
+drawn at either grain.
 
 The weekly panel is hand-built, since the Feature pipeline owns the real one; its
-self-check is that every row falls on a calendar week. `per_series_comparison`
-comes from `compute_evaluate_outputs`, its actuals from the panel through
-`compute_actual_monthly_totals`, as backtest derives them.
+self-check is that every row falls on a calendar week. Each model's weekly
+forecasts are hand-built too, and its `monthly_series` is assembled from them and
+the panel as backtest assembles each fold, so the two grains agree. Tiers and
+weights take `assign_tiers`' and `compute_series_weights`' output shape.
+`per_series_comparison` comes from `compute_evaluate_outputs`.
 """
 
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import pytest
+from plotly.subplots import make_subplots
 
+from dashboard.shared import axes, palette
 from dashboard.train import line_grid
+from fcstnyctaxi.core.train import backtest_impl
 from fcstnyctaxi.core.train.evaluate_impl import compute_evaluate_outputs
-from fcstnyctaxi.lib.monthly_aggregation import compute_actual_monthly_totals
+from fcstnyctaxi.lib.monthly_aggregation import (
+    attach_tier_and_weight,
+    build_monthly_forecast_vs_actual,
+    compute_actual_monthly_totals,
+)
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 
 CHALLENGER = "model_a"
@@ -33,10 +44,16 @@ MID_MONTH_START = 6
 LATE = "time_series_c"
 SPANS = {"time_series_a": FULL, "time_series_b": FULL, LATE: range(14, len(WEEKS))}
 FIRST_ORIGIN = WEEKS[GAP_WEEK]
+SECOND_ORIGIN = WEEKS[15]
 ORIGIN_TARGETS = (
     (FIRST_ORIGIN, (202403, 202404)),
-    (WEEKS[15], (202404, 202405)),
+    (SECOND_ORIGIN, (202404, 202405)),
 )
+HISTORY_GAP = 2
+"""The third week of 202401, before the first origin's target months."""
+WINDOW_GAP = 13
+"""The first week of 202404, a month the first origin forecasts."""
+ROLE_MODELS = {"challenger": CHALLENGER, "benchmark": BENCHMARK}
 
 
 def _calendar() -> pd.DataFrame:
@@ -91,37 +108,72 @@ def _by_month(months: pd.DataFrame, series: str) -> pd.DataFrame:
     return months[months["unique_id"] == series].set_index("fiscal_year_month")
 
 
-def _monthly_series(model: str, snapshot: pd.DataFrame) -> pd.DataFrame:
-    """One sidecar's monthly_series: a fold per series with training rows at each
-    origin, scored against the panel's own monthly totals."""
-    actuals = compute_actual_monthly_totals(snapshot, _calendar()).set_index(
-        ["unique_id", "fiscal_year_month"]
-    )["actual_monthly_total"]
+def _raw_cv_forecasts(model: str, snapshot: pd.DataFrame) -> pd.DataFrame:
+    """One sidecar's weekly forecasts: from each origin, for every series with a
+    training row, each week to its later target month's end."""
+    last_week = _calendar().groupby("fiscal_year_month")["ds"].max()
     error = 0.20 if model == BENCHMARK else 0.10
     rows = []
-    for origin, months in ORIGIN_TARGETS:
-        started = snapshot.loc[snapshot["ds"] <= origin, "unique_id"].unique()
-        for step, month in enumerate(months):
-            for index, series in enumerate(sorted(started)):
-                actual = actuals[(series, month)]
-                rows.append(
+    for fold, (origin, months) in enumerate(ORIGIN_TARGETS):
+        weeks = WEEKS[(WEEKS > origin) & (WEEKS <= last_week[months[-1]])]
+        train = snapshot[snapshot["ds"] <= origin]
+        for series, level in train.groupby("unique_id")["y"].last().items():
+            rows += [
+                {
+                    "forecast_origin_date": origin,
+                    "unique_id": series,
+                    "ds": week,
+                    "ypred": level * (1 + error + 0.01 * step),
+                    "fold_id": f"fold_{fold}",
+                }
+                for step, week in enumerate(weeks)
+            ]
+    return pd.DataFrame(rows)[backtest_impl._RAW_CV_FORECAST_COLUMNS]
+
+
+def _monthly_series(snapshot: pd.DataFrame, raw: pd.DataFrame) -> pd.DataFrame:
+    """One sidecar's monthly_series, assembled from its weekly forecasts and the
+    panel as backtest assembles each fold."""
+    calendar = _calendar()
+    actuals = compute_actual_monthly_totals(snapshot, calendar)
+    fraction = calendar.set_index("ds")["origin_month_fraction_elapsed"]
+    folds = []
+    for origin, _ in ORIGIN_TARGETS:
+        monthly = build_monthly_forecast_vs_actual(
+            forecast_df=raw[raw["forecast_origin_date"] == origin],
+            train_df=snapshot[snapshot["ds"] <= origin],
+            calendar_df=calendar,
+            actual_monthly_df=actuals,
+        )
+        series = sorted(monthly["unique_id"].unique())
+        folds.append(
+            attach_tier_and_weight(
+                monthly_rows_df=monthly,
+                tier_df=pd.DataFrame(
                     {
-                        "forecast_origin_date": origin,
-                        "predicted_fiscal_year_month": month,
                         "unique_id": series,
-                        "tier": TIER_LABELS[index % 2],
-                        "series_weight": float(index + 1),
-                        "monthly_forecast": actual * (1 + error + 0.01 * step),
-                        "actual_monthly_total": actual,
+                        "tier": [TIER_LABELS[i % 2] for i in range(len(series))],
                     }
-                )
-    return pd.DataFrame(rows)
+                ),
+                weight_df=pd.DataFrame(
+                    {
+                        "unique_id": series,
+                        "series_weight": [float(i + 1) for i in range(len(series))],
+                    }
+                ),
+                fold_origin=origin,
+                origin_month_fraction_elapsed=fraction[origin],
+            )
+        )
+    return pd.concat(folds, ignore_index=True)
 
 
-@pytest.fixture(scope="module")
-def per_series() -> pd.DataFrame:
-    """The producer's per_series_comparison over the panel with a late series."""
-    snapshot = _snapshot(SPANS)
+def _grid(snapshot: pd.DataFrame) -> line_grid.GridData:
+    """Every frame a facet reads, each through its producer, over `snapshot`."""
+    calendar = _calendar()
+    raw = {
+        role: _raw_cv_forecasts(model, snapshot) for role, model in ROLE_MODELS.items()
+    }
     identity = TrainRunIdentity(
         git_hash="0" * 40,
         feature_run_id="feature_run",
@@ -131,14 +183,30 @@ def per_series() -> pd.DataFrame:
         additional_exog_uri="gs://bucket/exog.parquet",
     )
     table = compute_evaluate_outputs(
-        challenger_ms=_monthly_series(CHALLENGER, snapshot),
-        benchmark_ms=_monthly_series(BENCHMARK, snapshot),
-        calendar_df=_calendar(),
+        challenger_ms=_monthly_series(snapshot, raw["challenger"]),
+        benchmark_ms=_monthly_series(snapshot, raw["benchmark"]),
+        calendar_df=calendar,
         challenger_model=CHALLENGER,
         benchmark_model=BENCHMARK,
         tier_labels=TIER_LABELS,
         identity=identity,
     ).per_series_comparison
+    weekly = line_grid.reindex_weeks(snapshot, calendar)
+    return line_grid.GridData(
+        calendar=calendar,
+        weekly=weekly,
+        monthly=line_grid.monthly_totals(weekly, calendar),
+        per_series_comparison=table,
+        raw_cv_forecasts=raw,
+        models=ROLE_MODELS,
+    )
+
+
+@pytest.fixture(scope="module")
+def grid() -> line_grid.GridData:
+    """The frames over the panel with a late series."""
+    data = _grid(_snapshot(SPANS))
+    table = data.per_series_comparison
     # Self-check: the late series has folds, none at the first origin, and one
     # predicting a month the first origin also predicts.
     late = table[table["unique_id"] == LATE]
@@ -148,7 +216,28 @@ def per_series() -> pd.DataFrame:
     assert set(late["predicted_fiscal_year_month"]) & set(
         first["predicted_fiscal_year_month"]
     )
-    return table
+    # Self-check: a monthly forecast is its month's weeks to the origin, actual,
+    # plus its forecast weeks, as backtest assembles it.
+    raw = data.raw_cv_forecasts["challenger"]
+    week_month = _calendar().set_index("ds")["fiscal_year_month"]
+    row = first[first["predicted_fiscal_year_month"] == 202403].iloc[0]
+    weekly = data.weekly[data.weekly["unique_id"] == row["unique_id"]]
+    observed = weekly[
+        (weekly["fiscal_year_month"] == 202403) & (weekly["ds"] <= FIRST_ORIGIN)
+    ]["y"].sum()
+    forecast = raw[
+        (raw["forecast_origin_date"] == FIRST_ORIGIN)
+        & (raw["unique_id"] == row["unique_id"])
+    ]
+    predicted = forecast[forecast["ds"].map(week_month) == 202403]["ypred"].sum()
+    assert row["monthly_forecast_ch"] == pytest.approx(observed + predicted)
+    return data
+
+
+@pytest.fixture(scope="module")
+def per_series(grid: line_grid.GridData) -> pd.DataFrame:
+    """The producer's per_series_comparison over the panel with a late series."""
+    return grid.per_series_comparison
 
 
 # ================================================
@@ -268,3 +357,316 @@ def test_a_series_without_a_fold_at_the_origin_is_left_out_of_global(
     assert points.set_index("predicted_fiscal_year_month")[
         "monthly_forecast_ch"
     ].tolist() == pytest.approx(expected.sum().tolist())
+
+
+# ================================================
+# one facet
+# ================================================
+
+HORIZONS = ("horizon_1", "horizon_2")
+GRAINS = (line_grid.MONTHLY, line_grid.WEEKLY)
+
+
+def _month_of(week: int) -> int:
+    """The fiscal month a week index falls in."""
+    return int(_calendar()["fiscal_year_month"].iloc[week])
+
+
+@pytest.fixture(scope="module")
+def gapped_grid() -> line_grid.GridData:
+    """The frames over the panel with time_series_a missing two weeks: a NaN one
+    before the first origin's target months and an absent one inside them."""
+    data = _grid(
+        _snapshot(
+            SPANS,
+            nan=frozenset({("time_series_a", HISTORY_GAP)}),
+            absent=frozenset({("time_series_a", WINDOW_GAP)}),
+        )
+    )
+    # Self-check: only the second gap falls in a month the first origin forecasts.
+    table = data.per_series_comparison
+    targets = set(
+        table.loc[
+            table["forecast_origin_date"] == FIRST_ORIGIN, "predicted_fiscal_year_month"
+        ]
+    )
+    assert _month_of(WINDOW_GAP) in targets
+    assert _month_of(HISTORY_GAP) not in targets
+    return data
+
+
+def _drawn(
+    data: line_grid.GridData, series: str, origin: pd.Timestamp, grain: str
+) -> go.Figure:
+    """One facet, alone in a figure."""
+    figure = make_subplots(rows=1, cols=1)
+    facet = line_grid.build_facet(data, series, origin, grain)
+    line_grid.add_facet(figure, facet, data.models, row=1, col=1, legend=True)
+    return figure
+
+
+def _forecasts(figure: go.Figure) -> dict[tuple[str, str], go.Scatter]:
+    """Each role's forecast trace per horizon, found by its legend name."""
+    return {
+        (role, horizon): trace
+        for role, model in ROLE_MODELS.items()
+        for horizon in HORIZONS
+        for trace in figure.select_traces(selector={"name": f"{model} {horizon}"})
+    }
+
+
+def _named(figure: go.Figure, name: str) -> list:
+    """The figure's annotations carrying `name`."""
+    return [
+        annotation
+        for annotation in figure.layout.annotations
+        if annotation.name == name
+    ]
+
+
+def _drawn_actual(figure: go.Figure) -> pd.DataFrame:
+    """The actual trace's points, with each one's fiscal month."""
+    (actual,) = figure.select_traces(selector={"name": line_grid.ACTUAL})
+    week_month = _calendar().set_index("ds")["fiscal_year_month"]
+    ds = pd.to_datetime(pd.Series(actual.x))
+    return pd.DataFrame(
+        {"ds": ds, "month": ds.map(week_month), "y": np.asarray(actual.y, dtype=float)}
+    )
+
+
+def _shape(trace: go.Scatter) -> str:
+    """A marker's symbol without its fill."""
+    return trace.marker.symbol.removesuffix("-open")
+
+
+def _is_open(trace: go.Scatter) -> bool:
+    """Whether a marker is drawn unfilled."""
+    return trace.marker.symbol.endswith("-open")
+
+
+@pytest.mark.parametrize("grain", GRAINS)
+def test_color_and_shape_carry_horizon_while_dash_and_fill_carry_the_model(
+    grid, grain: str
+) -> None:
+    """So each of the two dimensions has a channel besides color."""
+    traces = _forecasts(_drawn(grid, "time_series_a", FIRST_ORIGIN, grain))
+    # Self-check: both roles are drawn at both horizons.
+    assert set(traces) == {(role, h) for role in ROLE_MODELS for h in HORIZONS}
+    for horizon in HORIZONS:
+        challenger, benchmark = (
+            traces["challenger", horizon],
+            traces["benchmark", horizon],
+        )
+        colors = {challenger.marker.color, benchmark.marker.color}
+        assert colors == {challenger.line.color, benchmark.line.color}
+        assert len(colors) == 1
+        assert _shape(challenger) == _shape(benchmark)
+        assert challenger.line.dash != benchmark.line.dash
+        assert _is_open(benchmark) and not _is_open(challenger)
+    for role in ROLE_MODELS:
+        first, second = (traces[role, horizon] for horizon in HORIZONS)
+        assert first.marker.color != second.marker.color
+        assert _shape(first) != _shape(second)
+        assert first.line.dash == second.line.dash
+        assert _is_open(first) == _is_open(second)
+
+
+def test_each_benchmark_trace_is_drawn_after_its_challenger(grid) -> None:
+    """So the open ring lands on top of the filled dot it may coincide with."""
+    figure = _drawn(grid, "time_series_a", FIRST_ORIGIN, line_grid.WEEKLY)
+    position = {id(trace): index for index, trace in enumerate(figure.data)}
+    traces = _forecasts(figure)
+    for horizon in HORIZONS:
+        assert (
+            position[id(traces["benchmark", horizon])]
+            > position[id(traces["challenger", horizon])]
+        )
+
+
+def test_a_coincidence_reads_as_a_ring_around_a_dot(grid) -> None:
+    """The ring clears the dot's edge; at equal sizes the ring sits on that edge."""
+    traces = _forecasts(_drawn(grid, "time_series_a", FIRST_ORIGIN, line_grid.MONTHLY))
+    for horizon in HORIZONS:
+        dot = traces["challenger", horizon].marker
+        ring = traces["benchmark", horizon].marker
+        # A stroke straddles the marker's edge.
+        assert (ring.size - ring.line.width) / 2 > (dot.size + dot.line.width) / 2
+
+
+def _origin_rule(figure: go.Figure):
+    """The facet's one dash-dot rule."""
+    (rule,) = [shape for shape in figure.layout.shapes if shape.line.dash == "dashdot"]
+    return rule
+
+
+@pytest.mark.parametrize("grain", GRAINS)
+def test_the_origin_rule_sits_at_the_origin_date(grid, grain: str) -> None:
+    """At full height, so its gap to horizon_1's month end is the month to date."""
+    rule = _origin_rule(_drawn(grid, "time_series_a", FIRST_ORIGIN, grain))
+    assert pd.Timestamp(rule.x0) == pd.Timestamp(rule.x1) == FIRST_ORIGIN
+    assert (rule.y0, rule.y1, rule.yref) == (0, 1, "y domain")
+
+
+def test_the_rules_draw_opaque(grid) -> None:
+    """The page's template draws every shape at 0.3, which all but hides a rule."""
+    figure = _drawn(grid, "time_series_a", FIRST_ORIGIN, line_grid.WEEKLY)
+    figure.update_layout(**axes.base_layout())
+    shapes = figure.full_figure_for_development(warn=False).layout.shapes
+    # Self-check: the month boundary's tick is drawn beside the origin rule.
+    assert len(shapes) > 1
+    assert all(shape.opacity == 1 for shape in shapes)
+
+
+def test_a_weekly_run_changes_color_midway_into_its_next_month(
+    grid, per_series
+) -> None:
+    """Each week wears its own month's horizon, and the line turns where the tick is."""
+    at_origin = per_series[per_series["forecast_origin_date"] == FIRST_ORIGIN]
+    horizon_of = (
+        at_origin.drop_duplicates("predicted_fiscal_year_month")
+        .set_index("predicted_fiscal_year_month")["horizon"]
+        .astype(str)
+    )
+    calendar = _calendar()
+    week_month = calendar.set_index("ds")["fiscal_year_month"]
+    earlier, later = dict(ORIGIN_TARGETS)[FIRST_ORIGIN]
+    last = calendar.loc[calendar["fiscal_year_month"] == earlier, "ds"].max()
+    first = calendar.loc[calendar["fiscal_year_month"] == later, "ds"].min()
+    boundary = last + (first - last) / 2
+
+    figure = _drawn(grid, "time_series_a", FIRST_ORIGIN, line_grid.WEEKLY)
+    for (_, horizon), trace in _forecasts(figure).items():
+        months = pd.to_datetime(pd.Series(trace.x)).map(week_month)
+        assert {horizon_of[month] for month in months} == {horizon}
+    bridges = [trace for trace in figure.data if trace.hoverinfo == "skip"]
+    # Self-check: the run crosses the boundary, so there are halves on both sides.
+    assert {horizon_of[week_month[pd.Timestamp(b.x[0])]] for b in bridges} == set(
+        HORIZONS
+    )
+    for bridge in bridges:
+        side = horizon_of[week_month[pd.Timestamp(bridge.x[0])]]
+        assert pd.Timestamp(bridge.x[-1]) == boundary
+        assert bridge.line.color == palette.rgba(palette.HORIZON_COLOR[side])
+    # Each role's halves meet midway along the straight segment between the weeks.
+    traces = _forecasts(figure)
+    for role in ROLE_MODELS:
+        before, after = (traces[role, horizon] for horizon in HORIZONS)
+        halves = [b for b in bridges if b.line.dash == before.line.dash]
+        middle = (before.y[-1] + after.y[0]) / 2
+        assert [b.y[-1] for b in halves] == pytest.approx([middle] * len(halves))
+    (tick,) = [shape for shape in figure.layout.shapes if shape.line.dash != "dashdot"]
+    assert pd.Timestamp(tick.x0) == boundary
+
+
+def test_a_monthly_forecast_is_its_points_alone(grid) -> None:
+    """An origin predicts two months and nothing between them, so no line joins them."""
+    figure = _drawn(grid, "time_series_a", FIRST_ORIGIN, line_grid.MONTHLY)
+    # Self-check: both horizons are drawn, so a bridge would have two months to join.
+    assert {horizon for _, horizon in _forecasts(figure)} == set(HORIZONS)
+    assert not [trace for trace in figure.data if trace.hoverinfo == "skip"]
+    assert len(figure.layout.shapes) == 1
+
+
+@pytest.mark.parametrize("grain", GRAINS)
+def test_an_empty_intersection_draws_the_history_and_says_why(grid, grain: str) -> None:
+    """A series with no fold at the origin, which an empty frame shows as broken."""
+    # Self-check: the late series has history but no fold at the first origin.
+    assert LATE not in line_grid.fold_set(grid.per_series_comparison, FIRST_ORIGIN)
+    facet = line_grid.build_facet(grid, LATE, FIRST_ORIGIN, grain)
+    assert facet.forecast.empty
+    assert line_grid.NO_FORECAST in facet.notes
+
+    figure = _drawn(grid, LATE, FIRST_ORIGIN, grain)
+    assert _drawn_actual(figure)["y"].notna().any()
+    assert not _forecasts(figure)
+    (note,) = _named(figure, line_grid.NOTE_ANNOTATION)
+    assert line_grid.NO_FORECAST in note.text
+
+
+@pytest.mark.parametrize("series", ["time_series_a", line_grid.GLOBAL])
+@pytest.mark.parametrize("grain", GRAINS)
+def test_a_gapped_month_draws_no_point_and_the_note_names_it(
+    gapped_grid, grain: str, series: str
+) -> None:
+    """Before the target months and inside them, where the note also says why."""
+    figure = _drawn(gapped_grid, series, FIRST_ORIGIN, grain)
+    drawn = _drawn_actual(figure)
+    for week in (HISTORY_GAP, WINDOW_GAP):
+        if grain == line_grid.MONTHLY:
+            at = drawn[drawn["month"] == _month_of(week)]
+        else:
+            at = drawn[drawn["ds"] == WEEKS[week]]
+        # Present and missing, so the line breaks there rather than bridging it.
+        assert len(at) == 1
+        assert at["y"].isna().all()
+    (note,) = _named(figure, line_grid.NOTE_ANNOTATION)
+    assert str(_month_of(HISTORY_GAP)) in note.text
+    assert f"{_month_of(WINDOW_GAP)} scored against a short total" in note.text
+    assert ("a member" in note.text) == (series == line_grid.GLOBAL)
+
+
+def test_the_notes_sit_above_the_plot_under_the_title(gapped_grid) -> None:
+    """On a header line of their own, so no note covers data."""
+    figure = _drawn(gapped_grid, "time_series_a", FIRST_ORIGIN, line_grid.MONTHLY)
+    (note,) = _named(figure, line_grid.NOTE_ANNOTATION)
+    (title,) = _named(figure, line_grid.TITLE_ANNOTATION)
+    assert note.yref.endswith("domain")
+    assert note.y >= 1
+    assert note.yanchor == "bottom"
+    assert (title.yshift or 0) > (note.yshift or 0)
+
+
+def test_globals_title_prints_its_fold_set_size(grid) -> None:
+    """Membership moves with the origin, so the title says how many series it sums."""
+    sizes = {
+        origin: len(line_grid.fold_set(grid.per_series_comparison, origin))
+        for origin, _ in ORIGIN_TARGETS
+    }
+    # Self-check: the two origins' fold sets differ in size.
+    assert len(set(sizes.values())) == len(sizes)
+    for origin, size in sizes.items():
+        facet = line_grid.build_facet(grid, line_grid.GLOBAL, origin, line_grid.MONTHLY)
+        assert f"({size} series" in facet.title
+
+
+@pytest.mark.parametrize("series", ["time_series_a", line_grid.GLOBAL])
+def test_a_weekly_forecast_sums_the_facets_members(grid, series: str) -> None:
+    """One series' own weeks, or each week summed over global's fold set."""
+    members = (
+        line_grid.fold_set(grid.per_series_comparison, FIRST_ORIGIN)
+        if series == line_grid.GLOBAL
+        else (series,)
+    )
+    # Self-check: global sums more than one series here.
+    assert len(line_grid.fold_set(grid.per_series_comparison, FIRST_ORIGIN)) > 1
+    facet = line_grid.build_facet(grid, series, FIRST_ORIGIN, line_grid.WEEKLY)
+    for role, raw in grid.raw_cv_forecasts.items():
+        weeks = raw[raw["forecast_origin_date"] == FIRST_ORIGIN].pivot(
+            index="ds", columns="unique_id", values="ypred"
+        )
+        expected = weeks[list(members)].sum(axis=1)
+        assert facet.forecast[role].tolist() == pytest.approx(expected.tolist())
+
+
+def test_a_late_member_adds_to_global_weekly_only_from_its_first_week(grid) -> None:
+    """Before it, global's weeks are the other members' sum, with nothing missing."""
+    # Self-check: the late series is a member at the second origin.
+    assert LATE in line_grid.fold_set(grid.per_series_comparison, SECOND_ORIGIN)
+    facet = line_grid.build_facet(
+        grid, line_grid.GLOBAL, SECOND_ORIGIN, line_grid.WEEKLY
+    )
+    total = facet.actual.set_index("ds")["y"]
+    weeks = grid.weekly.pivot(index="ds", columns="unique_id", values="y")
+    before, start = WEEKS[SPANS[LATE].start - 1], WEEKS[SPANS[LATE].start]
+    assert total[before] == pytest.approx(weeks.loc[before].drop(LATE).sum())
+    assert total[start] == pytest.approx(weeks.loc[start].sum())
+
+
+def test_a_missing_week_in_one_member_leaves_globals_week_missing(gapped_grid) -> None:
+    """Its true total is unknown, whatever the other members hold."""
+    facet = line_grid.build_facet(
+        gapped_grid, line_grid.GLOBAL, FIRST_ORIGIN, line_grid.WEEKLY
+    )
+    total = facet.actual.set_index("ds")["y"]
+    assert np.isnan(total[WEEKS[HISTORY_GAP]])
+    assert np.isfinite(total[WEEKS[HISTORY_GAP + 1]])
