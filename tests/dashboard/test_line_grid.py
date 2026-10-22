@@ -158,12 +158,12 @@ def _monthly_series(snapshot: pd.DataFrame, raw: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(folds, ignore_index=True)
 
 
-def _grid(snapshot: pd.DataFrame) -> line_grid.GridData:
+def _grid(
+    snapshot: pd.DataFrame, models: dict[str, str] = ROLE_MODELS
+) -> line_grid.GridData:
     """Every frame a facet reads, each through its producer, over `snapshot`."""
     calendar = _calendar()
-    raw = {
-        role: _raw_cv_forecasts(model, snapshot) for role, model in ROLE_MODELS.items()
-    }
+    raw = {role: _raw_cv_forecasts(model, snapshot) for role, model in models.items()}
     identity = TrainRunIdentity(
         git_hash="0" * 40,
         feature_run_id="feature_run",
@@ -176,8 +176,8 @@ def _grid(snapshot: pd.DataFrame) -> line_grid.GridData:
         challenger_ms=_monthly_series(snapshot, raw["challenger"]),
         benchmark_ms=_monthly_series(snapshot, raw["benchmark"]),
         calendar_df=calendar,
-        challenger_model=CHALLENGER,
-        benchmark_model=BENCHMARK,
+        challenger_model=models["challenger"],
+        benchmark_model=models["benchmark"],
         tier_labels=TIER_LABELS,
         identity=identity,
     ).per_series_comparison
@@ -188,7 +188,7 @@ def _grid(snapshot: pd.DataFrame) -> line_grid.GridData:
         monthly=line_grid.monthly_totals(weekly, calendar),
         per_series_comparison=table,
         raw_cv_forecasts=raw,
-        models=ROLE_MODELS,
+        models=models,
     )
 
 
@@ -801,6 +801,20 @@ def test_the_legend_names_each_trace_once(grid) -> None:
     drawn = {trace.name for trace in figure.data if trace.name}
     assert sorted(shown) == sorted(set(shown))
     assert set(shown) == drawn
+
+
+def test_one_model_in_both_roles_names_each_role() -> None:
+    """Named alike, the legend drops the benchmark's line and the tooltips match."""
+    data = _grid(_snapshot(SPANS), dict.fromkeys(line_grid.ROLES, CHALLENGER))
+    table = data.per_series_comparison
+    # Self-check: one model's forecast, scored in both roles.
+    assert table["monthly_forecast_ch"].equals(table["monthly_forecast_bm"])
+    shown = [trace for trace in _grid_figure(data).data if trace.showlegend]
+    for role in line_grid.ROLES:
+        for horizon in HORIZONS:
+            (entry,) = [t for t in shown if t.legendgroup == f"{role} {horizon}"]
+            assert f"({role})" in entry.name
+            assert f"({role})" in entry.hovertemplate
 
 
 def test_the_default_selection_is_the_first_series_at_the_last_origin(

@@ -293,6 +293,11 @@ def add_facet(
     """
     when = _WHEN[facet.grain]
     changes = _month_changes(facet.forecast) if facet.grain == WEEKLY else []
+    # One model in both roles would name both lines alike, and the legend keeps one.
+    shared = models["challenger"] == models["benchmark"]
+    labels = {
+        role: f"{models[role]} ({role})" if shared else models[role] for role in ROLES
+    }
     figure.add_trace(_actual_line(facet.actual, when), row=row, col=col)
     for change in changes:
         for trace in _bridges(*change):
@@ -301,7 +306,7 @@ def add_facet(
         points = facet.forecast[facet.forecast["horizon"] == horizon]
         for role in ROLES:
             figure.add_trace(
-                _forecast_line(points, horizon, role, models[role], when),
+                _forecast_line(points, horizon, role, labels[role], when),
                 row=row,
                 col=col,
             )
@@ -489,17 +494,17 @@ def _forecast_line(
     points: pd.DataFrame,
     horizon: str,
     role: str,
-    model: str,
+    label: str,
     when: str,
 ) -> go.Scatter:
-    """One role's forecast for one horizon: color and shape carry the horizon,
-    dash and fill the role."""
+    """One role's forecast for one horizon, named `label`: color and shape carry
+    the horizon, dash and fill the role."""
     color = palette.rgba(palette.HORIZON_COLOR[horizon])
     return go.Scatter(
         x=points["ds"],
         y=points[role],
         mode="lines+markers",
-        name=f"{model} {horizon}",
+        name=f"{label} {horizon}",
         legendgroup=f"{role} {horizon}",
         showlegend=True,
         line={"color": color, "width": _LINE_WIDTH, "dash": _DASH[role]},
@@ -510,7 +515,7 @@ def _forecast_line(
             "line": {"color": color, "width": _MARKER_STROKE[role]},
         },
         customdata=points[["fiscal_year_month"]],
-        hovertemplate=f"{model} {horizon}<br>{when}<br>%{{y:,.0f}}<extra></extra>",
+        hovertemplate=f"{label} {horizon}<br>{when}<br>%{{y:,.0f}}<extra></extra>",
     )
 
 
