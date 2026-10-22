@@ -171,6 +171,33 @@ def dormant() -> pd.DataFrame:
 
 
 @pytest.fixture(scope="module")
+def exact_low(per_series) -> pd.DataFrame:
+    """The table again, the challenger exact on every horizon_1 row of the lowest
+    tier, so on log-log that tier draws in the horizon_2 facet alone."""
+    keys = ["forecast_origin_date", "predicted_fiscal_year_month", "unique_id"]
+    horizon_1 = per_series.loc[per_series["horizon"] == "horizon_1", keys]
+    challenger = _monthly_series(CHALLENGER)
+    in_horizon_1 = challenger.merge(horizon_1, on=keys, how="left", indicator=True)
+    exact = (in_horizon_1["_merge"] == "both").to_numpy() & (
+        challenger["tier"] == TIER_LABELS[0]
+    ).to_numpy()
+    challenger.loc[exact, "monthly_forecast"] = challenger.loc[
+        exact, "actual_monthly_total"
+    ]
+    table = _evaluate(challenger, _monthly_series(BENCHMARK)).per_series_comparison
+    # Self-check: the lowest tier's horizon_1 shares are all zero, and some of its
+    # horizon_2 shares are drawable on log axes.
+    shares = contribution.horizon_shares(table, TIER_LABELS)
+    first, second = (
+        shares[horizon][shares[horizon]["tier"] == TIER_LABELS[0]]
+        for horizon in ("horizon_1", "horizon_2")
+    )
+    assert (first["y"] == 0).all()
+    assert ((second["x"] > 0) & (second["y"] > 0)).any()
+    return table
+
+
+@pytest.fixture(scope="module")
 def per_series(outputs) -> pd.DataFrame:
     """The table the panel reads, with its hazards checked."""
     frame = outputs.per_series_comparison
@@ -396,6 +423,19 @@ def test_log_log_leaves_out_zero_shares_and_counts_them(dormant) -> None:
         shares = _shares(dormant, horizon)
         zero_shares.append(int(((shares["x"] == 0) | (shares["y"] == 0)).sum()))
     assert [int(note.split()[0]) for note in notes] == zero_shares
+
+
+def test_a_tier_drawn_in_horizon_2_alone_enters_the_legend_in_order(
+    exact_low,
+) -> None:
+    """Its legend entry moves to the first trace drawn, and keeps its tier's place."""
+    figure = _figure(exact_low, log_log=True)
+    shown = [trace for trace in figure.data if trace.showlegend]
+    assert sorted(trace.name for trace in shown) == sorted(TIER_LABELS)
+    rank = {trace.name: trace.legendrank for trace in shown}
+    ranks = [rank[tier] for tier in TIER_LABELS]
+    assert None not in ranks
+    assert ranks == sorted(set(ranks))
 
 
 def test_a_nan_share_is_not_noted_as_a_zero(perfect_horizon_1) -> None:

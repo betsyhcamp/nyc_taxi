@@ -106,19 +106,29 @@ def contribution_figure(
     figure = make_subplots(
         rows=1, cols=len(horizons), subplot_titles=horizons, horizontal_spacing=0.08
     )
+    # A tier's legend entry goes on its first drawn trace: on log-log, a tier whose
+    # horizon_1 shares are all zero draws in horizon_2 alone.
+    shown = set()
     for column, horizon in enumerate(horizons, start=1):
         frame = shares[horizon]
         # Exact zeros only: a nan share is not drawn on either scale, and is no zero.
         zero = (frame["x"] == 0) | (frame["y"] == 0)
         drawn = frame[~zero] if log_log else frame
-        for tier in tier_labels:
+        for rank, tier in enumerate(tier_labels):
             points = drawn[drawn["tier"] == tier]
             if not points.empty:
                 figure.add_trace(
-                    _tier_marks(points, tier, encoding[tier], legend=column == 1),
+                    _tier_marks(
+                        points,
+                        tier,
+                        encoding[tier],
+                        rank=rank,
+                        legend=tier not in shown,
+                    ),
                     row=1,
                     col=column,
                 )
+                shown.add(tier)
         figure.add_shape(
             type="line",
             x0=bottom,
@@ -250,6 +260,7 @@ def _tier_marks(
     tier: str,
     color_symbol: tuple[str, str],
     *,
+    rank: int,
     legend: bool,
 ) -> go.Scatter:
     """One tier's series in one facet. Open symbols, so overlapping series stay
@@ -263,6 +274,8 @@ def _tier_marks(
         name=tier,
         legendgroup=tier,
         showlegend=legend,
+        # Tier order; Plotly otherwise orders the legend by first appearance.
+        legendrank=rank,
         marker={
             "symbol": symbol,
             "size": _MARKER_SIZE,
