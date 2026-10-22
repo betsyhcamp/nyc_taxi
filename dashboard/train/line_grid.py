@@ -428,7 +428,7 @@ def _notes(
     scored = [str(month) for month in gapped if month in window]
     parts = [", ".join(history)] if history else []
     if scored:
-        parts.append(f"{', '.join(scored)} scored against a short total, so not drawn")
+        parts.append(f"{', '.join(scored)} scored against a short total")
     missing = "a member is missing a week" if pooled else "missing a week"
     notes = [] if len(forecast) else [NO_FORECAST]
     if parts:

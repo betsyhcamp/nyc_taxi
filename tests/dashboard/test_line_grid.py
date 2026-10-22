@@ -593,6 +593,11 @@ def test_a_gapped_month_draws_no_point_and_the_note_names_it(
     assert str(_month_of(HISTORY_GAP)) in note.text
     assert f"{_month_of(WINDOW_GAP)} scored against a short total" in note.text
     assert ("a member" in note.text) == (series == line_grid.GLOBAL)
+    if grain == line_grid.WEEKLY:
+        # The month's other weeks are drawn, so the note must not say otherwise.
+        month = drawn[drawn["month"] == _month_of(WINDOW_GAP)]
+        assert month["y"].notna().any()
+        assert "not drawn" not in note.text
 
 
 def test_the_notes_sit_above_the_plot_under_the_title(gapped_grid) -> None:
