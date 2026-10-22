@@ -280,7 +280,6 @@ def add_facet(
     *,
     row: int,
     col: int,
-    legend: bool,
 ) -> None:
     """Draw one facet: the actual, then each horizon's challenger and benchmark,
     the open benchmark last so a coincidence reads as a ring around a dot.
@@ -291,11 +290,10 @@ def add_facet(
         models: Each role's model name, for the legend and tooltips.
         row: The facet's row in `figure`.
         col: Its column.
-        legend: Whether its traces enter the legend.
     """
     when = _WHEN[facet.grain]
     changes = _month_changes(facet.forecast) if facet.grain == WEEKLY else []
-    figure.add_trace(_actual_line(facet.actual, when, legend=legend), row=row, col=col)
+    figure.add_trace(_actual_line(facet.actual, when), row=row, col=col)
     for change in changes:
         for trace in _bridges(*change):
             figure.add_trace(trace, row=row, col=col)
@@ -303,9 +301,7 @@ def add_facet(
         points = facet.forecast[facet.forecast["horizon"] == horizon]
         for role in ROLES:
             figure.add_trace(
-                _forecast_line(
-                    points, horizon, role, models[role], when, legend=legend
-                ),
+                _forecast_line(points, horizon, role, models[role], when),
                 row=row,
                 col=col,
             )
@@ -472,7 +468,7 @@ def _bridges(
     return bridges
 
 
-def _actual_line(actual: pd.DataFrame, when: str, *, legend: bool) -> go.Scatter:
+def _actual_line(actual: pd.DataFrame, when: str) -> go.Scatter:
     """The actual, its marker small enough that dense weeks merge into the line."""
     color = palette.rgba(palette.ACTUAL_INK)
     return go.Scatter(
@@ -481,7 +477,7 @@ def _actual_line(actual: pd.DataFrame, when: str, *, legend: bool) -> go.Scatter
         mode="lines+markers",
         name=ACTUAL,
         legendgroup=ACTUAL,
-        showlegend=legend,
+        showlegend=True,
         line={"color": color, "width": _LINE_WIDTH},
         marker={"size": _ACTUAL_MARKER, "color": color},
         customdata=actual[["fiscal_year_month"]],
@@ -495,8 +491,6 @@ def _forecast_line(
     role: str,
     model: str,
     when: str,
-    *,
-    legend: bool,
 ) -> go.Scatter:
     """One role's forecast for one horizon: color and shape carry the horizon,
     dash and fill the role."""
@@ -507,7 +501,7 @@ def _forecast_line(
         mode="lines+markers",
         name=f"{model} {horizon}",
         legendgroup=f"{role} {horizon}",
-        showlegend=legend,
+        showlegend=True,
         line={"color": color, "width": _LINE_WIDTH, "dash": _DASH[role]},
         marker={
             "symbol": f"{palette.HORIZON_MARKER[horizon]}{_FILL[role]}",
@@ -585,7 +579,7 @@ def grid_figure(
     facets = [build_facet(data, series, origin, grain) for series, origin in selections]
     for index, facet in enumerate(facets):
         row, col = divmod(index, COLS)
-        add_facet(figure, facet, data.models, row=row + 1, col=col + 1, legend=True)
+        add_facet(figure, facet, data.models, row=row + 1, col=col + 1)
     named = set()
     for trace in figure.data:
         trace.showlegend = trace.showlegend and trace.name not in named

@@ -402,7 +402,7 @@ def _drawn(
     """One facet, alone in a figure."""
     figure = make_subplots(rows=1, cols=1)
     facet = line_grid.build_facet(data, series, origin, grain)
-    line_grid.add_facet(figure, facet, data.models, row=1, col=1, legend=True)
+    line_grid.add_facet(figure, facet, data.models, row=1, col=1)
     return figure
 
 
