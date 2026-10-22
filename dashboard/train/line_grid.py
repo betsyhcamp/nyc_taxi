@@ -756,12 +756,12 @@ def _visible(facet: Facet, start: pd.Timestamp) -> pd.Series:
 
 def _y_range(values: pd.Series) -> list | None:
     """A padded range over `values`, or 0 to `_FLAT_HEADROOM` of a lone repeated
-    one. None, leaving Plotly's, when there is no nonzero value to scale by."""
+    one. Measured: Plotly widens the zero case's `[0, 0]` to -1 to 1."""
     if values.empty:
         return None
     low, high = values.min(), values.max()
     if low == high:
-        return sorted([0.0, _FLAT_HEADROOM * high]) if high else None
+        return sorted([0.0, _FLAT_HEADROOM * high])
     return _padded(low, high)
 
 

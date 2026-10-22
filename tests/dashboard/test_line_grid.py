@@ -799,6 +799,38 @@ def test_a_facet_of_one_repeated_value_runs_from_zero(grid) -> None:
     assert all(axis.range is None for axis in _axes(figure, "yaxis")[1:])
 
 
+def test_a_negative_flat_range_runs_up_to_zero() -> None:
+    """Revenue can fall below zero, and the range must still ascend."""
+    low, high = line_grid._y_range(pd.Series([-5.0, -5.0]))
+    assert low < high
+    assert low <= -5.0 <= high
+    assert low <= 0.0 <= high
+
+
+def test_a_window_of_zeros_fits_y_to_them_not_to_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Left to Plotly, a facet at 0 in view scales to its history out of view."""
+    snapshot = _snapshot(SPANS)
+    dormant = (snapshot["unique_id"] == "time_series_a") & (snapshot["ds"] >= WEEKS[3])
+    snapshot.loc[dormant, "y"] = 0.0
+    monkeypatch.setattr(line_grid, "_HISTORY", pd.Timedelta(weeks=4))
+    data = _grid(snapshot)
+    start = FIRST_ORIGIN - line_grid._HISTORY
+    facet = line_grid.build_facet(
+        data, "time_series_a", FIRST_ORIGIN, line_grid.MONTHLY
+    )
+    history = facet.actual.loc[facet.actual["ds"] < start, "y"].dropna()
+    # Self-check: every value in view is 0, and the history out of view is not.
+    assert set(line_grid._visible(facet, start)) == {0.0}
+    assert history.min() > 0
+    figure = _grid_figure(
+        data, [("time_series_a", FIRST_ORIGIN), *SIX[1:]], window=True
+    )
+    (resolved,) = _axes(figure.full_figure_for_development(warn=False), "yaxis")[:1]
+    assert resolved.range[1] < history.min()
+
+
 def test_the_legend_names_each_trace_once(grid) -> None:
     """Six facets draw each series six times; the legend lists it once."""
     figure = _grid_figure(grid)
