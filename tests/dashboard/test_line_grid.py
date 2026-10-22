@@ -863,3 +863,111 @@ def test_each_grid_takes_its_own_grain(grid) -> None:
     assert not app.exception, app.exception[0].message if app.exception else ""
     assert _actual_points(app, 1) > monthly
     assert _actual_points(app, 2) == monthly
+
+
+# ================================================
+# the selectors
+# ================================================
+
+FACETS = range(1, line_grid.ROWS * line_grid.COLS + 1)
+
+
+def _selected(app, grid: int, facet: int) -> tuple:
+    """One facet's series and origin as its selectors hold them."""
+    return tuple(
+        app.selectbox(key=line_grid.selection_key(grid, facet, kind)).value
+        for kind in ("series", "origin")
+    )
+
+
+def _titles(app, grid: int) -> list[str]:
+    """Grid `grid`'s facet titles, in facet order."""
+    import json
+
+    layout = json.loads(app.get("plotly_chart")[grid - 1].proto.spec)["layout"]
+    return [
+        annotation["text"]
+        for annotation in layout["annotations"]
+        if annotation.get("name") == line_grid.TITLE_ANNOTATION
+    ]
+
+
+def test_every_selector_opens_on_the_first_series_at_the_last_origin(grid) -> None:
+    """All twelve facets of both grids, until one is chosen."""
+    app = AppTest.from_function(_line_grid_page, args=(grid,)).run()
+    assert not app.exception, app.exception[0].message if app.exception else ""
+    expected = line_grid.default_selection(grid.per_series_comparison)
+    for index in range(1, line_grid.GRIDS + 1):
+        assert all(_selected(app, index, facet) == expected for facet in FACETS)
+
+
+def test_global_leads_the_series_and_the_latest_origin_leads_the_origins(grid) -> None:
+    """Where 800 series cannot bury global, and the default origin is on top."""
+    app = AppTest.from_function(_line_grid_page, args=(grid,)).run()
+    series = app.selectbox(key=line_grid.selection_key(1, 1, "series")).options
+    origins = app.selectbox(key=line_grid.selection_key(1, 1, "origin")).options
+    assert series[0] == line_grid.GLOBAL
+    assert origins == sorted(origins, reverse=True)
+    # Self-check: the run has more than one origin, so the order is visible.
+    assert len(origins) > 1
+
+
+def test_each_facet_draws_its_own_selection(grid) -> None:
+    """Facet 2's selector reaches facet 2 alone."""
+    app = AppTest.from_function(_line_grid_page, args=(grid,)).run()
+    app.selectbox(key=line_grid.selection_key(1, 2, "series")).set_value(
+        "time_series_b"
+    ).run()
+    assert not app.exception, app.exception[0].message if app.exception else ""
+    titles = _titles(app, 1)
+    # Self-check: the default series is another one.
+    assert titles[0] != "time_series_b"
+    assert titles[1] == "time_series_b"
+    assert titles[2:] == [titles[0]] * (len(titles) - 2)
+
+
+def test_the_copy_button_copies_facet_1_into_its_own_grid_only(grid) -> None:
+    """Grid 1's other facets take facet 1's series and origin; grid 2 keeps its own."""
+    app = AppTest.from_function(_line_grid_page, args=(grid,)).run()
+    chosen = (line_grid.GLOBAL, FIRST_ORIGIN)
+    for kind, value in zip(("series", "origin"), chosen, strict=True):
+        app.selectbox(key=line_grid.selection_key(1, 1, kind)).set_value(value).run()
+    untouched = _selected(app, 2, 1)
+    # Self-check: the choice differs from the defaults the other facets hold.
+    assert untouched != chosen
+    app.button(key=line_grid.copy_key(1)).click().run()
+    assert not app.exception, app.exception[0].message if app.exception else ""
+    assert all(_selected(app, 1, facet) == chosen for facet in FACETS)
+    assert all(_selected(app, 2, facet) == untouched for facet in FACETS)
+
+
+def test_globals_label_prints_its_series_at_the_chosen_origin(grid) -> None:
+    """The fold set moves with the origin, and the label shows by how much."""
+    app = AppTest.from_function(_line_grid_page, args=(grid,)).run()
+    labels = {}
+    for origin in (FIRST_ORIGIN, SECOND_ORIGIN):
+        app.selectbox(key=line_grid.selection_key(1, 1, "series")).set_value(
+            line_grid.GLOBAL
+        ).run()
+        app.selectbox(key=line_grid.selection_key(1, 1, "origin")).set_value(
+            origin
+        ).run()
+        labels[origin] = _titles(app, 1)[0]
+        size = len(line_grid.fold_set(grid.per_series_comparison, origin))
+        assert f"({size} series at this origin)" in labels[origin]
+    # Self-check: the two origins' fold sets differ, so N had to move.
+    assert len(set(labels.values())) == len(labels)
+
+
+def test_a_selection_this_run_lacks_falls_back_to_the_default(grid) -> None:
+    """Session state outlives a run switch; an origin the new run lacks would raise."""
+    app = AppTest.from_function(_line_grid_page, args=(grid,))
+    app.session_state[line_grid.selection_key(1, 1, "origin")] = pd.Timestamp(
+        "1999-01-03"
+    )
+    app.session_state[line_grid.selection_key(1, 1, "series")] = "time_series_z"
+    app.run()
+    assert not app.exception, app.exception[0].message if app.exception else ""
+    assert _selected(app, 1, 1) == line_grid.default_selection(
+        grid.per_series_comparison
+    )

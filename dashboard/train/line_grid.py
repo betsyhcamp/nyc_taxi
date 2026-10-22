@@ -627,13 +627,22 @@ def grid_figure(
 
 
 def render_line_grids(data: GridData) -> None:
-    """Both grids in a collapsed expander, each under its own grain, y-axis and
-    window radios."""
-    selection = default_selection(data.per_series_comparison)
+    """Both grids in a collapsed expander. Each has its own grain, y-axis and
+    window radios, a copy button, and a series and an origin selector per facet,
+    laid out as the facets are."""
+    comparison = data.per_series_comparison
+    choices = {
+        "series": series_options(comparison),
+        "origin": origin_options(comparison),
+    }
+    defaults = dict(zip(choices, default_selection(comparison), strict=True))
     with st.expander(EXPANDER, expanded=False):
         for grid in range(1, GRIDS + 1):
+            _keep_selections_in_this_run(grid, choices, defaults)
             st.markdown(f"**Grid {grid}**")
-            grain_column, y_column, window_column = st.columns(3)
+            grain_column, y_column, window_column, copy_column = st.columns(
+                [1, 1, 1.2, 1.2]
+            )
             grain = grain_column.radio(
                 "grain", GRAINS, horizontal=True, key=grain_key(grid)
             )
@@ -643,14 +652,49 @@ def render_line_grids(data: GridData) -> None:
             extent = window_column.radio(
                 "x-axis", WINDOWS, horizontal=True, key=window_key(grid)
             )
+            copy_column.button(
+                "Copy facet 1's selections to the rest",
+                key=copy_key(grid),
+                on_click=_copy_first_facet,
+                args=(grid,),
+            )
+            selections = []
+            for row in range(ROWS):
+                for col, cell in enumerate(st.columns(COLS)):
+                    facet = row * COLS + col + 1
+                    series_column, origin_column = cell.columns(2)
+                    series = series_column.selectbox(
+                        f"facet {facet}: series",
+                        choices["series"],
+                        format_func=str,
+                        key=selection_key(grid, facet, "series"),
+                    )
+                    origin = origin_column.selectbox(
+                        f"facet {facet}: origin",
+                        choices["origin"],
+                        format_func=_origin_label,
+                        key=selection_key(grid, facet, "origin"),
+                    )
+                    selections.append((series, origin))
             figure = grid_figure(
                 data,
-                [selection] * (ROWS * COLS),
+                selections,
                 grain,
                 shared_y=y_scale == "shared",
                 window=extent == "backtest window",
             )
             st.plotly_chart(figure, width="stretch", key=f"{_KEY}_{grid}_chart")
+
+
+def series_options(per_series_comparison: pd.DataFrame) -> list:
+    """`global` first, where a long list cannot bury it, then each in sorted order."""
+    return [GLOBAL, *sorted(per_series_comparison["unique_id"].unique())]
+
+
+def origin_options(per_series_comparison: pd.DataFrame) -> list[pd.Timestamp]:
+    """The run's origins, latest first, so the default leads."""
+    origins = pd.to_datetime(per_series_comparison["forecast_origin_date"].unique())
+    return sorted(origins, reverse=True)
 
 
 def grain_key(grid: int) -> str:
@@ -666,6 +710,43 @@ def y_key(grid: int) -> str:
 def window_key(grid: int) -> str:
     """The widget key of a grid's x-axis radio."""
     return f"{_KEY}_{grid}_window"
+
+
+def copy_key(grid: int) -> str:
+    """The widget key of a grid's copy button."""
+    return f"{_KEY}_{grid}_copy"
+
+
+def selection_key(grid: int, facet: int, kind: str) -> str:
+    """The widget key of one facet's `series` or `origin` selector."""
+    return f"{_KEY}_{grid}_{facet}_{kind}"
+
+
+def _keep_selections_in_this_run(
+    grid: int, choices: dict[str, list], defaults: dict[str, object]
+) -> None:
+    """Default each selection the run's choices lack, as on first draw or after a
+    run switch. Set here, not as an index, so the copy button can write the keys."""
+    for facet in range(1, ROWS * COLS + 1):
+        for kind, options in choices.items():
+            key = selection_key(grid, facet, kind)
+            if st.session_state.get(key) not in options:
+                st.session_state[key] = defaults[kind]
+
+
+def _copy_first_facet(grid: int) -> None:
+    """Facet 1's series and origin into the grid's other facets, run before the
+    widgets draw again."""
+    for facet in range(2, ROWS * COLS + 1):
+        for kind in ("series", "origin"):
+            st.session_state[selection_key(grid, facet, kind)] = st.session_state[
+                selection_key(grid, 1, kind)
+            ]
+
+
+def _origin_label(origin: pd.Timestamp) -> str:
+    """An origin as its date."""
+    return f"{origin:%Y-%m-%d}"
 
 
 def _visible(facet: Facet, start: pd.Timestamp) -> pd.Series:
