@@ -16,6 +16,13 @@ BENCHMARK_MARK = {
 }
 """The benchmark's muted tick, in the axis color to stay out of the horizon palette."""
 
+# Plotly places a scatter point in data units only. Measured: `standoff` moves the
+# drawn marker in px opposite to `angle`, whatever its docstring says, and a circle
+# or a diamond turned a quarter is unchanged. So horizon_1 sits 5px left of its x
+# and horizon_2 5px right.
+_OFFSET_ANGLE = {"horizon_1": 90, "horizon_2": 270}
+_OFFSET_PX = 5
+
 
 def metric_range(values: Iterable[float], metric: str) -> tuple[float, float]:
     """The y-range one metric's row shares across its facets.
@@ -67,6 +74,22 @@ def add_reference(figure: go.Figure, metric: str) -> None:
     if reference is None:
         return
     figure.add_hline(y=reference, line_color=palette.AXIS_COLOR, line_width=2)
+
+
+def horizon_offset(horizon: str) -> dict[str, int]:
+    """Marker properties that set a horizon's mark beside its x, never on it."""
+    return {"angle": _OFFSET_ANGLE[horizon], "standoff": _OFFSET_PX}
+
+
+def offset_tick(horizon: str, line: dict[str, Any], size: int) -> dict[str, Any]:
+    """A level tick at a horizon's offset. `line-ns`, because the offset's quarter
+    turn would stand `line-ew` upright."""
+    return {"symbol": "line-ns", "size": size, "line": line, **horizon_offset(horizon)}
+
+
+def offset_benchmark_mark(horizon: str) -> dict[str, Any]:
+    """`BENCHMARK_MARK` at a horizon's offset."""
+    return offset_tick(horizon, BENCHMARK_MARK["line"], BENCHMARK_MARK["size"])
 
 
 def empty_facet() -> go.Scatter:

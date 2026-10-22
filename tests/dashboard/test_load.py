@@ -9,13 +9,22 @@ from unittest.mock import Mock
 import pandas as pd
 import pytest
 import streamlit as st
+import yaml
 
 from dashboard.shared import load, paths
-from fcstnyctaxi.core.train import evaluate_impl
+from fcstnyctaxi.core.train import backtest_impl, evaluate_impl
+from fcstnyctaxi.lib.utils import get_project_root_dir
+from fcstnyctaxi.schemas.config.train import TrainModelingConfig
+from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 
 REGISTERED = "20260929t045735959418z"
 EVALUATED_ONLY = "20260929t045146753815z"
 MODEL_TAG = "projects/1/locations/us-central1/models/model-a@11"
+
+# Sidecar manifests come from backtest's builder, whose identity requires `train-`.
+SIDECAR_RUN = "train-20260929t045735959418z"
+SIDECAR_OTHER_RUN = "train-20260929t045146753815z"
+MODELS = ("model_a", "model_b")
 
 
 @pytest.fixture(autouse=True)
@@ -158,6 +167,84 @@ def test_a_table_mixing_two_runs_raises(two_runs: dict[str, str]) -> None:
 
 
 # ================================================
+# the sidecar lineage check
+# ================================================
+
+
+def _sidecar_manifest(run_id: str, model: str) -> dict[str, Any]:
+    """One sidecar's backtest_manifest.json, from backtest's own builder."""
+    modeling = TrainModelingConfig.model_validate(
+        yaml.safe_load(
+            (get_project_root_dir() / "config/train/modeling.yaml").read_text()
+        )
+    )
+    identity = TrainRunIdentity(
+        git_hash="0" * 40,
+        feature_run_id="20260923t011300349443z",
+        train_run_id=run_id,
+        panel_uri="gs://bucket/panel.parquet",
+        calendar_uri="gs://bucket/calendar.parquet",
+        additional_exog_uri="gs://bucket/exog.parquet",
+    )
+    summary = backtest_impl.BacktestSummary(
+        n_origins=3,
+        first_origin="2025-03-16",
+        last_origin="2025-03-30",
+        n_series=2,
+        train_run_id=run_id,
+        feature_run_id=identity.feature_run_id,
+        output_rows={backtest_impl._OUTPUT_FILENAMES["monthly_series"]: 10},
+    )
+    return backtest_impl._build_manifest(model, summary, identity, modeling)
+
+
+def test_sidecars_naming_this_run_and_their_models_pass() -> None:
+    """Every pipeline-written run is in this state, so the check must stay quiet."""
+    load.check_sidecar_lineage(
+        SIDECAR_RUN, {model: _sidecar_manifest(SIDECAR_RUN, model) for model in MODELS}
+    )
+
+
+def test_a_sidecar_naming_another_run_raises() -> None:
+    """Its tables carry no run id, so the page would chart another run's forecasts."""
+    manifests = {model: _sidecar_manifest(SIDECAR_RUN, model) for model in MODELS}
+    manifests[MODELS[1]] = _sidecar_manifest(SIDECAR_OTHER_RUN, MODELS[1])
+    with pytest.raises(ValueError, match=SIDECAR_OTHER_RUN):
+        load.check_sidecar_lineage(SIDECAR_RUN, manifests)
+
+
+def test_swapped_sidecars_raise() -> None:
+    """Both of this run, so only the model name can tell the directories apart."""
+    challenger, benchmark = MODELS
+    manifests = {
+        challenger: _sidecar_manifest(SIDECAR_RUN, benchmark),
+        benchmark: _sidecar_manifest(SIDECAR_RUN, challenger),
+    }
+    with pytest.raises(ValueError, match=f"names model '{benchmark}'"):
+        load.check_sidecar_lineage(SIDECAR_RUN, manifests)
+
+
+def test_a_missing_manifest_raises_naming_its_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Plainly, since gcsfs names a missing object percent-encoded."""
+    prefix = f"{tmp_path / 'backtest' / MODELS[0]}/"
+    with pytest.raises(FileNotFoundError, match=re.escape(prefix)):
+        load.load_backtest_manifest(prefix)
+
+    def read_json(uri: str) -> dict[str, Any]:
+        # The shape gcsfs raises, measured against the bucket.
+        raise FileNotFoundError(
+            "b/bucket/o/dev%2Ftrain%2Frun%2Fbacktest%2Fmodel_a%2Fbacktest_manifest.json"
+        )
+
+    monkeypatch.setattr(load, "_read_json", read_json)
+    gcs_prefix = f"gs://bucket/dev/train/run/backtest/{MODELS[0]}/"
+    with pytest.raises(FileNotFoundError, match=re.escape(gcs_prefix)):
+        load.load_backtest_manifest(gcs_prefix)
+
+
+# ================================================
 # the completion marker
 # ================================================
 
@@ -295,3 +382,21 @@ def test_each_table_filename_is_the_one_the_producer_writes(
     """A fixture writing the file through this same constant cannot notice a
     rename, so the producer's own mapping is the other side."""
     assert dashboard_name == evaluate_impl._OUTPUT_FILENAMES[producer_field]
+
+
+@pytest.mark.parametrize(
+    ("dashboard_name", "producer_name"),
+    [
+        (paths.BACKTEST_MANIFEST, backtest_impl._MANIFEST_FILENAME),
+        (paths.FISCAL_CALENDAR, backtest_impl._CALENDAR_FILENAME),
+        (paths.TIME_SERIES_SNAPSHOT, backtest_impl._SNAPSHOT_FILENAME),
+        (paths.RAW_CV_FORECASTS, backtest_impl._OUTPUT_FILENAMES["raw_cv_forecasts"]),
+    ],
+    ids=["backtest_manifest", "fiscal_calendar", "snapshot", "raw_cv_forecasts"],
+)
+def test_each_sidecar_filename_is_the_one_backtest_writes(
+    dashboard_name: str, producer_name: str
+) -> None:
+    """As for the evaluate tables: a fixture writing through this constant cannot
+    notice a rename, so backtest's own name is the other side."""
+    assert dashboard_name == producer_name

@@ -196,3 +196,19 @@ def test_the_zero_line_is_off() -> None:
     figure = go.Figure(go.Scatter(x=["a"], y=[1.0], mode="markers"))
     axes.style_axes(figure)
     assert figure.layout.yaxis.zeroline is False
+
+
+# ================================================
+# the horizon offset
+# ================================================
+
+# Degrees from horizontal at angle 0. Measured by SVG render: at angle 90, line-ew
+# draws from (-5, 12.6) to (-5, -12.6) and line-ns from (-17.6, 0) to (7.6, 0).
+_UNTURNED = {"line-ew": 0, "line-ns": 90}
+
+
+@pytest.mark.parametrize("horizon", ["horizon_1", "horizon_2"])
+def test_the_offset_benchmark_tick_draws_level(horizon: str) -> None:
+    """The offset turns the marker a quarter, which would stand line-ew upright."""
+    mark = axes.offset_benchmark_mark(horizon)
+    assert (_UNTURNED[mark["symbol"]] + mark["angle"]) % 180 == 0

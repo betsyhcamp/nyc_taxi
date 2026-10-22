@@ -17,7 +17,14 @@ if str(_PROJECT_ROOT) not in sys.path:
 import streamlit as st  # noqa: E402
 
 from dashboard.shared import load, paths, runs  # noqa: E402
-from dashboard.train import contribution, header, origin_skill, scorecard  # noqa: E402
+from dashboard.train import (  # noqa: E402
+    cohort,
+    contribution,
+    header,
+    line_grid,
+    origin_skill,
+    scorecard,
+)
 
 _CONFIG_PATH = Path(__file__).resolve().parent / "config.toml"
 
@@ -67,7 +74,26 @@ def main() -> None:
             paths.PER_SERIES_COMPARISON: per_series_comparison,
         },
     )
+    # Keyed by model, so one sidecar when a model holds both roles.
+    sidecars = {
+        model: load.sidecar_uri(config_dir, env, run_id, model)
+        for model in (manifest["challenger_model"], manifest["benchmark_model"])
+    }
+    load.check_sidecar_lineage(
+        run_id,
+        {
+            model: load.load_backtest_manifest(prefix)
+            for model, prefix in sidecars.items()
+        },
+    )
     tier_labels = manifest["config"]["tiering"]["tier_labels"]
+    models = {
+        "challenger": manifest["challenger_model"],
+        "benchmark": manifest["benchmark_model"],
+    }
+    # The calendar and the snapshot are the same in every sidecar; evaluate reads
+    # the challenger's.
+    calendar = load.load_fiscal_calendar(sidecars[models["challenger"]])
 
     header.render_identity_strip(
         manifest, load.load_run_output(load.run_outputs_uri(config_dir, env, run_id))
@@ -98,7 +124,30 @@ def main() -> None:
     )
     st.divider()
 
+    cohort.render_cohort(
+        fold_metrics,
+        calendar,
+        tier_labels,
+        manifest["challenger_model"],
+        manifest["benchmark_model"],
+    )
+    st.divider()
+
     contribution.render_contribution(per_series_comparison, tier_labels)
+    st.divider()
+
+    line_grid.render_line_grids(
+        line_grid.grid_data(
+            calendar,
+            load.load_time_series_snapshot(sidecars[models["challenger"]]),
+            per_series_comparison,
+            {
+                role: load.load_raw_cv_forecasts(sidecars[model])
+                for role, model in models.items()
+            },
+            models,
+        )
+    )
 
 
 main()

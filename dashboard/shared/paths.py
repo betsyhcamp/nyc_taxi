@@ -27,6 +27,12 @@ SUMMARY_METRICS = "summary_metrics.parquet"
 FOLD_METRICS = "fold_metrics.parquet"
 PER_SERIES_COMPARISON = "per_series_comparison.parquet"
 
+# Objects in a backtest sidecar, pinned to backtest's own names by test.
+BACKTEST_MANIFEST = "backtest_manifest.json"
+FISCAL_CALENDAR = "fiscal_calendar.parquet"
+TIME_SERIES_SNAPSHOT = "time_series_snapshot.parquet"
+RAW_CV_FORECASTS = "raw_cv_forecasts.parquet"
+
 
 @st.cache_data(show_spinner=False)
 def _bucket(config_dir: str, env: str) -> str:
@@ -71,7 +77,7 @@ def evaluate_prefix(config_dir: str, env: str, run_id: str) -> str:
 
 
 def sidecar_prefix(config_dir: str, env: str, run_id: str, model_name: str) -> str:
-    """One model's backtest sidecar directory. Unused until the diagnostic panels.
+    """One model's backtest sidecar directory.
 
     Args:
         config_dir: Root of the config tree.
