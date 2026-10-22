@@ -4,9 +4,8 @@ drawn at either grain.
 The weekly panel is hand-built, since the Feature pipeline owns the real one; its
 self-check is that every row falls on a calendar week. Each model's weekly
 forecasts are hand-built too, and its `monthly_series` is assembled from them and
-the panel as backtest assembles each fold, so the two grains agree. Tiers and
-weights take `assign_tiers`' and `compute_series_weights`' output shape.
-`per_series_comparison` comes from `compute_evaluate_outputs`.
+the panel as backtest assembles each fold, tiers and weights included, so the two
+grains agree. `per_series_comparison` comes from `compute_evaluate_outputs`.
 """
 
 import numpy as np
@@ -25,6 +24,7 @@ from fcstnyctaxi.lib.monthly_aggregation import (
     build_monthly_forecast_vs_actual,
     compute_actual_monthly_totals,
 )
+from fcstnyctaxi.lib.period_utils import assign_tiers, compute_series_weights
 from fcstnyctaxi.schemas.run_identity import TrainRunIdentity
 
 CHALLENGER = "model_a"
@@ -140,28 +140,17 @@ def _monthly_series(snapshot: pd.DataFrame, raw: pd.DataFrame) -> pd.DataFrame:
     fraction = calendar.set_index("ds")["origin_month_fraction_elapsed"]
     folds = []
     for origin, _ in ORIGIN_TARGETS:
-        monthly = build_monthly_forecast_vs_actual(
-            forecast_df=raw[raw["forecast_origin_date"] == origin],
-            train_df=snapshot[snapshot["ds"] <= origin],
-            calendar_df=calendar,
-            actual_monthly_df=actuals,
-        )
-        series = sorted(monthly["unique_id"].unique())
+        train = snapshot[snapshot["ds"] <= origin]
         folds.append(
             attach_tier_and_weight(
-                monthly_rows_df=monthly,
-                tier_df=pd.DataFrame(
-                    {
-                        "unique_id": series,
-                        "tier": [TIER_LABELS[i % 2] for i in range(len(series))],
-                    }
+                monthly_rows_df=build_monthly_forecast_vs_actual(
+                    forecast_df=raw[raw["forecast_origin_date"] == origin],
+                    train_df=train,
+                    calendar_df=calendar,
+                    actual_monthly_df=actuals,
                 ),
-                weight_df=pd.DataFrame(
-                    {
-                        "unique_id": series,
-                        "series_weight": [float(i + 1) for i in range(len(series))],
-                    }
-                ),
+                tier_df=assign_tiers(train, origin, calendar, tier_labels=TIER_LABELS),
+                weight_df=compute_series_weights(train, origin, calendar),
                 fold_origin=origin,
                 origin_month_fraction_elapsed=fraction[origin],
             )
