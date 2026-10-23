@@ -116,6 +116,53 @@ do
 done
 
 # ---------------------------------------------------------------------------
+# Cloud Build runs as this SA: writer to push, legacyBucketReader supplies
+# storage.buckets.get, a permission that objectAdmin doesn't include. Don't
+# grant storage.admin since it allows the SA to set IAM policy.
+# ---------------------------------------------------------------------------
+echo "[grant] AR repo ${AR_REPO}: artifactregistry.writer for ${SA_EMAIL}..."
+gcloud artifacts repositories add-iam-policy-binding "${AR_REPO}" \
+  --location="${AR_LOCATION}" \
+  --project="${PROJECT_ID}" \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/artifactregistry.writer" \
+  --condition=None
+
+echo "[grant] Bucket ${BUCKET}: storage.legacyBucketReader for ${SA_EMAIL}..."
+gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/storage.legacyBucketReader" \
+  --condition=None
+
+# --lifecycle-file replaces the bucket's whole lifecycle configuration, so the rule
+# is set only on a bucket with none.
+LIFECYCLE='{"rule": [{"action": {"type": "Delete"}, "condition": {"age": 30, "matchesPrefix": ["cloudbuild/"]}}]}'
+CURRENT=$(gcloud storage buckets describe "gs://${BUCKET}" --format="json(lifecycle_config)")
+STATE=$(printf '%s' "${CURRENT}" | uv run python -c '
+import json, sys
+have = (json.load(sys.stdin) or {}).get("lifecycle_config")
+print("absent" if not have else "same" if have == json.loads(sys.argv[1]) else "other")
+' "${LIFECYCLE}")
+case "${STATE}" in
+  absent)
+    echo "[set] Bucket ${BUCKET}: delete cloudbuild/ objects after 30 days..."
+    LIFECYCLE_FILE=$(mktemp)
+    trap 'rm -f "${LIFECYCLE_FILE}"' EXIT
+    printf '%s\n' "${LIFECYCLE}" > "${LIFECYCLE_FILE}"
+    gcloud storage buckets update "gs://${BUCKET}" --lifecycle-file="${LIFECYCLE_FILE}"
+    ;;
+  same)
+    echo "[skip] Bucket ${BUCKET}: cloudbuild/ deletion rule already set."
+    ;;
+  *)
+    echo "[refuse] gs://${BUCKET} has a lifecycle configuration --lifecycle-file would replace:" >&2
+    printf '%s\n' "${CURRENT}" >&2
+    echo "Add the cloudbuild/ rule to it by hand, then rerun." >&2
+    exit 1
+    ;;
+esac
+
+# ---------------------------------------------------------------------------
 # The human submitter. iam.serviceAccountUser on the SA is what lets
 # job.submit(service_account=...) run the pipeline as the runner SA.
 # ---------------------------------------------------------------------------
@@ -152,11 +199,15 @@ gcloud storage buckets get-iam-policy "gs://${BUCKET}" \
   | { grep "${SA_NAME}" || echo "(no bucket bindings found for ${SA_NAME})"; }
 
 echo
-echo "--- AR repo bindings on ${AR_REPO} (expect reader for the runner SA and the Vertex agent) ---"
+echo "--- AR repo bindings on ${AR_REPO} (expect reader and writer for the runner SA, reader for the Vertex agent) ---"
 gcloud artifacts repositories get-iam-policy "${AR_REPO}" \
   --location="${AR_LOCATION}" --project="${PROJECT_ID}" \
   --flatten="bindings[].members" \
   --format="table(bindings.role,bindings.members)"
+
+echo
+echo "--- Lifecycle on gs://${BUCKET} (expect Delete at age 30 on cloudbuild/) ---"
+gcloud storage buckets describe "gs://${BUCKET}" --format="json(lifecycle_config)"
 
 echo
 echo "=== Done ==="
