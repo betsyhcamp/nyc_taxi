@@ -11,9 +11,9 @@ set -euo pipefail
 #      dataset in the project for no reason, which is why this is a separate SA
 #      even though .env.example allows one SA for all three slices.
 #   2. It creates the Artifact Registry repository. Artifact Registry does not
-#      auto-create on push, so `task push-train-image` fails without this.
+#      auto-create on push, so `task build-push-image` fails without this.
 #
-# Run once, before `task push-train-image` and before `task submit-train`.
+# Run once, before `task build-push-image` and before `task submit-train`.
 # Every step is idempotent, so re-running is safe.
 
 PROJECT_ID="nyc-taxi-ehc"
