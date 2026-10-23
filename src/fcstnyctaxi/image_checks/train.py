@@ -18,8 +18,8 @@ from fcstnyctaxi.core.train import (  # noqa: F401
 from fcstnyctaxi.core.train.compose_configs_impl import compose_train_static_configs
 from fcstnyctaxi.lib.config.bindings import available_environments
 
-# Named only by config/train/models/naive.yaml, so no impl import reaches it.
-from fcstnyctaxi.models import naive  # noqa: F401
+# Named only by config and imported at run time, so no impl import reaches them.
+from fcstnyctaxi.models import lightgbm_weekly, naive, xgboost_weekly  # noqa: F401
 from fcstnyctaxi.runtime_paths import CONFIG_DIR  # noqa: TID251
 
 
