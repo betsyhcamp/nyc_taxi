@@ -138,6 +138,83 @@ tasks:
       - docker push {{.IMAGE}}
 
   # ===========================================
+  # CONTAINER IMAGES
+  # ===========================================
+
+  build-push-image:
+    desc: "Build, verify and push a slice's image on Cloud Build. Run: task build-push-image SLICE=train"
+    requires:
+      vars: [SLICE]
+    # Here, not at the top of the file: no other task needs .env.
+    dotenv: ['.env']
+    vars:
+      # One yaml call for four values. A build lives with its registry, so project and
+      # region are the registry's, whatever compute uses.
+      TARGET:
+        sh: |
+          uv run python -c "
+          import yaml
+          env = yaml.safe_load(open('config/environments/dev.yaml'))
+          ar = env['artifact_registry']
+          img = ar['images']['{{.SLICE}}']
+          repo = f\"{ar['location']}-docker.pkg.dev/{ar['project_id']}/{img['repository']}/{img['image']}\"
+          print(repo, ar['project_id'], ar['location'], env['storage']['bucket_name'])
+          "
+      SHA:
+        sh: git rev-parse --short HEAD
+      FULL_SHA:
+        sh: git rev-parse HEAD
+      # `HEAD --` so staged changes count, matching require_git_hash.
+      DIRTY:
+        sh: git diff --quiet HEAD -- || echo "-dirty"
+      WORK:
+        sh: mktemp -d
+    cmds:
+      - defer: rm -rf '{{.WORK}}'
+      - |
+        set -euo pipefail
+        # Each slice builds as its own runner account from .env.
+        case '{{.SLICE}}' in
+          feature)   SA="${FCST_FEATURE_SERVICE_ACCOUNT:?is unset; copy .env.example to .env and fill it in}" ;;
+          train)     SA="${FCST_TRAIN_SERVICE_ACCOUNT:?is unset; copy .env.example to .env and fill it in}" ;;
+          inference) SA="${FCST_INFERENCE_SERVICE_ACCOUNT:?is unset; copy .env.example to .env and fill it in}" ;;
+          *) echo "No service account variable for slice '{{.SLICE}}'; add one here" >&2; exit 1 ;;
+        esac
+        read -r REPO_PATH PROJECT_ID REGION BUCKET <<EOF
+        {{.TARGET}}
+        EOF
+        IMAGE="$REPO_PATH:{{.SHA}}{{.DIRTY}}"
+        # A commit of the tracked tree with uncommitted changes, or empty when clean.
+        # Untracked files never reach the image.
+        REF=$(git stash create)
+        git archive --format=tar.gz --output='{{.WORK}}/source.tgz' "${REF:-HEAD}"
+        # Logs stream to stdout, then --format prints the pushed digest as the last line.
+        gcloud builds submit '{{.WORK}}/source.tgz' \
+          --config=cloudbuild.yaml \
+          --project="$PROJECT_ID" \
+          --region="$REGION" \
+          --service-account="projects/$PROJECT_ID/serviceAccounts/$SA" \
+          --gcs-log-dir="gs://$BUCKET/cloudbuild/logs" \
+          --gcs-source-staging-dir="gs://$BUCKET/cloudbuild/source" \
+          --substitutions="_SLICE={{.SLICE}},_IMAGE=$IMAGE,_GIT_HASH={{.FULL_SHA}}{{.DIRTY}}" \
+          --format='value(results.images[0].digest)' \
+          | tee '{{.WORK}}/submit.out'
+        DIGEST=$(tail -n 1 '{{.WORK}}/submit.out')
+        if ! printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+          echo "No digest in the build output; its last line was: $DIGEST" >&2
+          exit 1
+        fi
+        echo ""
+        echo "  pushed tag : $IMAGE"
+        echo "  digest     : $REPO_PATH@$DIGEST"
+        echo ""
+        # Only Train has a compile task.
+        if [ '{{.SLICE}}' = train ]; then
+          echo "  next: task compile-train IMAGE_REF=$REPO_PATH@$DIGEST"
+          echo ""
+        fi
+
+  # ===========================================
   # TRAINING IMAGE
   # ===========================================
   # Training-specific, not generalized past the extract targets: with ingress
