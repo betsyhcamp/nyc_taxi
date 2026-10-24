@@ -91,10 +91,11 @@ gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
   --condition=None
 
 # ---------------------------------------------------------------------------
-# Artifact Registry repo-level read, for two DIFFERENT identities.
+# Artifact Registry repo-level read for the Vertex AI service agent. The runner SA
+# needs none: the writer grant in the Cloud Build section includes read.
 #
 # Bindings on an AR repository are repo-scoped, so a new repository starts with
-# none — the grants on fcst-data-ingress-pipeline do not carry over.
+# none; the grants on fcst-data-ingress-pipeline do not carry over.
 #
 # Vertex AI pulls each component's container image using a Google-managed
 # service agent, which is NOT the runner SA. With a custom AR repository the
@@ -102,18 +103,13 @@ gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
 # code runs, with "Vertex AI Service Agent ... does not have permission to
 # access Artifact Registry repository".
 # ---------------------------------------------------------------------------
-for MEMBER in \
-  "serviceAccount:${SA_EMAIL}" \
-  "serviceAccount:${VERTEX_SA_AGENT}"
-do
-  echo "[grant] AR repo ${AR_REPO}: artifactregistry.reader for ${MEMBER}..."
-  gcloud artifacts repositories add-iam-policy-binding "${AR_REPO}" \
-    --location="${AR_LOCATION}" \
-    --project="${PROJECT_ID}" \
-    --member="${MEMBER}" \
-    --role="roles/artifactregistry.reader" \
-    --condition=None
-done
+echo "[grant] AR repo ${AR_REPO}: artifactregistry.reader for ${VERTEX_SA_AGENT}..."
+gcloud artifacts repositories add-iam-policy-binding "${AR_REPO}" \
+  --location="${AR_LOCATION}" \
+  --project="${PROJECT_ID}" \
+  --member="serviceAccount:${VERTEX_SA_AGENT}" \
+  --role="roles/artifactregistry.reader" \
+  --condition=None
 
 # ---------------------------------------------------------------------------
 # Cloud Build runs as this SA: writer to push, legacyBucketReader supplies
@@ -199,7 +195,7 @@ gcloud storage buckets get-iam-policy "gs://${BUCKET}" \
   | { grep "${SA_NAME}" || echo "(no bucket bindings found for ${SA_NAME})"; }
 
 echo
-echo "--- AR repo bindings on ${AR_REPO} (expect reader and writer for the runner SA, reader for the Vertex agent) ---"
+echo "--- AR repo bindings on ${AR_REPO} (expect writer for the runner SA, reader for the Vertex agent) ---"
 gcloud artifacts repositories get-iam-policy "${AR_REPO}" \
   --location="${AR_LOCATION}" --project="${PROJECT_ID}" \
   --flatten="bindings[].members" \
