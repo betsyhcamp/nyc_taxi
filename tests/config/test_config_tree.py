@@ -181,28 +181,12 @@ def _model_files() -> list[Path]:
     return files
 
 
-def _named_callables() -> tuple[list[str], list[str]]:
-    """Every dotted path in train/models/*.yaml, then every one in modeling.yaml."""
-    model_paths = [
-        path
-        for file in _model_files()
-        for key, path in _load_config_file(file)["model"].items()
-        if key.endswith("_callable")
-    ]
-    settings = _load_config_file(CONFIG_DIR / "train/modeling.yaml")["model_settings"]
-    settings_paths = [
-        path
-        for entry in settings.values()
-        for key, path in entry.items()
-        if key.endswith("_callable")
-    ]
-    return model_paths, settings_paths
-
-
-def test_every_callable_the_config_names_is_defined_where_it_points() -> None:
+def test_every_callable_the_config_names_is_defined_where_it_points(
+    config_named_callables: tuple[list[str], list[str]],
+) -> None:
     """Composition keeps a dotted path as a string, so a typo would surface on Vertex.
     Located without importing it, so no modeling package is needed."""
-    model_paths, settings_paths = _named_callables()
+    model_paths, settings_paths = config_named_callables
     # Self-check: both sources contribute, so neither half passes vacuously.
     assert model_paths and settings_paths
 

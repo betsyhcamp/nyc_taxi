@@ -20,6 +20,9 @@ from google.cloud.bigquery.job import QueryJob
 from google.cloud.bigquery.table import RowIterator
 from pytest_mock import MockerFixture
 
+from fcstnyctaxi.lib.config.loading import _load_config_file
+from fcstnyctaxi.lib.utils import get_project_root_dir
+
 
 @pytest.fixture(autouse=True, scope="session")
 def no_gcp_credentials(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
@@ -96,3 +99,26 @@ def fake_gcs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     monkeypatch.setattr("fsspec.url_to_fs", _fake_url_to_fs)
     return remote_root
+
+
+@pytest.fixture
+def config_named_callables() -> tuple[list[str], list[str]]:
+    """The `*_callable` dotted paths in train/models/*.yaml, then in modeling.yaml."""
+    train_dir = get_project_root_dir() / "config" / "train"
+    model_files = sorted((train_dir / "models").glob("*.yaml"))
+    # Self-check: an empty glob would pass every loop over it.
+    assert model_files
+    model_paths = [
+        path
+        for file in model_files
+        for key, path in _load_config_file(file)["model"].items()
+        if key.endswith("_callable")
+    ]
+    settings = _load_config_file(train_dir / "modeling.yaml")["model_settings"]
+    settings_paths = [
+        path
+        for entry in settings.values()
+        for key, path in entry.items()
+        if key.endswith("_callable")
+    ]
+    return model_paths, settings_paths

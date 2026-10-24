@@ -1,6 +1,7 @@
 import importlib
 import io
 import re
+import subprocess
 import sys
 
 import pytest
@@ -31,6 +32,25 @@ def _run_main(monkeypatch: pytest.MonkeyPatch, listed: list[str]) -> None:
 def test_train_probe_imports_resolve():
     """A renamed impl fails here rather than minutes into a Cloud Build."""
     importlib.import_module("fcstnyctaxi.image_checks.train")
+
+
+def test_train_probe_loads_every_module_a_model_callable_names(config_named_callables):
+    """Importing the probe loads the module of every model `*_callable` in config."""
+    model_paths, settings_paths = config_named_callables
+    named = {path.rsplit(".", 1)[0] for path in model_paths + settings_paths}
+    # Self-check: an empty set would pass vacuously.
+    assert named
+
+    # A fresh interpreter, since this process holds whatever other tests imported.
+    script = (
+        "import sys, fcstnyctaxi.image_checks.train; print(*sys.modules, sep='\\n')"
+    )
+    loaded = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=True
+    ).stdout.split()
+
+    missing = named - set(loaded)
+    assert not missing, sorted(missing)
 
 
 def test_train_probe_passes_a_baked_tree_equal_to_the_listed_one(monkeypatch):
