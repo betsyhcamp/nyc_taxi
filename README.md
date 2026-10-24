@@ -145,7 +145,7 @@ Compiling and submitting are separate programs on purpose. The image reference i
 **Prerequisites:**
 
 - ADC configured: `gcloud auth application-default login`
-- `gcloud auth login`: the build submits with your gcloud credentials, not ADC. Your account needs Cloud Build Editor (`roles/cloudbuild.builds.editor`), Service Usage Consumer (`roles/serviceusage.serviceUsageConsumer`) unless it is project Owner or Editor, and permission to create objects under `cloudbuild/source/` and read objects under `cloudbuild/logs/` in the modeling bucket. Project Owner covers all of them.
+- `gcloud auth login`: the build submits with your gcloud credentials, not ADC. Your account needs Cloud Build Editor (`roles/cloudbuild.builds.editor`), Service Usage Consumer (`roles/serviceusage.serviceUsageConsumer`) unless it is project Owner or Editor, and three permissions in the modeling bucket: `storage.buckets.get`, which gcloud uses to check the bucket before it stages the source (Storage Legacy Bucket Reader supplies it), creating objects under `cloudbuild/source/`, and reading objects under `cloudbuild/logs/`. Project Owner covers all of them.
 - `bash scripts/setup_train_iam.sh` run once per project. It creates the `fcst-ml-containers` repository, which Artifact Registry does not auto-create on push, and the Training runner service account. It also grants the runner push access to the repository and sets a 30-day deletion rule on `cloudbuild/` in the modeling bucket.
 - `.env` filled in from `.env.example`, with `FCST_TRAIN_SERVICE_ACCOUNT` set. The submitter reads it with `python-dotenv` and `task build-push-image` also loads it, so there is no sourcing step.
 - Working tree clean, so image tags do not include `-dirty`
