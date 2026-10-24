@@ -11,9 +11,9 @@ set -euo pipefail
 #      dataset in the project for no reason, which is why this is a separate SA
 #      even though .env.example allows one SA for all three slices.
 #   2. It creates the Artifact Registry repository. Artifact Registry does not
-#      auto-create on push, so `task push-train-image` fails without this.
+#      auto-create on push, so `task build-push-image` fails without this.
 #
-# Run once, before `task push-train-image` and before `task submit-train`.
+# Run once, before `task build-push-image` and before `task submit-train`.
 # Every step is idempotent, so re-running is safe.
 
 PROJECT_ID="nyc-taxi-ehc"
@@ -91,10 +91,11 @@ gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
   --condition=None
 
 # ---------------------------------------------------------------------------
-# Artifact Registry repo-level read, for two DIFFERENT identities.
+# Artifact Registry repo-level read for the Vertex AI service agent. The runner SA
+# needs none: the writer grant in the Cloud Build section includes read.
 #
 # Bindings on an AR repository are repo-scoped, so a new repository starts with
-# none — the grants on fcst-data-ingress-pipeline do not carry over.
+# none; the grants on fcst-data-ingress-pipeline do not carry over.
 #
 # Vertex AI pulls each component's container image using a Google-managed
 # service agent, which is NOT the runner SA. With a custom AR repository the
@@ -102,18 +103,60 @@ gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
 # code runs, with "Vertex AI Service Agent ... does not have permission to
 # access Artifact Registry repository".
 # ---------------------------------------------------------------------------
-for MEMBER in \
-  "serviceAccount:${SA_EMAIL}" \
-  "serviceAccount:${VERTEX_SA_AGENT}"
-do
-  echo "[grant] AR repo ${AR_REPO}: artifactregistry.reader for ${MEMBER}..."
-  gcloud artifacts repositories add-iam-policy-binding "${AR_REPO}" \
-    --location="${AR_LOCATION}" \
-    --project="${PROJECT_ID}" \
-    --member="${MEMBER}" \
-    --role="roles/artifactregistry.reader" \
-    --condition=None
-done
+echo "[grant] AR repo ${AR_REPO}: artifactregistry.reader for ${VERTEX_SA_AGENT}..."
+gcloud artifacts repositories add-iam-policy-binding "${AR_REPO}" \
+  --location="${AR_LOCATION}" \
+  --project="${PROJECT_ID}" \
+  --member="serviceAccount:${VERTEX_SA_AGENT}" \
+  --role="roles/artifactregistry.reader" \
+  --condition=None
+
+# ---------------------------------------------------------------------------
+# Cloud Build runs as this SA: writer to push, legacyBucketReader supplies
+# storage.buckets.get, a permission that objectAdmin doesn't include. Don't
+# grant storage.admin since it allows the SA to set IAM policy.
+# ---------------------------------------------------------------------------
+echo "[grant] AR repo ${AR_REPO}: artifactregistry.writer for ${SA_EMAIL}..."
+gcloud artifacts repositories add-iam-policy-binding "${AR_REPO}" \
+  --location="${AR_LOCATION}" \
+  --project="${PROJECT_ID}" \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/artifactregistry.writer" \
+  --condition=None
+
+echo "[grant] Bucket ${BUCKET}: storage.legacyBucketReader for ${SA_EMAIL}..."
+gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/storage.legacyBucketReader" \
+  --condition=None
+
+# --lifecycle-file replaces the bucket's whole lifecycle configuration, so the rule
+# is set only on a bucket with none.
+LIFECYCLE='{"rule": [{"action": {"type": "Delete"}, "condition": {"age": 30, "matchesPrefix": ["cloudbuild/"]}}]}'
+CURRENT=$(gcloud storage buckets describe "gs://${BUCKET}" --format="json(lifecycle_config)")
+STATE=$(printf '%s' "${CURRENT}" | uv run python -c '
+import json, sys
+have = (json.load(sys.stdin) or {}).get("lifecycle_config")
+print("absent" if not have else "same" if have == json.loads(sys.argv[1]) else "other")
+' "${LIFECYCLE}")
+case "${STATE}" in
+  absent)
+    echo "[set] Bucket ${BUCKET}: delete cloudbuild/ objects after 30 days..."
+    LIFECYCLE_FILE=$(mktemp)
+    trap 'rm -f "${LIFECYCLE_FILE}"' EXIT
+    printf '%s\n' "${LIFECYCLE}" > "${LIFECYCLE_FILE}"
+    gcloud storage buckets update "gs://${BUCKET}" --lifecycle-file="${LIFECYCLE_FILE}"
+    ;;
+  same)
+    echo "[skip] Bucket ${BUCKET}: cloudbuild/ deletion rule already set."
+    ;;
+  *)
+    echo "[refuse] gs://${BUCKET} has a lifecycle configuration --lifecycle-file would replace:" >&2
+    printf '%s\n' "${CURRENT}" >&2
+    echo "Add the cloudbuild/ rule to it by hand, then rerun." >&2
+    exit 1
+    ;;
+esac
 
 # ---------------------------------------------------------------------------
 # The human submitter. iam.serviceAccountUser on the SA is what lets
@@ -152,11 +195,15 @@ gcloud storage buckets get-iam-policy "gs://${BUCKET}" \
   | { grep "${SA_NAME}" || echo "(no bucket bindings found for ${SA_NAME})"; }
 
 echo
-echo "--- AR repo bindings on ${AR_REPO} (expect reader for the runner SA and the Vertex agent) ---"
+echo "--- AR repo bindings on ${AR_REPO} (expect writer for the runner SA, reader for the Vertex agent) ---"
 gcloud artifacts repositories get-iam-policy "${AR_REPO}" \
   --location="${AR_LOCATION}" --project="${PROJECT_ID}" \
   --flatten="bindings[].members" \
   --format="table(bindings.role,bindings.members)"
+
+echo
+echo "--- Lifecycle on gs://${BUCKET} (expect Delete at age 30 on cloudbuild/) ---"
+gcloud storage buckets describe "gs://${BUCKET}" --format="json(lifecycle_config)"
 
 echo
 echo "=== Done ==="

@@ -1,0 +1,2 @@
+# build-push-image uploads a git archive; this stops a bare `gcloud builds submit` uploading the working tree.
+*

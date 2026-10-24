@@ -138,113 +138,95 @@ tasks:
       - docker push {{.IMAGE}}
 
   # ===========================================
-  # TRAINING IMAGE
+  # CONTAINER IMAGES
   # ===========================================
-  # Training-specific, not generalized past the extract targets: with ingress
-  # dead and due for rebuild, only the buildx shape is shared.
 
-  verify-train-image:
-    desc: "Verify a built Training image: baked config tree, composition, deps"
+  build-push-image:
+    desc: "Build, verify and push a slice's image on Cloud Build. Run: task build-push-image SLICE=train"
     requires:
-      vars: [IMAGE]
-    cmds:
-      # Probes shipped path that config/train/models/naive.yaml names. Spot check only.
-      # Imports every impl a component body imports: every other tier runs in the dev
-      # venv, so a dependency the train group lacks otherwise surfaces only on Vertex.
-      - |
-        docker run --rm --platform linux/amd64 {{.IMAGE}} python -c '
-        import os, pyarrow
-        from fcstnyctaxi.runtime_paths import CONFIG_DIR
-        from fcstnyctaxi.lib.config.bindings import available_environments
-        from fcstnyctaxi.core.train.compose_configs_impl import compose_train_static_configs
-        from fcstnyctaxi.core.train import backtest_impl, evaluate_impl, final_fit_impl, register_model_impl
-        from fcstnyctaxi.models import naive
-        if not os.environ.get("FCST_GIT_HASH"):
-            raise SystemExit("FCST_GIT_HASH is unset; rebuild with --build-arg GIT_HASH=...")
-        envs = available_environments(CONFIG_DIR)
-        if not envs:
-            raise SystemExit(f"No environments under {CONFIG_DIR}/environments — is COPY config in the runtime stage?")
-        for env in envs:
-            compose_train_static_configs(CONFIG_DIR, env)
-        print(f"image OK: {envs} compose")
-        '
-
-  build-verify-train-image:
-    desc: Build the Training image and run the verification probe
+      vars: [SLICE]
+    # Here, not at the top of the file: no other task needs .env.
+    dotenv: ['.env']
     vars:
-      # One yaml call, not four. artifact_registry, not compute: the registry is
-      # independent of where jobs run, so one image serves every environment.
-      REPO_PATH:
+      # One yaml call for four values. A build lives with its registry, so project and
+      # region are the registry's, whatever compute uses.
+      TARGET:
         sh: |
           uv run python -c "
           import yaml
-          ar = yaml.safe_load(open('config/environments/dev.yaml'))['artifact_registry']
-          img = ar['images']['train']
-          print(f\"{ar['location']}-docker.pkg.dev/{ar['project_id']}/{img['repository']}/{img['image']}\")
+          env = yaml.safe_load(open('config/environments/dev.yaml'))
+          ar = env['artifact_registry']
+          img = ar['images']['{{.SLICE}}']
+          repo = f\"{ar['location']}-docker.pkg.dev/{ar['project_id']}/{img['repository']}/{img['image']}\"
+          print(repo, ar['project_id'], ar['location'], env['storage']['bucket_name'])
           "
-      # Short sha tags the image (which build?); full sha is baked (which source?).
-      SHA:
-        sh: git rev-parse --short HEAD
-      FULL_SHA:
-        sh: git rev-parse HEAD
-      # `HEAD --`, not the extract targets' bare `git diff --quiet`, which misses
-      # staged changes. Matches _require_git_hash so both modes stamp one tree alike.
-      DIRTY:
-        sh: git diff --quiet HEAD -- || echo "-dirty"
-      IMAGE: "{{.REPO_PATH}}:{{.SHA}}{{.DIRTY}}"
+      WORK:
+        sh: mktemp -d
     cmds:
-      - docker buildx build --platform linux/amd64 -f docker/Dockerfile.train --build-arg GIT_HASH={{.FULL_SHA}}{{.DIRTY}} -t {{.IMAGE}} --load .
-      - task: verify-train-image
-        vars:
-          IMAGE: "{{.IMAGE}}"
-      # Belongs here, not in verify-train-image: the image came from this tree
-      # seconds ago, so a mismatch can only be a build fault. File names only.
+      - defer: rm -rf '{{.WORK}}'
       - |
-        uv run python -c 'import pathlib; r=pathlib.Path("config"); print("\n".join(sorted(str(p.relative_to(r)) for p in r.rglob("*") if p.is_file())))' \
-        | docker run --rm -i --platform linux/amd64 {{.IMAGE}} python -c '
-        import sys
-        from fcstnyctaxi.runtime_paths import CONFIG_DIR
-        want = set(sys.stdin.read().split())
-        have = {str(p.relative_to(CONFIG_DIR)) for p in CONFIG_DIR.rglob("*") if p.is_file()}
-        if want != have:
-            raise SystemExit(f"baked config tree != config/: missing {sorted(want - have)} extra {sorted(have - want)}; check COPY config and .dockerignore")
-        print(f"config tree OK: {len(have)} files")
-        '
-
-  push-train-image:
-    desc: Push the verified Training image and print the digest compile-train needs
-    vars:
-      REPO_PATH:
-        sh: |
-          uv run python -c "
-          import yaml
-          ar = yaml.safe_load(open('config/environments/dev.yaml'))['artifact_registry']
-          img = ar['images']['train']
-          print(f\"{ar['location']}-docker.pkg.dev/{ar['project_id']}/{img['repository']}/{img['image']}\")
-          "
-      SHA:
-        sh: git rev-parse --short HEAD
-      DIRTY:
-        sh: git diff --quiet HEAD -- || echo "-dirty"
-      IMAGE: "{{.REPO_PATH}}:{{.SHA}}{{.DIRTY}}"
-    cmds:
-      # Run build-verify-train-image first. Don't build here: GIT_HASH is recomputed
-      # per invocation, so a push-time build could ship bytes nothing probed.
-      - docker push {{.IMAGE}}
-      # docker push reports no digest; RepoDigests has one per repo — filter, not [0].
-      - |
-        DIGEST=$(docker image inspect --format '{{`{{range .RepoDigests}}{{println .}}{{end}}`}}' {{.IMAGE}} \
-          | grep "^{{.REPO_PATH}}@" | head -n 1)
-        if [ -z "$DIGEST" ]; then
-          echo "No RepoDigest for {{.REPO_PATH}}; the push recorded none." >&2
+        set -euo pipefail
+        # Each slice builds as its own runner account from .env.
+        case '{{.SLICE}}' in
+          feature)   SA="${FCST_FEATURE_SERVICE_ACCOUNT:?is unset; copy .env.example to .env and fill it in}" ;;
+          train)     SA="${FCST_TRAIN_SERVICE_ACCOUNT:?is unset; copy .env.example to .env and fill it in}" ;;
+          inference) SA="${FCST_INFERENCE_SERVICE_ACCOUNT:?is unset; copy .env.example to .env and fill it in}" ;;
+          *) echo "No service account variable for slice '{{.SLICE}}'; add one here" >&2; exit 1 ;;
+        esac
+        read -r REPO_PATH PROJECT_ID REGION BUCKET <<EOF
+        {{.TARGET}}
+        EOF
+        # One snapshot supplies the tag, the baked hash, the source and the build config.
+        # git stash create commits the tracked tree with uncommitted changes, or prints
+        # nothing when clean. Untracked files never reach the image.
+        FULL_SHA=$(git rev-parse HEAD)
+        REF=$(git stash create)
+        DIRTY=""
+        if [ -n "$REF" ]; then
+          FULL_SHA=$(git rev-parse "$REF^1")
+          # Exit 1 is a difference; anything else is a git error, not a dirty tree.
+          RC=0
+          git diff --quiet "$FULL_SHA" "$REF" || RC=$?
+          case "$RC" in
+            0) ;;
+            1) DIRTY="-dirty" ;;
+            *) echo "git diff exited $RC comparing $FULL_SHA to $REF" >&2; exit 1 ;;
+          esac
+        fi
+        SRC="${REF:-$FULL_SHA}"
+        SHA=$(git rev-parse --short "$FULL_SHA")
+        IMAGE="$REPO_PATH:$SHA$DIRTY"
+        git archive --format=tar.gz --output='{{.WORK}}/source.tgz' "$SRC"
+        git show "${SRC}:cloudbuild.yaml" > '{{.WORK}}/cloudbuild.yaml'
+        # Logs stream to stdout, then --format prints the pushed digest as the last line.
+        gcloud builds submit '{{.WORK}}/source.tgz' \
+          --config='{{.WORK}}/cloudbuild.yaml' \
+          --project="$PROJECT_ID" \
+          --region="$REGION" \
+          --service-account="projects/$PROJECT_ID/serviceAccounts/$SA" \
+          --gcs-log-dir="gs://$BUCKET/cloudbuild/logs" \
+          --gcs-source-staging-dir="gs://$BUCKET/cloudbuild/source" \
+          --substitutions="_SLICE={{.SLICE}},_IMAGE=$IMAGE,_GIT_HASH=$FULL_SHA$DIRTY" \
+          --format='value(results.images[0].digest)' \
+          | tee '{{.WORK}}/submit.out'
+        DIGEST=$(tail -n 1 '{{.WORK}}/submit.out')
+        if ! printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+          echo "No digest in the build output; its last line was: $DIGEST" >&2
           exit 1
         fi
         echo ""
-        echo "  pushed tag : {{.IMAGE}}"
-        echo "  digest     : $DIGEST"
+        echo "  pushed tag : $IMAGE"
+        echo "  digest     : $REPO_PATH@$DIGEST"
         echo ""
-        echo "  next: task compile-train IMAGE_REF=$DIGEST"
-        echo ""
+        # Only Train has a compile task.
+        if [ '{{.SLICE}}' = train ]; then
+          echo "  next: task compile-train IMAGE_REF=$REPO_PATH@$DIGEST"
+          echo ""
+        fi
+
+  # ===========================================
+  # TRAINING PIPELINE
+  # ===========================================
 
   compile-train:
     desc: Compile the Training pipeline against a digest-pinned image

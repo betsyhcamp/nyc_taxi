@@ -1,0 +1,45 @@
+# Builds, verifies and pushes one slice's image. Run through `task build-push-image`,
+# which uploads a git archive of the tracked tree and passes every substitution.
+
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      # A no-op on Cloud Build's x86 workers; it states that Vertex runs linux/amd64.
+      - --platform=linux/amd64
+      - --file=docker/Dockerfile.${_SLICE}
+      - --build-arg=GIT_HASH=${_GIT_HASH}
+      - --tag=${_IMAGE}
+      - .
+
+  # Each build has its own worker, so the tag names this build's image, the one images: pushes.
+  - id: verify-image-shared
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - >-
+        docker run --rm -i "${_IMAGE}"
+        python - "${_GIT_HASH}" < docker/verify_image.py
+
+  - id: verify-image-slice
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        cd config
+        find . -type f | sed 's|^\./||' \
+          | docker run --rm -i "${_IMAGE}" \
+              python -m fcstnyctaxi.image_checks.${_SLICE}
+
+images:
+  - ${_IMAGE}
+
+timeout: 1800s
+
+options:
+  # LEGACY writes logs to Cloud Storage, which gcloud streams, and to Cloud Logging.
+  logging: LEGACY

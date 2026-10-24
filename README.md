@@ -138,38 +138,34 @@ Should list two objects:
 
 ### Building, compiling, and submitting the Training pipeline
 
-End-to-end workflow for the Training pipeline: build the image, push it, compile a template against the pushed digest, then submit that template to Vertex AI Pipelines. The DAG composes every config for the run, backtests each model in `model_roles`, one task per model fixed at compile time, scores the challenger against the benchmark, fits the challenger on the whole panel, then registers it as a version in the Vertex AI Model Registry.
+End-to-end workflow for the Training pipeline: build and push the image on Cloud Build, compile a template against the pushed digest, then submit that template to Vertex AI Pipelines. The DAG composes every config for the run, backtests each model in `model_roles`, one task per model fixed at compile time, scores the challenger against the benchmark, fits the challenger on the whole panel, then registers it as a version in the Vertex AI Model Registry.
 
 Compiling and submitting are separate programs on purpose. The image reference is a compile-time input, since `@dsl.component` binds `base_image` when the module is imported, so a compiled template already names every image it will run. The submitter therefore takes a template and never sees a tag, a digest, or `FCST_TRAIN_IMAGE`. That is also what lets a production trigger, which submits a published template with no compiler anywhere, use the same shape.
 
 **Prerequisites:**
 
 - ADC configured: `gcloud auth application-default login`
-- `bash scripts/setup_train_iam.sh` run once per project. It creates the `fcst-ml-containers` repository, which Artifact Registry does not auto-create on push, and the Training runner service account.
-- `.env` filled in from `.env.example`, with `FCST_TRAIN_SERVICE_ACCOUNT` set. The submitter reads it with `python-dotenv`, so there is no sourcing step.
+- `gcloud auth login`: the build submits with your gcloud credentials, not ADC. Your account needs Cloud Build Editor (`roles/cloudbuild.builds.editor`), Service Usage Consumer (`roles/serviceusage.serviceUsageConsumer`) unless it is project Owner or Editor, and three permissions in the modeling bucket: `storage.buckets.get`, which gcloud uses to check the bucket before it stages the source (Storage Legacy Bucket Reader supplies it), creating objects under `cloudbuild/source/`, and reading objects under `cloudbuild/logs/`. Project Owner covers all of them.
+- `bash scripts/setup_train_iam.sh` run once per project. It creates the `fcst-ml-containers` repository, which Artifact Registry does not auto-create on push, and the Training runner service account. It also grants the runner push access to the repository and sets a 30-day deletion rule on `cloudbuild/` in the modeling bucket.
+- `.env` filled in from `.env.example`, with `FCST_TRAIN_SERVICE_ACCOUNT` set. The submitter reads it with `python-dotenv` and `task build-push-image` also loads it, so there is no sourcing step.
 - Working tree clean, so image tags do not include `-dirty`
 - A published Feature run. `uv run python scripts/publish_feature_stand_in.py --env dev` prints the `--feature-run-id` the submit step needs, with `--panel-uri`, `--calendar-uri` and `--additional-exog-uri` commented below it as optional overrides.
 
-**Step 1. Build and verify the image:**
+**Step 1. Build, verify and push the image on Cloud Build:**
 
 ```{bash}
-task build-verify-train-image
+task build-push-image SLICE=train
 ```
 
-Builds the `linux/amd64` image and probes it twice: every environment in the baked config tree composes, and that tree matches `config/` file for file. Expected last lines, where `<n>` is the number of files under `config/`:
+The task uploads a `git archive` of the tracked tree, so a new file must be `git add`ed to reach the image. Cloud Build builds the `linux/amd64` image, probes it and pushes only if every probe passes. Logs stream to the terminal; the probes print these lines, where `<n>` is the number of files under `config/`:
 
 ```
-image OK: ['dev'] compose
+image OK: FCST_GIT_HASH=<full sha>
+image OK: ['dev', 'gate'] compose
 config tree OK: <n> files
 ```
 
-**Step 2. Push the image:**
-
-```{bash}
-task push-train-image
-```
-
-Pushes the tag step 1 built, then prints the digest as a ready-to-run command:
+The task then prints the digest as a ready-to-run command:
 
 ```
   pushed tag : us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers/train:<short-sha>
@@ -178,12 +174,10 @@ Pushes the tag step 1 built, then prints the digest as a ready-to-run command:
   next: task compile-train IMAGE_REF=<the digest above>
 ```
 
-This task deliberately does not build. `GIT_HASH` is recomputed on every invocation, so a push-time build could ship bytes that no probe ever saw.
-
-**Step 3. Compile and submit:**
+**Step 2. Compile and submit:**
 
 ```{bash}
-task compile-submit-train IMAGE_REF=<digest from step 2> -- \
+task compile-submit-train IMAGE_REF=<digest from step 1> -- \
   --env dev \
   --feature-run-id <id from publish_feature_stand_in.py>
 ```
@@ -210,7 +204,7 @@ The local mode registers only when given `--serving-image`, a digest-pinned imag
 
 `--run-id` is optional and minted when absent. Caching is on by default, so resubmitting an unfinished run under the same `--run-id` reuses completed tasks; pass `--no-caching` to re-execute everything. A resubmit under a finished run's id is refused by whichever step executes first, and one with different inputs at `compose_configs`. The submitter is fire and forget unless given `--wait`, and it writes the id it submitted to `<tmpdir>/fcstnyctaxi/.last_run_id`.
 
-**Step 4. Confirm the run and its artifacts:**
+**Step 3. Confirm the run and its artifacts:**
 
 The submitter logs the console URL for the run. The artifacts land under the run root it also logs:
 
