@@ -160,13 +160,6 @@ tasks:
           repo = f\"{ar['location']}-docker.pkg.dev/{ar['project_id']}/{img['repository']}/{img['image']}\"
           print(repo, ar['project_id'], ar['location'], env['storage']['bucket_name'])
           "
-      SHA:
-        sh: git rev-parse --short HEAD
-      FULL_SHA:
-        sh: git rev-parse HEAD
-      # `HEAD --` so staged changes count, matching require_git_hash.
-      DIRTY:
-        sh: git diff --quiet HEAD -- || echo "-dirty"
       WORK:
         sh: mktemp -d
     cmds:
@@ -183,20 +176,37 @@ tasks:
         read -r REPO_PATH PROJECT_ID REGION BUCKET <<EOF
         {{.TARGET}}
         EOF
-        IMAGE="$REPO_PATH:{{.SHA}}{{.DIRTY}}"
-        # A commit of the tracked tree with uncommitted changes, or empty when clean.
-        # Untracked files never reach the image.
+        # One snapshot supplies the tag, the baked hash, the source and the build config.
+        # git stash create commits the tracked tree with uncommitted changes, or prints
+        # nothing when clean. Untracked files never reach the image.
+        FULL_SHA=$(git rev-parse HEAD)
         REF=$(git stash create)
-        git archive --format=tar.gz --output='{{.WORK}}/source.tgz' "${REF:-HEAD}"
+        DIRTY=""
+        if [ -n "$REF" ]; then
+          FULL_SHA=$(git rev-parse "$REF^1")
+          # Exit 1 is a difference; anything else is a git error, not a dirty tree.
+          RC=0
+          git diff --quiet "$FULL_SHA" "$REF" || RC=$?
+          case "$RC" in
+            0) ;;
+            1) DIRTY="-dirty" ;;
+            *) echo "git diff exited $RC comparing $FULL_SHA to $REF" >&2; exit 1 ;;
+          esac
+        fi
+        SRC="${REF:-$FULL_SHA}"
+        SHA=$(git rev-parse --short "$FULL_SHA")
+        IMAGE="$REPO_PATH:$SHA$DIRTY"
+        git archive --format=tar.gz --output='{{.WORK}}/source.tgz' "$SRC"
+        git show "${SRC}:cloudbuild.yaml" > '{{.WORK}}/cloudbuild.yaml'
         # Logs stream to stdout, then --format prints the pushed digest as the last line.
         gcloud builds submit '{{.WORK}}/source.tgz' \
-          --config=cloudbuild.yaml \
+          --config='{{.WORK}}/cloudbuild.yaml' \
           --project="$PROJECT_ID" \
           --region="$REGION" \
           --service-account="projects/$PROJECT_ID/serviceAccounts/$SA" \
           --gcs-log-dir="gs://$BUCKET/cloudbuild/logs" \
           --gcs-source-staging-dir="gs://$BUCKET/cloudbuild/source" \
-          --substitutions="_SLICE={{.SLICE}},_IMAGE=$IMAGE,_GIT_HASH={{.FULL_SHA}}{{.DIRTY}}" \
+          --substitutions="_SLICE={{.SLICE}},_IMAGE=$IMAGE,_GIT_HASH=$FULL_SHA$DIRTY" \
           --format='value(results.images[0].digest)' \
           | tee '{{.WORK}}/submit.out'
         DIGEST=$(tail -n 1 '{{.WORK}}/submit.out')
