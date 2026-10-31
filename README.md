@@ -1,219 +1,119 @@
-# Exploring and modeling NYC Yellow Taxi Demand
+# NYC Taxi Month-End Revenue Forecasting System
 
 [![CI](https://github.com/betsyhcamp/nyc_taxi/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/betsyhcamp/nyc_taxi/actions/workflows/ci.yml) ![Python](https://img.shields.io/badge/python-3.12-blue.svg)
 
+Batch ML pipelines on Vertex AI for forecasting each Manhattan taxi zone's fare revenue for the current and next fiscal month, refreshed weekly.
+
 ______________________________________________________________________
 
-## Purpose
+## Business problem
 
-Taxi demand needs to be forecasted to optimize resource allocation, improve operational efficiency, and to enhance customer experience (e.g., reduced rider wait times).
+A hypothetical fleet operator runs yellow cabs across Manhattan, earns a percentage of fares and closes its books at the end of each fiscal month. Every week, finance needs an updated forecast of each taxi zone's fare revenue for the current fiscal month and the next fiscal month, to plan cash flow and to see which zones are ahead of or behind plan. The same problem, a weekly refreshed forecast of revenue by segment on a fiscal calendar, shows up wherever a business plans monthly against weekly actuals.
 
-- `TODO`: Need to do exploratory data analysis and
-- `TODO`: define forecasting problem along typical axes: quantity to forecast, granularity in time of forecast (hourly, daily, weekly), forecast horizon (how many hours, days, weeks ahead need to be forecasted), geographic granularity (e.g. taxi zone, boro of NYC)
+## At a glance
+
+- **Built:** a Training pipeline on Vertex AI Pipelines that backtests each candidate model, scores the challenger against a naive benchmark and registers it (selection rule planned) in the Vertex AI Model Registry, plus a Streamlit dashboard for reviewing backtests.
+- **Models:** global gradient-boosted trees trained across all zones at once with the Naive forecast as a benchmark.
+- **Evaluation:** rolling-origin backtests scored by a revenue-weighted skill score against the benchmark, broken out by revenue tier.
+- **Engineering:** containerized components built on Cloud Build and pinned by image digest, configs validated by Pydantic schemas, run lineage checked across steps, CI on GitHub Actions.
+- **Stack:** Python, Kubeflow Pipelines, Vertex AI, BigQuery, Cloud Storage, Cloud Build, Artifact Registry, Docker, XGBoost, LightGBM, MLForecast, StatsForecast, Pydantic, Streamlit, GitHub Actions and uv, plus [tsbricks](https://github.com/betsyhcamp/tsbricks), my open-source time-series backtesting library.
+
+## System architecture
+
+*Architecture diagram coming soon.*
+
+<!-- TODO: replace the line above with this image once docs/images/architecture.drawio.svg exists.
+![Architecture: Cloud Scheduler triggers a Cloud Workflow that runs the Feature, Training and Inference pipelines on Vertex AI Pipelines, connected through Google Cloud Storage and the Vertex AI Model Registry.](docs/images/architecture.drawio.svg)
+-->
+
+The system is three batch pipelines on Vertex AI Pipelines, each with its own container image. A Cloud Scheduler job triggers a Cloud Workflow that runs the three in order.
+
+- **Feature** turns raw trip records in BigQuery into weekly revenue per zone, builds the weekly fiscal calendar and creates exogenous features.
+- **Training** backtests each candidate model, scores the challenger against a naive benchmark, fits the challenger on the full history and registers it in the Vertex AI Model Registry.
+- **Inference** loads that registered model and forecasts the current and next fiscal month.
+
+The pipelines hand off through files in Google Cloud Storage, not shared state. Each pipeline run writes a small `run_output.json` at its run root naming what it produced, and the next pipeline finds its inputs from that file given only a run id.
+
+| Component          | Status  |
+| ------------------ | ------- |
+| Feature pipeline   | Partial |
+| Training pipeline  | Built   |
+| Inference pipeline | Planned |
+| Cloud Workflow     | Planned |
+
+## Forecasting approach
+
+Every week, the model forecasts each zone's revenue for the weeks ahead, and each month-end forecast is the completed weeks' actual revenue plus the forecast for the weeks still to come.
+
+- **Target:** month-end fare revenue for each of Manhattan's 68 yellow-taxi zones, for the current fiscal month and, separately, for the next fiscal month.
+- **Fiscal calendar:** 4-4-5, so each quarter is two four-week months followed by a five-week month. Weeks start on Sunday, and in a 53-week year the last month gets a sixth week.
+- **Refresh:** weekly. The current month's forecast tightens as its weeks become actuals; the next month is forecast in full.
+- **Model:** a single global GBDT model trained across all zones with an absolute-error objective. Features are lags of 1 and 52 weeks, a 4-week rolling mean and fiscal-calendar features: fiscal week of month, fiscal month, weeks in the month and workdays.
+- **Benchmark:** a naive forecast that repeats the last observed week, rolled up to month-end totals the same way as the model's forecasts.
+- **Framings explored:** the pipeline sums weekly forecasts into the month. Two alternatives predict at the month level, using month-to-date actuals as features: one predicts the month-end total directly (prototyped in a notebook and scored on the same leaderboard), and the other predicts only the revenue remaining in the month and adds month-to-date actuals back (in development).
+
+## Evaluation
+
+Each challenger is scored against the naive benchmark on the same backtest time period. Scores are weighted so large zones count more without drowning out small ones, and broken out by revenue tier so a good overall score can't hide a bad tail.
+
+- **Backtest:** forecasts from every weekly origin across multiple evaluation periods, each covering the current and next fiscal month, scored only on months whose actuals are complete.
+- **Skill score:** weighted relative MAE, `sum(w * |challenger error|) / sum(w * |benchmark error|)`, reported separately for the current and next fiscal month. Below 1 means the challenger beats the benchmark. Summing errors before dividing keeps one zone with a near-perfect benchmark from swinging the score.
+- **Weights:** the cube root of each zone's trailing 26-week revenue. Bigger zones count more, but a zone with 100 times the revenue gets about 4.6 times the weight.
+- **Revenue tiers:** five equal-sized tiers by mean positive weekly revenue over the trailing 52 weeks. Every metric is reported per tier as well as overall.
+- **No look-ahead:** weights and tiers are recomputed at every origin from data available at that origin.
+- **Also reported:** WAPE, weighted signed bias, a weighted average of per-zone skill ratios and a per-zone comparison table.
+- **Planned selection rule:** a challenger qualifies only if it beats the benchmark in every revenue tier; among qualifiers, the best overall skill score wins, subject to human review.
+
+## Engineering design decisions
+
+Each choice below closes off a specific way a batch ML system can quietly produce a wrong answer. All are implemented in the Training pipeline; Feature and Inference will adopt them as they're built.
+
+- **Logic separated from I/O.** Each step's logic is a pure function, dataframes in and results out, wrapped by a thin layer that reads, checks and writes files; the Kubeflow component only wraps that layer. The full test suite runs in CI with no cloud credentials.
+- **Imports flow one way.** By convention, imports run from pipelines to components to step implementations to shared code to schemas and never back up, and Kubeflow is imported only by components and pipelines, so step logic never depends on the orchestrator.
+- **Lineage is read, never passed.** The first step writes `run_identity.json` at the run root, and every later step reads it instead of taking run ids as parameters, so no two steps can disagree about which run or inputs they belong to.
+- **Completion marker removed, then written last.** Once a step's checks pass, it deletes its manifest before touching any outputs and writes it only after all of them exist, so a failed rerun can't leave a directory that looks finished.
+- **Images verified, then pinned by digest.** Cloud Build pushes an image only after import and config probes pass, and the compiler pins that image by digest and refuses to emit a template naming anything else, so what runs on Vertex is exactly what was built and probed.
+- **Config versioned with code.** The config tree is baked into each image, so one git hash versions both. Project-owned configs are validated by Pydantic schemas that reject unknown keys, so a typo fails validation instead of being silently ignored.
+- **Pipelines find each other's outputs by run id alone.** Training reads Feature's `run_output.json` and takes its inputs by role, so it never depends on Feature's internal step names.
+- **One module builds every storage path.** Paths follow `<env>/<pipeline>/<run_id>/<step>/` and are built in one place, so the local and Vertex execution modes can't write to different locations.
+
+## Repository layout
+
+```
+src/fcstnyctaxi/
+  pipelines/          Kubeflow pipeline definitions, plus local modes that run the same steps without Vertex
+  components/         Kubeflow component wrappers, one per step; they never open a file
+  core/               Step implementations: a pure function plus the layer that reads, checks and writes
+  lib/                Shared logic: metrics, monthly rollup, config composition, storage paths
+  models/             Model callables the pipeline fits and saves
+  schemas/            Pydantic schemas for configs, run identity and pipeline outputs
+  image_checks/       Probes Cloud Build runs inside an image before pushing it
+config/               Layered YAML configs, baked into the Docker images
+dashboard/            Streamlit app for reviewing and monitoring pipeline output
+notebooks/            Exploratory analysis and prototypes of the forecasting framings
+experimental_models/  Model callables used only by the notebooks
+queries/              BigQuery DDL and source queries
+scripts/              Compile, submit and one-time setup scripts
+docker/               Dockerfiles and the shared image probe
+tests/                pytest suite, mirroring the source tree
+docs/                 Runbook, roadmap and other documentation
+```
+
+## Running it
+
+Walkthroughs for each pipeline, with screenshots of real runs, are in `docs/RUNBOOK.md` (to be created).
+
+## Documentation
+
+- `docs/RUNBOOK.md` (to be created): one-time GCP setup, then building, submitting and checking each pipeline run.
+- `docs/ROADMAP.md` (to be created): planned work and open design questions.
 
 ## Data
 
-Base data for NY Yellow Taxi ride data, data dictionaries, and metadata files associated with rides:
-https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page
+- **Trip records:** yellow taxi trips from the [NYC Taxi and Limousine Commission (TLC) trip record data](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page), loaded into BigQuery. Only trips that start in Manhattan are used, and each trip's revenue is attributed to its pickup zone.
+- **Taxi zones:** the TLC's taxi zone lookup, which maps each pickup location to a zone and borough.
+- **Fiscal calendar:** a 4-4-5 calendar generated in this repo, with workdays that exclude New York State holidays.
 
-Weather data can be found here:
-https://www.ncei.noaa.gov/pub/data/daily-grids/v1-0-0/averages/2025/
+## License
 
-## Setup
-
-### Artifact Registry
-
-For each Vertex AI component (ie, step) with a Docker image, the image is placed in a project specific GCP Artifact Registry
-
-Prerequisite for use of the commands below is a working installation of `gcloud` with application default credentials (ADC) for GCP.
-
-**Create the Artifact Registry (one time per project):**
-
-```{bash}
-gcloud artifacts repositories create fcst-data-ingress-pipeline \
-  --repository-format=docker \
-  --location=us-central1 \
-  --description="Container image for F (data ingress) pipeline of NYC taxi forecasting system"
-```
-
-**Authorize developer machine (one time per developer machine):**
-
-```{bash}
-gcloud auth configure-docker us-central1-docker.pkg.dev
-```
-
-## Usage
-
-### Building and running the `extract_db_to_bucket` component via Docker
-
-End-to-end workflow for building the component's Docker image, pushing it to Artifact Registry, and verifying it runs against real BigQuery and GCS via `kfp.local.DockerRunner` — the closest local analog to a Vertex AI Pipelines run.
-
-**Prerequisites:**
-
-- ADC configured: `gcloud auth application-default login`
-- Artifact Registry setup complete (see Setup section above)
-- Working tree clean (so image tags don't include `-dirty`)
-
-**Step 1 — Build and verify the image:**
-
-```{bash}
-task build-verify-image
-```
-
-Builds the multi-stage `linux/amd64` image and runs an image-health probe that imports `fcstnyctaxi`, `kfp`, and `google.cloud.bigquery`. Expected last line of output:
-
-```
-image OK
-```
-
-The image is tagged `us-central1-docker.pkg.dev/<project>/fcst-data-ingress-pipeline/extract-db-to-bucket:<short-sha>`.
-
-**Step 2 — Push the image to Artifact Registry:**
-
-```{bash}
-task push-image
-```
-
-Confirm the push landed:
-
-```{bash}
-gcloud artifacts docker tags list us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-data-ingress-pipeline/extract-db-to-bucket
-```
-
-The newly pushed tag should appear in the list.
-
-**Step 3 — Update config and wrapper to reference the new image:**
-
-If the image change is meant to become the new default (the SHA in config drives both `verify_kfp_local.py` and future Cycle 4 submission scripts), bump:
-
-- `config/configs_zone_demand_pipeline.yaml` — set `docker.extract_db_to_bucket` to the new tag.
-- `src/fcstnyctaxi/components/feature/extract_db_to_bucket_component.py` — update the fallback string in `os.environ.get("FCST_EXTRACT_IMAGE", ...)`.
-
-Commit these changes.
-
-**Step 4 — Verify end-to-end via `kfp.local.DockerRunner`:**
-
-```{bash}
-uv run python scripts/verify_kfp_local.py
-```
-
-Reads the config, sets the `FCST_EXTRACT_IMAGE` env var, imports the wrapper, and invokes the component via `kfp.local.DockerRunner`. The container hits real BigQuery and writes both a Parquet snapshot and a SQL sidecar to GCS under a run-scoped prefix.
-
-Expected output (abridged):
-
-```
-Found image 'us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-data-ingress-pipeline/extract-db-to-bucket:<sha>'
-
-[KFP Executor ...]: Looking for component `extract_db_to_bucket` in ...
-...
-Task 'extract-db-to-bucket' finished with status SUCCESS
-
-Component completed.
-    uri: gs://nyc-taxi-ehc--modeling/dev/initial_datapull/<run_id>/manhattan_daily_zone_pickups.parquet
-    metadata: {
-        'gcs_uri': 'gs://nyc-taxi-ehc--modeling/dev/initial_datapull/<run_id>/manhattan_daily_zone_pickups.parquet',
-        'sql_sha256': '3434b01110b4940eeab5ffa847e7a2576b5b2f3639c737b0109e0c5097f11555',
-        'sql_sidecar_gcs_uri': 'gs://nyc-taxi-ehc--modeling/dev/initial_datapull/<run_id>/query.sql',
-        'extracted_at': '<utc-iso-timestamp>',
-        'row_count': 194392.0,
-        'git_sha': None,
-        'bq_query_job_id': '<bq-job-uuid>',
-        'file_size_bytes': 367770.0,
-        'run_id': '<run_id>',
-    }
-```
-
-`<run_id>` is the slice token and a sortable UTC microsecond timestamp (e.g. `feature-20260519t053021093666z`).
-
-**Step 5 — Confirm GCS artifacts:**
-
-```{bash}
-gsutil ls gs://nyc-taxi-ehc--modeling/dev/initial_datapull/<run_id>/
-```
-
-Should list two objects:
-
-- `manhattan_daily_zone_pickups.parquet` — the source snapshot (size matches `file_size_bytes` in metadata).
-- `query.sql` — the rendered SQL text used to produce the snapshot.
-
-### Building, compiling, and submitting the Training pipeline
-
-End-to-end workflow for the Training pipeline: build and push the image on Cloud Build, compile a template against the pushed digest, then submit that template to Vertex AI Pipelines. The DAG composes every config for the run, backtests each model in `model_roles`, one task per model fixed at compile time, scores the challenger against the benchmark, fits the challenger on the whole panel, then registers it as a version in the Vertex AI Model Registry.
-
-Compiling and submitting are separate programs on purpose. The image reference is a compile-time input, since `@dsl.component` binds `base_image` when the module is imported, so a compiled template already names every image it will run. The submitter therefore takes a template and never sees a tag, a digest, or `FCST_TRAIN_IMAGE`. That is also what lets a production trigger, which submits a published template with no compiler anywhere, use the same shape.
-
-**Prerequisites:**
-
-- ADC configured: `gcloud auth application-default login`
-- `gcloud auth login`: the build submits with your gcloud credentials, not ADC. Your account needs Cloud Build Editor (`roles/cloudbuild.builds.editor`), Service Usage Consumer (`roles/serviceusage.serviceUsageConsumer`) unless it is project Owner or Editor, and three permissions in the modeling bucket: `storage.buckets.get`, which gcloud uses to check the bucket before it stages the source (Storage Legacy Bucket Reader supplies it), creating objects under `cloudbuild/source/`, and reading objects under `cloudbuild/logs/`. Project Owner covers all of them.
-- `bash scripts/setup_train_iam.sh` run once per project. It creates the `fcst-ml-containers` repository, which Artifact Registry does not auto-create on push, and the Training runner service account. It also grants the runner push access to the repository and sets a 30-day deletion rule on `cloudbuild/` in the modeling bucket.
-- `.env` filled in from `.env.example`, with `FCST_TRAIN_SERVICE_ACCOUNT` set. The submitter reads it with `python-dotenv` and `task build-push-image` also loads it, so there is no sourcing step.
-- Working tree clean, so image tags do not include `-dirty`
-- A published Feature run. `uv run python scripts/publish_feature_stand_in.py --env dev` prints the `--feature-run-id` the submit step needs, with `--panel-uri`, `--calendar-uri` and `--additional-exog-uri` commented below it as optional overrides.
-
-**Step 1. Build, verify and push the image on Cloud Build:**
-
-```{bash}
-task build-push-image SLICE=train
-```
-
-The task uploads a `git archive` of the tracked tree, so a new file must be `git add`ed to reach the image. Cloud Build builds the `linux/amd64` image, probes it and pushes only if every probe passes. Logs stream to the terminal; the probes print these lines, where `<n>` is the number of files under `config/`:
-
-```
-image OK: FCST_GIT_HASH=<full sha>
-image OK: ['dev', 'gate'] compose
-config tree OK: <n> files
-```
-
-The task then prints the digest as a ready-to-run command:
-
-```
-  pushed tag : us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers/train:<short-sha>
-  digest     : us-central1-docker.pkg.dev/nyc-taxi-ehc/fcst-ml-containers/train@sha256:<64 hex>
-
-  next: task compile-train IMAGE_REF=<the digest above>
-```
-
-**Step 2. Compile and submit:**
-
-```{bash}
-task compile-submit-train IMAGE_REF=<digest from step 1> -- \
-  --env dev \
-  --feature-run-id <id from publish_feature_stand_in.py>
-```
-
-All three artifact URIs are resolved from `--feature-run-id`, by reading the `run_output.json` the Feature run wrote at its run root. Pass `--panel-uri`, `--calendar-uri` and `--additional-exog-uri` together to override that; one or two alone are refused.
-
-`compile-submit-train` compiles a fresh template into `build/fcst-train-pipeline.yaml`, then appends its own `--template-path` after your arguments. Argparse is last-wins, so the run always submits what it just compiled.
-
-The compile step refuses to leave a template pinning anything other than the digest you named, and deletes the rejected file rather than leaving something submittable on disk.
-
-To submit a template that already exists, skip the compile:
-
-```{bash}
-task submit-train -- --template-path build/fcst-train-pipeline.yaml --env dev ...
-```
-
-`task submit-train -- --help` lists every flag, and works on a machine with no `.env`. Its six domain flags are the same ones the local execution mode takes, so the two modes differ only in orchestration:
-
-```{bash}
-uv run python -m fcstnyctaxi.pipelines.local_train_pipeline --help
-```
-
-The local mode registers only when given `--serving-image`, a digest-pinned image recorded as the runtime that reads the bundle. Without it, a local run stops after the fit and writes no `run_output.json`, so routine local runs never add versions to the shared registry. Local run ids end in `-local` to tell a laptop run from a Vertex run.
-
-`--run-id` is optional and minted when absent. Caching is on by default, so resubmitting an unfinished run under the same `--run-id` reuses completed tasks; pass `--no-caching` to re-execute everything. A resubmit under a finished run's id is refused by whichever step executes first, and one with different inputs at `compose_configs`. The submitter is fire and forget unless given `--wait`, and it writes the id it submitted to `<tmpdir>/fcstnyctaxi/.last_run_id`.
-
-**Step 3. Confirm the run and its artifacts:**
-
-The submitter logs the console URL for the run. The artifacts land under the run root it also logs:
-
-```{bash}
-gsutil ls -r gs://nyc-taxi-ehc--modeling/dev/train/<run_id>/
-```
-
-`run_identity.json` sits at the run root rather than inside a step directory, because its reader is outside the pipeline and can construct only `<bucket>/<env>/train/<run_id>`. `compose_configs/` holds the five configs plus `manifest.json`, and each model named in `config/train/modeling.yaml`'s `model_roles` gets its own nine-file sidecar under `backtest/<model_name>/`, ending in `backtest_manifest.json`. The Vertex UI names those tasks `backtest-<model_name>`; the compiled template's task keys are positional. `evaluate/` holds the run's four score tables and `evaluate_manifest.json`, scored from the two sidecars `model_roles` names. `final_fit/<model_name>/` holds the challenger's bundle, fitted on the whole panel: `model/`, the `composed_config.yaml` it was fitted under, and `final_fit_manifest.json`. That task runs after `evaluate`, and the Vertex UI names it `final_fit-<model_name>`. The last task, `register_model-<model_name>`, uploads that bundle as a version of the `<model_id_prefix>-<model_name>` model and writes `run_output.json` at the run root. Written last, it marks the run finished, and its `published.model_tag` names the exact version, `projects/<number>/locations/<location>/models/<model_id>@<version>`, which is what Inference loads. Resubmitting a finished `--run-id` on the same commit registers nothing; on a different commit the register task fails, naming both commits.
-
-The run root comes from `lib/storage_layout.py`, and the step directories, `run_identity.json` and `run_output.json` are named once, in `schemas/storage/`, so the local and Vertex modes cannot spell a step differently. The files inside each step, its manifest and `composed_config.yaml` included, stay with the code that writes and reads them.
-
-`task build-clean` removes compiled templates; `task scratch-clean` removes the local scratch mirror, `.last_run_id` included.
+Released into the public domain under [the Unlicense](LICENSE).
