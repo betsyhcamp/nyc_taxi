@@ -13,7 +13,10 @@ dependencies = [
     "fsspec>=2025.12.0",
     "gcsfs>=2025.12.0",
     "google-cloud-storage>=3.6.0",
-    "kfp==2.17.0", # Pinned, not floored: compiling version written into every template
+    # Pinned, not floored: the compiling version is written into every template, and Train
+    # components skip KFP's runtime install, so the image's kfp runs what this one compiled.
+    # A change here means rebuilding the Train image before compiling against it.
+    "kfp==2.17.0",
     "pandas>=2.3.0",
     "pydantic>=2.12.5",
     "tsbricks==0.4.0",
@@ -59,7 +62,7 @@ dev = [
     "statsmodels>=0.14.4",
     "pre-commit>=4.5.0",
     "pre-commit-uv>=4.2.0",
-    "uv==0.11.33",
+    "uv==0.13.6",
     "sqlfluff>=3.5.0",
     "pytest>=9.0.2",
     "pytest-cov>=5.0.0",
@@ -138,9 +141,16 @@ exclude_lines = [
 ]
 
 [tool.uv]
-required-version = "==0.11.33"
+required-version = "==0.13.6"
 default-groups = ["dev", "forecasting"]
-constraint-dependencies = ["setuptools<81", "grpcio>=1.83.0"]
+# Floors on packages nothing here imports directly: grpcio's and certifi's drop the
+# compromised emSign root, and anyio's fixes a critical TLS advisory.
+constraint-dependencies = [
+    "setuptools<81",
+    "grpcio>=1.84.1",
+    "certifi>=2026.10.18",
+    "anyio>=4.14.2",
+]
 # xgboost's Linux wheel pulls nvidia-nccl-cu13, 288 MB installed, which only a multi-GPU
 # run loads. A marker that is never true keeps it out of every environment.
 override-dependencies = ["nvidia-nccl-cu13; sys_platform == 'never'"]
