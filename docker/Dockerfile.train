@@ -55,6 +55,8 @@ RUN apt-get update && \
 # install_kfp_package=False, so KFP installs nothing at runtime.
 RUN python -m pip uninstall -y pip
 
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser
+
 WORKDIR /app/
 
 COPY --from=builder /app/.venv /app/.venv
@@ -64,10 +66,13 @@ ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
 # All three MUST be in the runtime stage: only /app/.venv crosses from the builder.
-# ARG goes last, since it changes every commit and invalidates every layer after it.
+# ARG goes late, since it changes every commit and invalidates every layer after it.
 # Its value is the full SHA plus -dirty, because a digest only exists after the push.
 COPY config /app/config
 ARG GIT_HASH
 ENV FCST_GIT_HASH=${GIT_HASH}
+
+# Last, so every step above runs as root; /app and the venv stay root-owned, read-only.
+USER appuser
 
 # No ENTRYPOINT or CMD: KFP provides the runtime command via base_image use.

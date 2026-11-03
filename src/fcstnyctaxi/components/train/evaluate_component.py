@@ -11,8 +11,8 @@ from fcstnyctaxi.lib.container_images import require_digest_ref
 _IMAGE = require_digest_ref(os.environ.get("FCST_TRAIN_IMAGE"), "FCST_TRAIN_IMAGE")
 
 
-# install_kfp_package=False: the image already ships kfp, so KFP need not pip
-# install it at the start of every step.
+# install_kfp_package=False: the image ships kfp and no pip, and runs non-root, so
+# KFP's default pip preamble would fail every step before the component starts.
 @dsl.component(base_image=_IMAGE, packages_to_install=[], install_kfp_package=False)
 def evaluate(
     run_root: str,

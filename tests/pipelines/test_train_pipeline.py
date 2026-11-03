@@ -108,7 +108,7 @@ _INSTALLER = re.compile(r"\bpip3?\b|ensurepip")
 
 
 def test_no_train_step_installs_packages_when_it_starts(tmp_path: Path) -> None:
-    """Test that no compiled Train step runs pip, since the image already ships kfp."""
+    """Test that no compiled Train step runs pip, which fails on the non-root image."""
     ir = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)
     commands = {
         label: " ".join(executor["container"]["command"])
