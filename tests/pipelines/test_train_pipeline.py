@@ -8,6 +8,7 @@ os.environ.setdefault(
     + "a" * 64,
 )
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -100,6 +101,23 @@ def _executor_of(ir: dict[str, Any], task_name: str) -> dict[str, Any]:
     component_name = ir["root"]["dag"]["tasks"][task_name]["componentRef"]["name"]
     executor_label = ir["components"][component_name]["executorLabel"]
     return ir["deploymentSpec"]["executors"][executor_label]
+
+
+# pip as a word, so a component docstring that says "pipeline" cannot trip it.
+_INSTALLER = re.compile(r"\bpip3?\b|ensurepip")
+
+
+def test_no_train_step_installs_packages_when_it_starts(tmp_path: Path) -> None:
+    """Test that no compiled Train step runs pip, since the image already ships kfp."""
+    ir = _compiled_ir(tmp_path, SYNTHETIC_MODEL_NAMES)
+    commands = {
+        label: " ".join(executor["container"]["command"])
+        for label, executor in ir["deploymentSpec"]["executors"].items()
+        if "container" in executor
+    }
+
+    assert commands
+    assert [label for label, cmd in commands.items() if _INSTALLER.search(cmd)] == []
 
 
 def test_train_pipeline_compiles_with_the_compose_configs_task(tmp_path: Path) -> None:

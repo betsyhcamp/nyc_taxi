@@ -22,7 +22,6 @@ WORKDIR /app/
 COPY pyproject.toml uv.lock README.md ./
 
 # --no-default-groups, NOT --no-dev. --no-dev disables only the dev group
-# The ensurepip needed since KFP's launcher uses pip even with packages_to_install=[]
 RUN uv sync --locked --no-cache --no-default-groups --group train \
       --no-install-project --no-editable \
  && /app/.venv/bin/python -m ensurepip --upgrade \

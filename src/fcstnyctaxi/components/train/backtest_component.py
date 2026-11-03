@@ -11,7 +11,9 @@ from fcstnyctaxi.lib.container_images import require_digest_ref
 _IMAGE = require_digest_ref(os.environ.get("FCST_TRAIN_IMAGE"), "FCST_TRAIN_IMAGE")
 
 
-@dsl.component(base_image=_IMAGE, packages_to_install=[])
+# install_kfp_package=False: the image already ships kfp, so KFP need not pip
+# install it at the start of every step.
+@dsl.component(base_image=_IMAGE, packages_to_install=[], install_kfp_package=False)
 def backtest(
     run_root: str,
     model_name: str,

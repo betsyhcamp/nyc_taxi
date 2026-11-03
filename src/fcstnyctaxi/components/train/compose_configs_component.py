@@ -16,7 +16,9 @@ _IMAGE = require_digest_ref(os.environ.get("FCST_TRAIN_IMAGE"), "FCST_TRAIN_IMAG
 # Inline, not a module-level NamedTuple: KFP copies only the body plus a fixed
 # preamble into the container, so a module-level binding is absent there and the
 # annotation raises NameError at def time, with CI still green.
-@dsl.component(base_image=_IMAGE, packages_to_install=[])
+# install_kfp_package=False: the image already ships kfp, so KFP need not pip
+# install it at the start of every step.
+@dsl.component(base_image=_IMAGE, packages_to_install=[], install_kfp_package=False)
 def compose_configs(
     env: str,
     train_run_id: str,
