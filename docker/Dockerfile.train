@@ -17,12 +17,9 @@ FROM ${PYTHON_BASE} AS builder
 
 COPY --from=uv /uv /usr/local/bin/uv
 
-# build-essential for wheels built from source; git because tsbricks is
-# git-sourced; ca-certificates for HTTPS. None of these reach the runtime stage.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    ca-certificates \
-    git \
+# git because tsbricks is git-sourced. Every other dependency is a wheel, so nothing
+# compiles, and nothing apt installs here reaches the runtime stage.
+RUN apt-get update && apt-get install -y --no-install-recommends git \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/
@@ -34,9 +31,7 @@ COPY pyproject.toml uv.lock README.md .python-version ./
 
 # --no-default-groups, NOT --no-dev. --no-dev disables only the dev group
 RUN uv sync --locked --no-cache --no-default-groups --group train \
-      --no-install-project --no-editable \
- && /app/.venv/bin/python -m ensurepip --upgrade \
- && /app/.venv/bin/python -m pip install --upgrade pip
+      --no-install-project --no-editable
 
 COPY src ./src
 
@@ -50,7 +45,7 @@ FROM ${PYTHON_BASE} AS runtime
 
 # lightgbm's bundled lib_lightgbm.so loads libgomp.so.1, and mlforecast imports
 # lightgbm at module scope, so without this every mlforecast importer raises
-# OSError. The builder has it via build-essential; only /app/.venv crosses stages.
+# OSError. Only /app/.venv crosses stages.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libgomp1 \
