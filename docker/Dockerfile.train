@@ -43,13 +43,17 @@ RUN uv pip install --no-deps --no-cache .
 # ==================================================================
 FROM ${PYTHON_BASE} AS runtime
 
-# lightgbm's bundled lib_lightgbm.so loads libgomp.so.1, and mlforecast imports
-# lightgbm at module scope, so without this every mlforecast importer raises
-# OSError. Only /app/.venv crosses stages.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    libgomp1 \
- && rm -rf /var/lib/apt/lists/*
+# upgrade applies Debian fixes published since the base digest; Cloud Build's fresh
+# worker reruns it every build. lightgbm's lib_lightgbm.so loads libgomp.so.1, and
+# mlforecast imports lightgbm at module scope, so every mlforecast importer needs it.
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends libgomp1 && \
+    rm -rf /var/lib/apt/lists/*
+
+# The base ships a global pip that nothing here uses: Train components set
+# install_kfp_package=False, so KFP installs nothing at runtime.
+RUN python -m pip uninstall -y pip
 
 WORKDIR /app/
 
