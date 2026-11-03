@@ -103,7 +103,9 @@ def _executor_of(ir: dict[str, Any], task_name: str) -> dict[str, Any]:
     return ir["deploymentSpec"]["executors"][executor_label]
 
 
-# pip as a word, so a component docstring that says "pipeline" cannot trip it.
+# Scans each whole command, component source included: a body that calls pip fails
+# here, and so does a body comment saying "pip". pip as a word, so a docstring that
+# says "pipeline" cannot trip it.
 _INSTALLER = re.compile(r"\bpip3?\b|ensurepip")
 
 
