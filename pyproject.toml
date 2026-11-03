@@ -140,7 +140,7 @@ exclude_lines = [
 [tool.uv]
 required-version = "==0.11.33"
 default-groups = ["dev", "forecasting"]
-constraint-dependencies = ["setuptools<81", "grpcio>=1.83.0"]
+constraint-dependencies = ["setuptools<81", "grpcio>=1.84.1", "certifi>=2026.10.18"]
 # xgboost's Linux wheel pulls nvidia-nccl-cu13, 288 MB installed, which only a multi-GPU
 # run loads. A marker that is never true keeps it out of every environment.
 override-dependencies = ["nvidia-nccl-cu13; sys_platform == 'never'"]
