@@ -1,13 +1,20 @@
 # Train image for every Train component; multi-stage keeps it thin.
 
 # Tag documents intent, digest resolves, and a digest cannot be abbreviated. uv's
-# version MUST match [tool.uv] required-version: this image runs `uv sync --locked`
+# version MUST match [tool.uv] required-version: the builder runs `uv sync --locked`
 # against a lock uv wrote, and the lock carries a format revision.
-ARG UV_BASE=ghcr.io/astral-sh/uv:0.11.33-python3.12-trixie-slim@sha256:7b5a3c8f80fb965911cf8f0c6690b30b39f10f691fc1e52cd6cc44bc509c3aeb
+ARG PYTHON_BASE=python:3.12.16-slim@sha256:b18b261e1b4974b4f321451ad5251ded85abb22c2b8b262da527dda1d031ab30
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0
+
+# uv reaches the builder only; the runtime stage never sees it.
+FROM ${UV_IMAGE} AS uv
+
 # ==================================================================
 # Stage 1: Build environment (Alias: builder)
 # ==================================================================
-FROM ${UV_BASE} AS builder
+FROM ${PYTHON_BASE} AS builder
+
+COPY --from=uv /uv /usr/local/bin/uv
 
 # build-essential for wheels built from source; git because tsbricks is
 # git-sourced; ca-certificates for HTTPS. None of these reach the runtime stage.
@@ -35,7 +42,7 @@ RUN uv pip install --no-deps --no-cache .
 # ==================================================================
 # Stage 2: Runtime definition (Alias: runtime)
 # ==================================================================
-FROM ${UV_BASE} AS runtime
+FROM ${PYTHON_BASE} AS runtime
 
 # lightgbm's bundled lib_lightgbm.so loads libgomp.so.1, and mlforecast imports
 # lightgbm at module scope, so without this every mlforecast importer raises

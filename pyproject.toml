@@ -62,7 +62,7 @@ dev = [
     "statsmodels>=0.14.4",
     "pre-commit>=4.5.0",
     "pre-commit-uv>=4.2.0",
-    "uv==0.11.33",
+    "uv==0.13.6",
     "sqlfluff>=3.5.0",
     "pytest>=9.0.2",
     "pytest-cov>=5.0.0",
@@ -141,7 +141,7 @@ exclude_lines = [
 ]
 
 [tool.uv]
-required-version = "==0.11.33"
+required-version = "==0.13.6"
 default-groups = ["dev", "forecasting"]
 constraint-dependencies = ["setuptools<81", "grpcio>=1.84.1", "certifi>=2026.10.18"]
 # xgboost's Linux wheel pulls nvidia-nccl-cu13, 288 MB installed, which only a multi-GPU
